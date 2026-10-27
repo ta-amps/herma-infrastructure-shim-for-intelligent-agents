@@ -1,6 +1,6 @@
 # Herma
 
-> Herma: context-shimming AI middleware for configurable coding harnesses — intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic noun, verb, and URI context from a user-configured database before LLM execution.
+> Herma: context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic noun, verb, and URI context from a user-configured database before LLM execution.
 
 ## Start here
 - [README.md](https://github.com/ta-amps/herma/blob/main/README.md): what this is and how to run it

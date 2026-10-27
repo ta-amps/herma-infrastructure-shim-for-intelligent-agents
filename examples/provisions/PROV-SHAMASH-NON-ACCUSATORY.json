@@ -7,7 +7,7 @@
   "inject_position": "system_suffix",
   "dedupe_mode": "once_per_conversation",
   "max_chars": 2000,
-  "inject_text": "Outputs must express objective risk indicators tied to primary statute cards and recomputed multi-currency arithmetic — never accuse any party of being a criminal, scammer, or perpetrator. Refuse bundles lacking an explicit SYNTHETIC marker, and route T3 holds and T4 referrals exclusively to human reviewers.",
+  "inject_text": "Outputs must express objective risk indicators tied to primary statute cards and recomputed multi-currency arithmetic -- never accuse any party of being a criminal, scammer, or perpetrator. Refuse bundles lacking an explicit SYNTHETIC marker, and route T3 holds and T4 referrals exclusively to human reviewers.",
   "uris": [
     {
       "uri": "https://shamash.ta-amps.workers.dev",

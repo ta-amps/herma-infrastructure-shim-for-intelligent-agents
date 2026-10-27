@@ -22,6 +22,8 @@ class TriggerContext:
 async def evaluate_single_provision(
     stored: StoredProvision,
     ctx: TriggerContext,
+    *,
+    offline_only: bool = False,
 ) -> TriggerMatch | None:
     prov = stored.provision
     if not prov.enabled:
@@ -54,12 +56,14 @@ async def evaluate_single_provision(
         elif spec.mode == "all":
             return None
 
-    # Short-circuit Tier-3 micromodel in 'any' mode when Tier-1 or Tier-2 already matched!
+    # Short-circuit Tier-3 micromodel in 'any' mode when Tier-1 or Tier-2 already matched:
     if spec.micromodel is not None:
         configured_count += 1
         should_run_micro = spec.mode == "all" or not matched_tiers
         if should_run_micro:
-            ok, why, sc = await evaluate_micromodel_trigger(spec.micromodel, ctx.text)
+            ok, why, sc = await evaluate_micromodel_trigger(
+                spec.micromodel, ctx.text, offline_only=offline_only
+            )
             if ok:
                 matched_tiers.append("micromodel")
                 reasons.extend(why)
@@ -86,12 +90,14 @@ async def evaluate_single_provision(
 async def evaluate_provisions(
     provisions: list[StoredProvision],
     ctx: TriggerContext,
+    *,
+    offline_only: bool = False,
 ) -> list[tuple[StoredProvision, TriggerMatch]]:
     """Evaluate active provisions and return matches ordered by (priority DESC, prov_id ASC)."""
     ordered = sorted(provisions, key=lambda s: (-s.provision.priority, s.provision.prov_id))
     hits: list[tuple[StoredProvision, TriggerMatch]] = []
     for stored in ordered:
-        match = await evaluate_single_provision(stored, ctx)
+        match = await evaluate_single_provision(stored, ctx, offline_only=offline_only)
         if match is not None:
             hits.append((stored, match))
     return hits

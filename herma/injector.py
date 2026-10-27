@@ -1,4 +1,4 @@
-"""Extracts signals from OpenAI/Meta/Anthropic payloads and shims rules, URIs, and noun/verb context."""
+"""Extracts signals and deterministic entities from payloads and shims rules, URIs, and noun/verb context."""
 
 from __future__ import annotations
 
@@ -7,12 +7,14 @@ import re
 import secrets
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from herma.harness_gate import HarnessPrincipal, refuse_contributor_model
+from herma.memory import extract_entities
 from herma.schemas import (
     ContextEntry,
+    ExtractedEntity,
     InjectionReceipt,
     StoredProvision,
     TriggerMatch,
@@ -28,12 +30,13 @@ PROVISION_MARKER_RE = re.compile(r"\[HERMA PROVISION:\s*(PROV-[A-Z0-9-]+)@v\d+")
 
 @dataclass(frozen=True)
 class ExtractedEnvelope:
-    """Normalized view of an outbound coding-harness LLM request."""
+    """Normalized view of an outbound coding-harness LLM request plus extracted entities."""
 
     wire_format: WireFormat
     model: str
     trigger_context: TriggerContext
     existing_provision_ids: frozenset[str]
+    extracted_entities: list[ExtractedEntity] = field(default_factory=list)
 
 
 def _flatten_content(content: Any) -> str:
@@ -116,12 +119,15 @@ def extract_envelope(
                         active_chunks.append(txt)
 
     full_history_text = "\n".join(c for c in all_chunks if c)
-    # Trigger primarily on the latest turn(s) so stale turns don't re-fire unrelated rules:
+    # Trigger primarily on the latest turn(s) so stale turns do not re-fire unrelated rules:
     recent_text = "\n".join(active_chunks[-3:]) if active_chunks else full_history_text
+    latest_turn_text = active_chunks[-1] if active_chunks else recent_text
     existing_ids = frozenset(PROVISION_MARKER_RE.findall(full_history_text))
 
+    entities = extract_entities(latest_turn_text, extra_paths=extra_paths)
+    entity_paths = [e.value for e in entities if e.kind == "file_path"]
     detected_paths = list(
-        dict.fromkeys([*(extra_paths or []), *PATH_TOKEN_RE.findall(recent_text)])
+        dict.fromkeys([*(extra_paths or []), *entity_paths, *PATH_TOKEN_RE.findall(recent_text)])
     )
     tool_names = _extract_tools(payload)
 
@@ -134,6 +140,7 @@ def extract_envelope(
             tool_names=tool_names,
         ),
         existing_provision_ids=existing_ids,
+        extracted_entities=entities,
     )
 
 
@@ -161,11 +168,11 @@ def render_context_entries_block(
         else:
             body_excerpt = ""
         if len(body_excerpt) > 320:
-            body_excerpt = body_excerpt[:319].rstrip() + "…"
+            body_excerpt = body_excerpt[:319].rstrip() + "..."
 
         line = f"- [{entry.kind.upper()}] {entry.entry_id} ({entry.title}): {entry.summary.strip()}"
         if body_excerpt:
-            line += f" — {body_excerpt}"
+            line += f" -- {body_excerpt}"
         if entry.source_uri:
             line += f" [URI: {entry.source_uri}]"
             if entry.source_uri not in entry_uris:
@@ -276,6 +283,7 @@ def assemble_augmented_request(
     matches: list[tuple[StoredProvision, TriggerMatch]],
     max_total_chars: int = 8000,
     context_entries: Mapping[str, ContextEntry] | None = None,
+    project_tag: str = "default",
 ) -> tuple[dict[str, Any], InjectionReceipt]:
     """Shim matched rules + noun/verb context or prepare a direct response, and mint SHA-256 receipt."""
     prefix_blocks: list[str] = []
@@ -357,10 +365,12 @@ def assemble_augmented_request(
 
     now = time.time()
     receipt_id = f"rcpt_{secrets.token_hex(8)}"
+    entities_count = len(envelope.extracted_entities)
     core_for_hash = {
         "receipt_id": receipt_id,
         "harness_kind": principal.harness_kind,
         "key_id": principal.key_id,
+        "project_tag": project_tag,
         "wire_format": envelope.wire_format,
         "model": envelope.model,
         "provisions_fired": fired_ids,
@@ -371,6 +381,7 @@ def assemble_augmented_request(
         "responded_directly": responded_directly,
         "direct_response_text": direct_response_text,
         "shimmed_context_refs": shimmed_context_refs,
+        "entities_tracked": entities_count,
     }
     receipt = InjectionReceipt(
         **core_for_hash,

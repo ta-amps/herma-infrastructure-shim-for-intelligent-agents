@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import get_args
 
-from herma.errors import ContributorTierRefusedError, HarnessRequiredError, HarnessScopeError
-from herma.schemas import HarnessKind, HarnessScope
+from herma.errors import (
+    ContributorTierRefusedError,
+    HarnessRequiredError,
+    HarnessScopeError,
+    HermaError,
+)
+from herma.schemas import PROJECT_TAG_PATTERN, HarnessKind, HarnessScope
 
 ALLOWED_HARNESS_KINDS: frozenset[str] = frozenset(get_args(HarnessKind))
 BLOCKED_CONSUMER_SURFACES: tuple[str, ...] = (
@@ -23,6 +29,7 @@ BLOCKED_CONSUMER_SURFACES: tuple[str, ...] = (
     "generic-chat-ui",
 )
 KEY_PREFIX = "hmk_"
+PROJECT_TAG_RE = re.compile(PROJECT_TAG_PATTERN)
 
 
 @dataclass(frozen=True)
@@ -33,6 +40,11 @@ class HarnessPrincipal:
     label: str
     harness_kind: HarnessKind
     scopes: frozenset[HarnessScope]
+    is_admin: bool = False
+
+    @property
+    def caller_scope(self) -> str:
+        return f"key:{self.key_id}"
 
 
 def hash_secret(raw_secret: str) -> str:
@@ -95,6 +107,12 @@ def verify_secret_constant_time(expected_sha256: str, supplied_secret: str) -> b
     return hmac.compare_digest(expected_sha256.encode("ascii"), actual.encode("ascii"))
 
 
+def verify_token_constant_time(expected_token: str, supplied_token: str) -> bool:
+    if not expected_token or not supplied_token:
+        return False
+    return hmac.compare_digest(expected_token.encode("utf-8"), supplied_token.encode("utf-8"))
+
+
 def require_scope(
     principal: HarnessPrincipal,
     required: HarnessScope,
@@ -117,7 +135,35 @@ def require_scope(
             )
 
 
+def parse_project_tag(
+    headers: Mapping[str, str],
+    query_tag: str | None = None,
+    *,
+    default: str = "default",
+) -> str:
+    """Resolve and validate X-Herma-Project or ?project_tag= for caller-scoped entity memory."""
+    lower = {k.lower(): v for k, v in headers.items()}
+    raw = (query_tag if query_tag is not None else lower.get("x-herma-project", "")).strip()
+    if not raw:
+        return default
+    if not PROJECT_TAG_RE.fullmatch(raw):
+        raise HermaError(
+            400,
+            "invalid_project_tag",
+            "Invalid Project Tag",
+            f"Project tag {raw!r} must match {PROJECT_TAG_PATTERN}.",
+        )
+    return raw
+
+
+def parse_cohort_header(headers: Mapping[str, str]) -> str:
+    """Extract optional X-Herma-Cohort header for Layer-1 Governance Lens cohort filtering."""
+    lower = {k.lower(): v for k, v in headers.items()}
+    return lower.get("x-herma-cohort", "").strip()
+
+
 def refuse_contributor_model(model: str) -> None:
     """Enforce Standard-mode-only upstream LLM execution."""
-    if "-contributor" in model.strip().lower():
+    cleaned = model.strip().lower()
+    if cleaned == "contributor" or "-contributor" in cleaned:
         raise ContributorTierRefusedError(model)

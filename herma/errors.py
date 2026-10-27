@@ -37,8 +37,27 @@ class HarnessScopeError(HermaError):
         super().__init__(403, "insufficient_scope", "Insufficient Harness Scope", detail)
 
 
+class AdminRequiredError(HermaError):
+    """Raised when a caller invokes an admin-only endpoint without a valid administrator token."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(403, "admin_required", "Administrator Token Required", detail)
+
+
+class BuiltinProtectedError(HermaError):
+    """Raised when a non-admin caller attempts to modify or delete a system_builtin resource."""
+
+    def __init__(self, resource_id: str) -> None:
+        super().__init__(
+            403,
+            "builtin_protected",
+            "System Builtin Protected",
+            f"Resource {resource_id!r} belongs to 'system_builtin' and cannot be modified or deleted by non-admin callers.",
+        )
+
+
 class ContributorTierRefusedError(HermaError):
-    """Raised when an outbound LLM call targets a '-contributor' training-tier model."""
+    """Raised when an outbound LLM call targets a contributor training-tier model."""
 
     def __init__(self, model: str) -> None:
         super().__init__(
@@ -58,6 +77,18 @@ class ProvisionConflictError(HermaError):
             "version_conflict",
             "Provision Version Conflict",
             f"Provision {prov_id!r} version mismatch: expected {expected}, found {actual}.",
+        )
+
+
+class ContextConflictError(HermaError):
+    """Raised when compare-and-set version expectations on a context_entries record fail."""
+
+    def __init__(self, entry_id: str, expected: int | None, actual: int | None) -> None:
+        super().__init__(
+            409,
+            "version_conflict",
+            "Context Entry Version Conflict",
+            f"Context entry {entry_id!r} version mismatch: expected {expected}, found {actual}.",
         )
 
 

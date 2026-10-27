@@ -1,4 +1,4 @@
-"""Strict Pydantic schemas for provisions, context entries, 3-tier triggers, keys, and receipts."""
+"""Strict Pydantic schemas for provisions, context entries, triggers, memory, outcomes, and receipts."""
 
 from __future__ import annotations
 
@@ -8,7 +8,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+SYSTEM_BUILTIN_SCOPE = "system_builtin"
 PROV_ID_PATTERN = r"^PROV-[A-Z0-9][A-Z0-9-]{1,46}$"
+PROJECT_TAG_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,63}$"
 ALLOWED_URI_SCHEMES = ("https://", "tessera://", "mcp://", "urn:")
 HarnessKind = Literal[
     "muse-code",
@@ -23,6 +25,14 @@ TriggerTier = Literal["keyword", "semantic", "micromodel"]
 WireFormat = Literal["chat_completions", "responses", "messages", "dry_run"]
 ProvisionAction = Literal["shim_context", "respond_directly"]
 ContextEntryKind = Literal["noun", "verb", "detail"]
+EntityKind = Literal[
+    "file_path",
+    "code_symbol",
+    "tessera_uri",
+    "statute_card_id",
+    "error_signature",
+]
+OutcomeKind = Literal["accepted", "retry_error", "overridden"]
 
 
 class ProvisionURI(BaseModel):
@@ -56,6 +66,7 @@ class ContextEntry(BaseModel):
     summary: str = Field(min_length=4, max_length=600)
     schema_or_body: dict[str, Any] | str = ""
     source_uri: str | None = None
+    version: int = Field(default=1, ge=1)
     updated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     @field_validator("entry_id")
@@ -206,10 +217,11 @@ class Provision(BaseModel):
 
 
 class StoredProvision(BaseModel):
-    """Provision wrapped with compare-and-set version and SHA-256 content hash."""
+    """Provision wrapped with caller_scope, compare-and-set version, and SHA-256 content hash."""
 
     model_config = ConfigDict(extra="forbid")
 
+    caller_scope: str = SYSTEM_BUILTIN_SCOPE
     provision: Provision
     version: int = Field(ge=1)
     content_sha256: str = Field(min_length=64, max_length=64)
@@ -252,6 +264,7 @@ class InjectionReceipt(BaseModel):
     receipt_sha256: str
     harness_kind: HarnessKind
     key_id: str
+    project_tag: str = "default"
     wire_format: WireFormat
     model: str
     provisions_fired: list[str]
@@ -262,7 +275,89 @@ class InjectionReceipt(BaseModel):
     responded_directly: bool = False
     direct_response_text: str | None = None
     shimmed_context_refs: list[str] = Field(default_factory=list)
+    entities_tracked: int = 0
     created_at: float
+
+
+class ExtractedEntity(BaseModel):
+    """Pure deterministically extracted entity from an outbound coding-harness turn."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: EntityKind
+    value: str = Field(min_length=2, max_length=256)
+
+
+class WorkingEntity(BaseModel):
+    """Caller-isolated top-of-mind entity tracked per (caller_scope, project_tag)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    caller_scope: str
+    project_tag: str = "default"
+    entity_kind: EntityKind
+    entity_value: str
+    hit_count: int = Field(ge=1)
+    first_seen_at: float
+    last_seen_at: float
+    last_receipt_id: str
+
+
+class OutcomeReportRequest(BaseModel):
+    """Explicit operator or harness feedback on a shimmed or directly answered turn."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    receipt_id: str = Field(min_length=4, max_length=96)
+    prov_id: str | None = Field(default=None, pattern=PROV_ID_PATTERN)
+    outcome: OutcomeKind
+    project_tag: str | None = Field(default=None, pattern=PROJECT_TAG_PATTERN)
+    tokens_saved_est: int = Field(default=0, ge=0, le=1_000_000)
+    latency_ms: float = Field(default=0.0, ge=0.0, le=600_000.0)
+    error_signature: str | None = Field(default=None, max_length=240)
+
+
+class RuleOutcomeRecord(BaseModel):
+    """Recorded rule outcome row for self-improving telemetry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    outcome_id: str
+    caller_scope: str
+    project_tag: str
+    receipt_id: str
+    prov_id: str
+    outcome: OutcomeKind
+    tokens_saved_est: int = 0
+    latency_ms: float = 0.0
+    error_signature: str | None = None
+    created_at: float
+
+
+class RuleTelemetry(BaseModel):
+    """Aggregated telemetry per provision within a caller scope."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prov_id: str
+    fires: int
+    accepted_count: int
+    retry_error_count: int
+    tokens_saved_est: int
+    retry_error_rate: float
+    avg_latency_ms: float
+
+
+class InsightsResponse(BaseModel):
+    """Caller-isolated top-of-mind entity memory, rule telemetry, and reviewable candidate rules."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    caller_scope: str
+    project_tag: str | None = None
+    top_entities: list[WorkingEntity]
+    rule_telemetry: list[RuleTelemetry]
+    candidate_provisions: list[Provision]
 
 
 class DryRunRequest(BaseModel):

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
@@ -14,8 +15,14 @@ import httpx
 from herma.errors import HermaError
 from herma.harness_gate import HarnessPrincipal
 from herma.injector import assemble_augmented_request, extract_envelope
-from herma.schemas import InjectionReceipt, TriggerMatch, WireFormat
-from herma.store import ProvisionStore
+from herma.schemas import (
+    SYSTEM_BUILTIN_SCOPE,
+    ExtractedEntity,
+    InjectionReceipt,
+    TriggerMatch,
+    WireFormat,
+)
+from herma.store import ProvisionStore, provision_passes_lens
 from herma.triggers.engine import evaluate_provisions
 
 DEFAULT_UPSTREAMS: dict[str, str] = {
@@ -32,6 +39,7 @@ class InterceptionOutcome:
     augmented_payload: dict[str, Any]
     matches: list[TriggerMatch]
     receipt: InjectionReceipt
+    entities: list[ExtractedEntity] = field(default_factory=list)
 
 
 def build_direct_protocol_response(
@@ -114,13 +122,21 @@ def build_direct_protocol_response(
 
 
 def _resolve_upstream_url(wire_format: WireFormat, headers: Mapping[str, str]) -> str:
+    wire_paths: dict[WireFormat, str] = {
+        "chat_completions": "/v1/chat/completions",
+        "responses": "/v1/responses",
+        "messages": "/v1/messages",
+    }
     env_map = {
         "chat_completions": os.environ.get("HERMA_UPSTREAM_CHAT_URL", "").strip(),
         "responses": os.environ.get("HERMA_UPSTREAM_RESPONSES_URL", "").strip(),
         "messages": os.environ.get("HERMA_UPSTREAM_MESSAGES_URL", "").strip(),
     }
     lower = {k.lower(): v for k, v in headers.items()}
-    override = lower.get("x-herma-upstream-url", "").strip()
+    override = (
+        lower.get("x-herma-upstream-url", "").strip()
+        or lower.get("x-upstream-base-url", "").strip()
+    )
     if override:
         parsed = urlparse(override)
         if parsed.scheme not in ("https", "http") or not parsed.hostname:
@@ -139,7 +155,12 @@ def _resolve_upstream_url(wire_format: WireFormat, headers: Mapping[str, str]) -
                 "Upstream Host Not Allowlisted",
                 f"Upstream host {parsed.hostname!r} is not in HERMA_ALLOWED_UPSTREAM_HOSTS.",
             )
-        return override
+        trimmed = override.rstrip("/")
+        wire_path = wire_paths[wire_format]
+        if parsed.path.rstrip("/") in ("", "/v1"):
+            base = trimmed[:-3] if trimmed.endswith("/v1") else trimmed
+            return f"{base}{wire_path}"
+        return trimmed
 
     chosen = env_map.get(wire_format, "")
     if chosen:
@@ -174,7 +195,7 @@ def _resolve_upstream_headers(
 
 
 class HermaMiddleware:
-    """Evaluates rules, shims noun/verb/URI context or responds directly, and proxies upstream."""
+    """Evaluates caller-scoped rules, shims noun/verb/URI context or responds directly, and proxies upstream."""
 
     def __init__(self, store: ProvisionStore, *, max_total_chars: int = 8000) -> None:
         self.store = store
@@ -187,16 +208,49 @@ class HermaMiddleware:
         wire_format: WireFormat,
         payload: dict[str, Any],
         workspace_paths: list[str] | None = None,
+        project_tag: str = "default",
+        cohort: str = "",
+        persist: bool = True,
+        offline_only: bool = False,
+        builtin_only: bool = False,
     ) -> InterceptionOutcome:
+        started = time.perf_counter()
         envelope = extract_envelope(wire_format, payload, extra_paths=workspace_paths)
-        active = self.store.list_provisions(enabled_only=True)
-        matched_pairs = await evaluate_provisions(active, envelope.trigger_context)
-        all_refs = [ref for stored, _ in matched_pairs for ref in stored.provision.context_refs]
-        context_map = (
-            {entry.entry_id: entry for entry in self.store.get_context_entries(all_refs)}
-            if all_refs
-            else {}
+        target_scope = SYSTEM_BUILTIN_SCOPE if builtin_only else principal.caller_scope
+        candidates = (
+            self.store.list_provisions(
+                caller_scope=SYSTEM_BUILTIN_SCOPE,
+                include_builtin=True,
+                enabled_only=True,
+            )
+            if builtin_only
+            else self.store.list_provisions_for_caller(target_scope, enabled_only=True)
         )
+        active = [
+            sp
+            for sp in candidates
+            if provision_passes_lens(sp, harness_kind=principal.harness_kind, cohort=cohort)
+        ]
+        matched_pairs = await evaluate_provisions(
+            active,
+            envelope.trigger_context,
+            offline_only=offline_only,
+        )
+        all_refs = [ref for stored, _ in matched_pairs for ref in stored.provision.context_refs]
+        if all_refs:
+            entries = (
+                self.store.get_context_entries(
+                    all_refs,
+                    caller_scope=SYSTEM_BUILTIN_SCOPE,
+                    include_builtin=True,
+                )
+                if builtin_only
+                else self.store.get_context_entries_for_caller(target_scope, all_refs)
+            )
+            context_map = {entry.entry_id: entry for entry in entries}
+        else:
+            context_map = {}
+
         augmented, receipt = assemble_augmented_request(
             principal=principal,
             envelope=envelope,
@@ -204,12 +258,23 @@ class HermaMiddleware:
             matches=matched_pairs,
             max_total_chars=self.max_total_chars,
             context_entries=context_map,
+            project_tag=project_tag,
         )
-        self.store.record_receipt(receipt)
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        if persist:
+            self.store.record_turn_telemetry(
+                caller_scope=principal.caller_scope,
+                project_tag=project_tag,
+                receipt=receipt,
+                entities=envelope.extracted_entities,
+                prompt_text=envelope.trigger_context.text,
+                latency_ms=elapsed_ms,
+            )
         return InterceptionOutcome(
             augmented_payload=augmented,
             matches=[m for _, m in matched_pairs],
             receipt=receipt,
+            entities=envelope.extracted_entities,
         )
 
     async def forward_upstream(
@@ -223,6 +288,7 @@ class HermaMiddleware:
             "x-herma-receipt": outcome.receipt.receipt_sha256,
             "x-herma-receipt-sha256": outcome.receipt.receipt_sha256,
             "x-herma-provisions-fired": ",".join(outcome.receipt.provisions_fired),
+            "x-herma-entities-tracked": str(outcome.receipt.entities_tracked),
         }
         if outcome.receipt.shimmed_context_refs:
             meta_headers["x-herma-shimmed-context"] = ",".join(outcome.receipt.shimmed_context_refs)

@@ -46,6 +46,8 @@ def _parse_classifier_json(raw_content: str) -> dict[str, object] | None:
 async def evaluate_micromodel_trigger(
     spec: MicromodelTrigger,
     text: str,
+    *,
+    offline_only: bool = False,
 ) -> tuple[bool, list[str], float]:
     """Query a fast OpenAI-compatible micromodel classifier or run deterministic fallback."""
     url = os.environ.get("HERMA_MICROMODEL_URL", "").strip()
@@ -53,10 +55,10 @@ async def evaluate_micromodel_trigger(
     api_key = os.environ.get("HERMA_MICROMODEL_API_KEY", "").strip()
     timeout_s = float(os.environ.get("HERMA_MICROMODEL_TIMEOUT_S", "8.0"))
 
-    if not url:
+    refuse_contributor_model(model)
+    if offline_only or not url:
         return _offline_fallback(spec, text)
 
-    refuse_contributor_model(model)
     system_prompt = (
         "You are a fast middleware trigger classifier. Answer ONLY with a single JSON object "
         'of the exact shape {"apply": true|false, "confidence": 0.0..1.0, "label": "apply|skip", '

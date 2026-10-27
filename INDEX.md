@@ -7,7 +7,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | File | What it is |
 |---|---|
 | [.gitignore](.gitignore) |  |
-| [AGENTS.md](AGENTS.md) | AGENTS.md — Herma Hard Rules |
+| [AGENTS.md](AGENTS.md) | AGENTS.md -- Herma Hard Rules |
 | [LICENSE](LICENSE) | MIT License |
 | [Makefile](Makefile) | Herma. |
 | [README.md](README.md) | Herma |
@@ -32,9 +32,9 @@ Every file in this repo with a one-line description taken from the file itself. 
 | File | What it is |
 |---|---|
 | [deploy/bootstrap-hosting.sh](deploy/bootstrap-hosting.sh) | One-time hosting setup for one service on Fly.io behind a Cloudflare Worker: the Fly app and its |
-| [deploy/cloudflare/d1-herma.sql](deploy/cloudflare/d1-herma.sql) | Persistent Cloudflare D1 schema for Herma context-shimming AI middleware (ta-amps-herma). |
-| [deploy/cloudflare/herma_engine.js](deploy/cloudflare/herma_engine.js) | Context-shimming 3-tier trigger engine, configurable-harness gate, atomic noun/verb context |
-| [deploy/cloudflare/worker.js](deploy/cloudflare/worker.js) | Cloudflare Cloud Worker for Herma: 24/7 context-shimming AI middleware backed by Cloudflare D1 |
+| [deploy/cloudflare/d1-herma.sql](deploy/cloudflare/d1-herma.sql) | Persistent Cloudflare D1 caller-isolated schema for Herma context-shimming AI middleware (ta-amps-herma). |
+| [deploy/cloudflare/herma_engine.js](deploy/cloudflare/herma_engine.js) | Context-shimming 3-tier trigger engine, multi-caller isolation, governance lens, |
+| [deploy/cloudflare/worker.js](deploy/cloudflare/worker.js) | Cloudflare Cloud Worker for Herma: 24/7 caller-isolated context-shimming AI middleware backed by |
 | [deploy/cloudflare/wrangler.jsonc](deploy/cloudflare/wrangler.jsonc) | Herma Cloud Worker: 24/7 context-shimming AI middleware on Cloudflare Workers + D1 (ta-amps-herma) |
 | [deploy/fly/Dockerfile](deploy/fly/Dockerfile) |  |
 | [deploy/fly/fly.toml](deploy/fly/fly.toml) |  |
@@ -61,21 +61,22 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [examples/provisions/README.md](examples/provisions/README.md) | Example Provisions & Atomic Noun/Verb Context |
 | [examples/provisions/context/CONTEXT-TESSERA-NOUNS-VERBS.json](examples/provisions/context/CONTEXT-TESSERA-NOUNS-VERBS.json) | JSON object: entries |
 
-## herma/ (16)
+## herma/ (17)
 
 | File | What it is |
 |---|---|
 | [herma/__init__.py](herma/__init__.py) | Herma: context-shimming AI middleware for configurable coding harnesses. |
 | [herma/api/__init__.py](herma/api/__init__.py) | FastAPI HTTP service and read-only console pages for Herma. |
 | [herma/api/app.py](herma/api/app.py) | FastAPI application for Herma middleware (:7730). |
-| [herma/api/pages.py](herma/api/pages.py) | Server-rendered read-only HTML status board and harness connection guide. |
+| [herma/api/pages.py](herma/api/pages.py) | Server-rendered HTML console, SVG brand chrome, interactive preview script, and discovery specs. |
 | [herma/cli.py](herma/cli.py) | Command-line interface for Herma: seed, keys, context, dry-run, 3-tier demo, and serve. |
 | [herma/errors.py](herma/errors.py) | Typed errors mapped deterministically to RFC 9457 problem+json HTTP responses. |
 | [herma/harness_gate.py](herma/harness_gate.py) | Configurable-harness access gate: blocks generic consumer chat assistants from configuring or routing. |
-| [herma/injector.py](herma/injector.py) | Extracts signals from OpenAI/Meta/Anthropic payloads and shims rules, URIs, and noun/verb context. |
+| [herma/injector.py](herma/injector.py) | Extracts signals and deterministic entities from payloads and shims rules, URIs, and noun/verb context. |
+| [herma/memory.py](herma/memory.py) | Deterministic Anti-RAG top-of-mind entity extraction and candidate rule synthesis (0 LLM calls). |
 | [herma/proxy.py](herma/proxy.py) | Context-shimming interception, direct-response short-circuiting, and upstream LLM forwarding. |
-| [herma/schemas.py](herma/schemas.py) | Strict Pydantic schemas for provisions, context entries, 3-tier triggers, keys, and receipts. |
-| [herma/store.py](herma/store.py) | SQLite WAL provision/context/key/receipt store plus Tessera CAS and remote-handshake sync. |
+| [herma/schemas.py](herma/schemas.py) | Strict Pydantic schemas for provisions, context entries, triggers, memory, outcomes, and receipts. |
+| [herma/store.py](herma/store.py) | SQLite WAL caller-isolated store, atomic CAS, governance lens, entity memory, and outcome telemetry. |
 | [herma/triggers/__init__.py](herma/triggers/__init__.py) | Three-tier trigger evaluation: keyword (~0 ms), semantic (~1-5 ms), and micromodel. |
 | [herma/triggers/engine.py](herma/triggers/engine.py) | Orchestrates Tier-1 (keyword), Tier-2 (semantic), and Tier-3 (micromodel) triggers. |
 | [herma/triggers/keyword.py](herma/triggers/keyword.py) | Tier-1 deterministic trigger (~0 ms): keywords, bounded regexes, path globs, and tool names. |
@@ -96,5 +97,5 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [tests/test_api_and_proxy.py](tests/test_api_and_proxy.py) | Tests for multi-protocol payload augmentation, deduplication, edge lockdown, and HTTP endpoints. |
 | [tests/test_harness_gate_and_store.py](tests/test_harness_gate_and_store.py) | Tests for configurable-harness access gate, CAS store, Tessera sync, and remote handshake sync. |
-| [tests/test_herma.py](tests/test_herma.py) | Tests for atomic noun/verb context database, contextrefs shimming, and direct responses. |
+| [tests/test_herma.py](tests/test_herma.py) | Tests for multi-caller isolation, CAS, governance lens, entity memory, insights, preview, and MCP parity. |
 | [tests/test_triggers.py](tests/test_triggers.py) | Tests for Tier-1 (keyword/regex/path/tool), Tier-2 (semantic), and Tier-3 (micromodel) triggers. |

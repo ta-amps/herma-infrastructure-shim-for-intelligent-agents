@@ -1,7 +1,9 @@
-// Context-shimming 3-tier trigger engine, configurable-harness gate, atomic noun/verb context
-// database helpers, direct-response formatter, and HTML console for Herma Cloud on Cloudflare Workers + D1.
+// Context-shimming 3-tier trigger engine, multi-caller isolation, governance lens,
+// deterministic Anti-RAG entity memory, direct-response formatter, and HTML console
+// for Herma Cloud on Cloudflare Workers + D1.
 
 export const HERMA_VERSION = "0.1.0";
+export const SYSTEM_BUILTIN_SCOPE = "system_builtin";
 
 export const ALLOWED_HARNESS_KINDS = new Set([
   "muse-code",
@@ -14,6 +16,44 @@ export const ALLOWED_HARNESS_KINDS = new Set([
 
 export const ALLOWED_URI_SCHEMES = ["https://", "tessera://", "mcp://", "urn:"];
 export const ALLOWED_CONTEXT_KINDS = new Set(["noun", "verb", "detail"]);
+export const ALLOWED_ENTITY_KINDS = new Set([
+  "file_path",
+  "code_symbol",
+  "tessera_uri",
+  "statute_card_id",
+  "error_signature",
+]);
+export const ALLOWED_OUTCOMES = new Set(["accepted", "retry_error", "ignored", "overridden"]);
+
+const PROJECT_TAG_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,63}$/;
+const BLOB_SHA256_RE = /^[0-9a-f]{64}$/;
+export const SAFE_BUCKET_SEG_RE = /^[A-Za-z0-9][A-Za-z0-9_./:-]{0,511}$/;
+
+const GOV_ENVELOPE_KEYS = new Set([
+  "governance",
+  "tags",
+  "status",
+  "quarantined",
+  "visibility_scope",
+  "allowed_surfaces",
+  "producer_surface",
+  "cohort",
+  "cohorts",
+  "target_cohort",
+  "target_cohorts",
+  "allowed_cohorts",
+  "allowed_harnesses",
+  "owner_key_id",
+  "namespace",
+]);
+const KNOWN_STATUS_VALUES = new Set([
+  "quarantined",
+  "verified",
+  "unverified",
+  "pending",
+  "rejected",
+  "draft",
+]);
 
 const BLOCKED_CONSUMER_SURFACES = [
   "muse-personal-assistant",
@@ -170,7 +210,7 @@ export const DEFAULT_PROVISIONS = [
     inject_position: "system_suffix",
     dedupe_mode: "once_per_conversation",
     max_chars: 2000,
-    inject_text: "Outputs must express objective risk indicators tied to primary statute cards and recomputed multi-currency arithmetic — never accuse any party of being a criminal, scammer, or perpetrator. Refuse bundles lacking an explicit SYNTHETIC marker, and route T3 holds and T4 referrals exclusively to human reviewers.",
+    inject_text: "Outputs must express objective risk indicators tied to primary statute cards and recomputed multi-currency arithmetic -- never accuse any party of being a criminal, scammer, or perpetrator. Refuse bundles lacking an explicit SYNTHETIC marker, and route T3 holds and T4 referrals exclusively to human reviewers.",
     uris: [
       {
         uri: "https://shamash.ta-amps.workers.dev",
@@ -256,6 +296,199 @@ export const DEFAULT_PROVISIONS = [
   },
 ];
 
+export const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Herma boundary pillar">
+  <rect width="32" height="32" rx="7" fill="#0c1017"/>
+  <path d="M9 27h14v2H9zm2-3h10l1 3H10zm1-14h8v14h-8z" fill="#67b7ff"/>
+  <rect x="9" y="6" width="14" height="4" rx="1.5" fill="#eef2f7"/>
+  <path d="M14 13h4v1.5h-4zm0 3.2h4v1.5h-4zm0 3.2h4v1.5h-4z" fill="#0c1017"/>
+</svg>
+`;
+
+const BRAND_SVG =
+  '<svg class="brand-mark" viewBox="0 0 32 32" width="28" height="28" aria-hidden="true">' +
+  '<rect width="32" height="32" rx="7" fill="currentColor" opacity="0.14"/>' +
+  '<path d="M9 26.5h14v2H9zm2-2.8h10l1 2.8H10zm1-13.7h8v13.7h-8z" fill="currentColor"/>' +
+  '<rect x="9" y="6" width="14" height="3.8" rx="1.4" fill="currentColor"/>' +
+  '<path d="M14 13h4v1.4h-4zm0 3h4v1.4h-4zm0 3h4v1.4h-4z" fill="var(--bg)"/>' +
+  "</svg>";
+
+export const ROBOTS_TXT = `User-agent: *
+Allow: /
+Allow: /connect
+Allow: /llms.txt
+Allow: /llms-full.txt
+Allow: /.well-known/agent-card.json
+Disallow: /v1/
+`;
+
+export const MCP_TOOLS_SPEC = [
+  {
+    name: "list_builtin_provisions",
+    description: "List starter system_builtin context-shimming and direct-response provisions without exposing private caller state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        enabled_only: {
+          type: "boolean",
+          description: "Filter to enabled builtin provisions only.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "preview_shim",
+    description: "Evaluate system_builtin 3-tier triggers, context shims, and deterministic entity extraction in memory with persisted=false.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "Prompt text to inspect." },
+        wire_format: {
+          type: "string",
+          enum: ["chat_completions", "responses", "messages"],
+        },
+        workspace_paths: {
+          type: "array",
+          items: { type: "string" },
+        },
+      },
+      required: ["prompt"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "extract_entities",
+    description: "Deterministically extract file_path, code_symbol, tessera_uri, statute_card_id, and error_signature entities with zero LLM calls.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Source text to scan." },
+        workspace_paths: {
+          type: "array",
+          items: { type: "string" },
+        },
+      },
+      required: ["text"],
+      additionalProperties: false,
+    },
+  },
+];
+
+export const PREVIEW_JS = `(function () {
+  const promptEl = document.getElementById("herma-preview-prompt");
+  const pathEl = document.getElementById("herma-preview-path");
+  const wireEl = document.getElementById("herma-preview-wire");
+  const runBtn = document.getElementById("herma-preview-btn");
+  const statusEl = document.getElementById("herma-preview-status");
+  const outputEl = document.getElementById("herma-preview-output");
+  if (!promptEl || !runBtn || !statusEl || !outputEl) return;
+
+  const presets = {
+    fencing: {
+      prompt: "Update src/tessera/_tasks.py to verify noun:tessera.lease_fence with \`put_record()\`.",
+      path: "src/tessera/_tasks.py",
+      wire: "chat_completions"
+    },
+    direct: {
+      prompt: "Show the canonical noun/verb schema for queue claims.",
+      path: "",
+      wire: "responses"
+    },
+    statute: {
+      prompt: "Check statute card US-ROSCA-8403 after ValueError: stale fencing token in shamash/checks.py",
+      path: "shamash/checks.py",
+      wire: "chat_completions"
+    }
+  };
+
+  document.querySelectorAll("[data-herma-preset]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      const key = btn.getAttribute("data-herma-preset");
+      const item = presets[key];
+      if (!item) return;
+      promptEl.value = item.prompt;
+      if (pathEl) pathEl.value = item.path;
+      if (wireEl) wireEl.value = item.wire;
+      runPreview();
+    });
+  });
+
+  function renderEmpty(msg) {
+    statusEl.className = "preview-status";
+    statusEl.textContent = msg;
+    outputEl.innerHTML = "";
+  }
+
+  function escText(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  async function runPreview() {
+    const prompt = promptEl.value.trim();
+    if (!prompt) {
+      renderEmpty("Empty prompt: enter a coding-harness prompt or choose a preset above to run a read-only preview.");
+      return;
+    }
+    const wire = wireEl ? wireEl.value : "chat_completions";
+    const rawPath = pathEl ? pathEl.value.trim() : "";
+    const workspacePaths = rawPath ? rawPath.split(",").map(function (p) { return p.trim(); }).filter(Boolean) : [];
+
+    runBtn.disabled = true;
+    statusEl.className = "preview-status";
+    statusEl.textContent = "Evaluating system_builtin 3-tier triggers and deterministic entity patterns...";
+    outputEl.innerHTML = "";
+
+    try {
+      const resp = await fetch("/api/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify({ prompt: prompt, wire_format: wire, workspace_paths: workspacePaths })
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        statusEl.className = "preview-status error";
+        statusEl.textContent = "Preview refused (" + resp.status + "): " + (data.detail || data.title || "invalid input");
+        return;
+      }
+      statusEl.className = "preview-status ok";
+      statusEl.textContent = "Evaluated scope: " + data.scope_evaluated + " | persisted: " + String(data.persisted) + " | matches: " + (data.matches || []).length + " | entities: " + (data.entities || []).length;
+
+      const matchItems = (data.matches || []).map(function (m) {
+        return "<li><code>" + escText(m.prov_id) + "@v" + escText(m.version) + "</code> (" + escText((m.matched_tiers || []).join(", ")) + "): " + escText((m.reasons || []).join("; ")) + "</li>";
+      }).join("");
+
+      const entItems = (data.entities || []).map(function (e) {
+        return "<span class='entity-chip'><strong>" + escText(e.kind) + ":</strong> <code>" + escText(e.value) + "</code></span>";
+      }).join("");
+
+      const previewPayload = data.responded_directly
+        ? data.direct_response_text
+        : JSON.stringify(data.augmented_payload, null, 2);
+
+      outputEl.innerHTML =
+        "<div style='margin-top:0.8rem;'>" +
+        "<strong>Matched Builtin Provisions:</strong>" +
+        (matchItems ? "<ul>" + matchItems + "</ul>" : "<p style='color:var(--muted);margin:0.3rem 0;'>No system_builtin rules matched this prompt.</p>") +
+        "<strong>Extracted Top-of-Mind Entities (0 LLM calls):</strong>" +
+        (entItems ? "<div class='entity-tags'>" + entItems + "</div>" : "<p style='color:var(--muted);margin:0.3rem 0;'>No file paths, symbols, URIs, statute cards, or errors detected.</p>") +
+        "<strong>" + (data.responded_directly ? "Direct Protocol Reply (0 upstream tokens):" : "Augmented Wire Payload:") + "</strong>" +
+        "<pre>" + escText(previewPayload) + "</pre>" +
+        "</div>";
+    } catch (err) {
+      statusEl.className = "preview-status error";
+      statusEl.textContent = "Preview network error: " + String(err && err.message ? err.message : err);
+    } finally {
+      runBtn.disabled = false;
+    }
+  }
+
+  runBtn.addEventListener("click", runPreview);
+})();
+`;
+
 export class HermaErr extends Error {
   constructor(status, code, title, detail) {
     super(detail);
@@ -310,12 +543,351 @@ export function constantTimeEqual(a, b) {
   return diff === 0;
 }
 
+export function parseProjectTag(request, explicitTag = null) {
+  const raw = (explicitTag != null ? String(explicitTag) : request?.headers?.get("x-herma-project") || "").trim();
+  if (!raw) return "default";
+  if (!PROJECT_TAG_RE.test(raw)) {
+    throw new HermaErr(
+      400,
+      "invalid_project_tag",
+      "Invalid Project Tag",
+      `Project tag '${raw}' must match ^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,63}$.`
+    );
+  }
+  return raw;
+}
+
+export function parseCohortHeader(request, explicitCohort = null) {
+  const raw = (explicitCohort != null ? String(explicitCohort) : request?.headers?.get("x-herma-cohort") || "").trim();
+  if (!raw) return "";
+  if (raw.length > 128) {
+    throw new HermaErr(400, "invalid_cohort", "Invalid Cohort Header", "X-Herma-Cohort must be <= 128 chars.");
+  }
+  return raw;
+}
+
+const MIGRATED_DBS = new WeakSet();
+
+export async function ensureSchema(db) {
+  if (!db || MIGRATED_DBS.has(db)) return;
+  try {
+    const provInfo = await db.prepare("PRAGMA table_info(provisions)").all();
+    const provCols = new Map((provInfo?.results || []).map((r) => [String(r.name), Number(r.pk || 0)]));
+    if (provCols.size > 0 && (provCols.get("caller_scope") || 0) === 0) {
+      const scopeExpr = provCols.has("caller_scope") ? "COALESCE(caller_scope, 'system_builtin')" : "'system_builtin'";
+      await db.batch([
+        db.prepare(
+          "CREATE TABLE IF NOT EXISTS provisions_v2 (caller_scope TEXT NOT NULL DEFAULT 'system_builtin', prov_id TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, content_sha256 TEXT NOT NULL, source_store TEXT NOT NULL, body_json TEXT NOT NULL, updated_at REAL NOT NULL, PRIMARY KEY (caller_scope, prov_id))"
+        ),
+        db.prepare(
+          `INSERT OR REPLACE INTO provisions_v2 (caller_scope, prov_id, version, content_sha256, source_store, body_json, updated_at) SELECT ${scopeExpr}, prov_id, version, content_sha256, CASE WHEN source_store = 'examples' THEN 'system_builtin' ELSE source_store END, body_json, updated_at FROM provisions`
+        ),
+        db.prepare("DROP TABLE provisions"),
+        db.prepare("ALTER TABLE provisions_v2 RENAME TO provisions"),
+      ]);
+    }
+
+    const ctxInfo = await db.prepare("PRAGMA table_info(context_entries)").all();
+    const ctxCols = new Map((ctxInfo?.results || []).map((r) => [String(r.name), Number(r.pk || 0)]));
+    if (ctxCols.size > 0 && ((ctxCols.get("caller_scope") || 0) === 0 || !ctxCols.has("version"))) {
+      const scopeExpr = ctxCols.has("caller_scope") ? "COALESCE(caller_scope, 'system_builtin')" : "'system_builtin'";
+      const verExpr = ctxCols.has("version") ? "COALESCE(version, 1)" : "1";
+      await db.batch([
+        db.prepare(
+          "CREATE TABLE IF NOT EXISTS context_entries_v2 (caller_scope TEXT NOT NULL DEFAULT 'system_builtin', entry_id TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, kind TEXT NOT NULL, title TEXT NOT NULL, summary TEXT NOT NULL, body_json TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (caller_scope, entry_id))"
+        ),
+        db.prepare(
+          `INSERT OR REPLACE INTO context_entries_v2 (caller_scope, entry_id, version, kind, title, summary, body_json, updated_at) SELECT ${scopeExpr}, entry_id, ${verExpr}, kind, title, summary, body_json, updated_at FROM context_entries`
+        ),
+        db.prepare("DROP TABLE context_entries"),
+        db.prepare("ALTER TABLE context_entries_v2 RENAME TO context_entries"),
+      ]);
+    }
+
+    const rcptInfo = await db.prepare("PRAGMA table_info(injection_receipts)").all();
+    const rcptCols = new Set((rcptInfo?.results || []).map((r) => String(r.name)));
+    if (rcptCols.size > 0) {
+      if (!rcptCols.has("caller_scope")) {
+        await db
+          .prepare("ALTER TABLE injection_receipts ADD COLUMN caller_scope TEXT NOT NULL DEFAULT 'system_builtin'")
+          .run();
+      }
+      if (!rcptCols.has("project_tag")) {
+        await db
+          .prepare("ALTER TABLE injection_receipts ADD COLUMN project_tag TEXT NOT NULL DEFAULT 'default'")
+          .run();
+      }
+    }
+  } catch {
+    // Allow mock D1 harnesses that do not implement PRAGMA table_info to proceed with CREATE TABLE IF NOT EXISTS
+  }
+
+  await db.batch([
+    db.prepare(
+      "CREATE TABLE IF NOT EXISTS provisions (caller_scope TEXT NOT NULL DEFAULT 'system_builtin', prov_id TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, content_sha256 TEXT NOT NULL, source_store TEXT NOT NULL, body_json TEXT NOT NULL, updated_at REAL NOT NULL, PRIMARY KEY (caller_scope, prov_id))"
+    ),
+    db.prepare(
+      "CREATE TABLE IF NOT EXISTS context_entries (caller_scope TEXT NOT NULL DEFAULT 'system_builtin', entry_id TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, kind TEXT NOT NULL, title TEXT NOT NULL, summary TEXT NOT NULL, body_json TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (caller_scope, entry_id))"
+    ),
+    db.prepare(
+      "CREATE TABLE IF NOT EXISTS harness_keys (key_id TEXT PRIMARY KEY, label TEXT NOT NULL, harness_kind TEXT NOT NULL, scopes_json TEXT NOT NULL, secret_sha256 TEXT NOT NULL UNIQUE, created_at REAL NOT NULL, revoked_at REAL)"
+    ),
+    db.prepare(
+      "CREATE TABLE IF NOT EXISTS injection_receipts (receipt_id TEXT PRIMARY KEY, caller_scope TEXT NOT NULL DEFAULT 'system_builtin', project_tag TEXT NOT NULL DEFAULT 'default', receipt_sha256 TEXT NOT NULL, conversation_id TEXT, harness_kind TEXT NOT NULL, protocol TEXT NOT NULL, model TEXT NOT NULL, matched_provisions TEXT NOT NULL, injected_uris TEXT NOT NULL, body_json TEXT NOT NULL DEFAULT '{}', created_at REAL NOT NULL)"
+    ),
+    db.prepare(
+      "CREATE TABLE IF NOT EXISTS working_entities (caller_scope TEXT NOT NULL, project_tag TEXT NOT NULL DEFAULT 'default', entity_kind TEXT NOT NULL, entity_value TEXT NOT NULL, hit_count INTEGER NOT NULL DEFAULT 1, first_seen_at REAL NOT NULL, last_seen_at REAL NOT NULL, last_receipt_id TEXT NOT NULL, PRIMARY KEY (caller_scope, project_tag, entity_kind, entity_value))"
+    ),
+    db.prepare(
+      "CREATE TABLE IF NOT EXISTS rule_outcomes (outcome_id TEXT PRIMARY KEY, caller_scope TEXT NOT NULL, project_tag TEXT NOT NULL DEFAULT 'default', receipt_id TEXT NOT NULL, prov_id TEXT NOT NULL, outcome TEXT NOT NULL, tokens_saved_est INTEGER NOT NULL DEFAULT 0, latency_ms REAL NOT NULL DEFAULT 0.0, error_signature TEXT, created_at REAL NOT NULL, UNIQUE (caller_scope, receipt_id, prov_id))"
+    ),
+  ]);
+  MIGRATED_DBS.add(db);
+}
+
 export async function ensureContextTable(db) {
-  await db
-    .prepare(
-      "CREATE TABLE IF NOT EXISTS context_entries (entry_id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL, summary TEXT NOT NULL, body_json TEXT NOT NULL, updated_at TEXT NOT NULL)"
-    )
-    .run();
+  await ensureSchema(db);
+}
+
+export function validateBlobSha256(blobSha) {
+  const cleaned = String(blobSha || "").trim();
+  if (!BLOB_SHA256_RE.test(cleaned)) {
+    throw new HermaErr(
+      400,
+      "invalid_blob_sha",
+      "Invalid Tessera Blob Digest",
+      `Tessera blob digest '${blobSha}' must match ^[0-9a-f]{64}$.`
+    );
+  }
+  return cleaned;
+}
+
+export async function verifyBlobBytes(blobSha, rawBytesOrBuffer) {
+  const expected = validateBlobSha256(blobSha);
+  const bytes =
+    typeof rawBytesOrBuffer === "string"
+      ? new TextEncoder().encode(rawBytesOrBuffer)
+      : new Uint8Array(rawBytesOrBuffer);
+  const actual = await sha256Hex(bytes);
+  if (actual !== expected) {
+    throw new HermaErr(
+      422,
+      "blob_integrity_mismatch",
+      "Tessera Blob Integrity Mismatch",
+      `Blob SHA-256 verification failed: expected ${expected}, got ${actual}.`
+    );
+  }
+  return new TextDecoder("utf-8", { fatal: false }).decode(bytes).slice(0, 780);
+}
+
+function splitCsvOrList(raw) {
+  if (typeof raw === "string") {
+    return raw
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+  }
+  if (Array.isArray(raw)) {
+    return raw.map((p) => String(p ?? "").trim()).filter(Boolean);
+  }
+  return [];
+}
+
+export function passesGovernanceLens(
+  rawItem,
+  { namespace = "herma.provisions", harnessKind = null, cohort = "", extraEnvelope = null } = {}
+) {
+  const merged = {};
+  if (extraEnvelope && typeof extraEnvelope === "object" && !Array.isArray(extraEnvelope)) {
+    Object.assign(merged, extraEnvelope);
+  }
+  if (rawItem && typeof rawItem === "object" && !Array.isArray(rawItem)) {
+    Object.assign(merged, rawItem);
+  }
+  const gov = merged.governance && typeof merged.governance === "object" ? merged.governance : {};
+  const meta = merged.metadata_tags && typeof merged.metadata_tags === "object" ? merged.metadata_tags : {};
+
+  const tags = new Set();
+  for (const src of [merged.tags, gov.tags, meta.tags]) {
+    for (const item of splitCsvOrList(src)) tags.add(item.toLowerCase());
+  }
+  for (const sc of [merged.status, gov.status, meta.status, meta.governance_status]) {
+    if (typeof sc === "string" && sc.trim()) {
+      const low = sc.trim().toLowerCase();
+      if (low.startsWith("status:")) tags.add(low);
+      else if (KNOWN_STATUS_VALUES.has(low)) tags.add(`status:${low}`);
+    }
+  }
+
+  // 1. Hard quarantine refusal:
+  if (
+    tags.has("status:quarantined") ||
+    merged.quarantined === true ||
+    gov.quarantined === true ||
+    String(meta.quarantined || "").trim().toLowerCase() === "true"
+  ) {
+    return false;
+  }
+
+  // 2. Verification requirement for status tags and cross-surface producers:
+  const hasStatusTag = [...tags].some((t) => t.startsWith("status:"));
+  if (hasStatusTag && !tags.has("status:verified")) {
+    return false;
+  }
+
+  // 3. Surface visibility allowance for surface:herma:
+  const vis = String(merged.visibility_scope || gov.visibility_scope || meta.visibility_scope || "")
+    .trim()
+    .toLowerCase();
+  const allowedSurfaces = new Set(
+    [
+      ...splitCsvOrList(merged.allowed_surfaces),
+      ...splitCsvOrList(gov.allowed_surfaces),
+      ...splitCsvOrList(meta.allowed_surfaces),
+    ].map((s) => {
+      const low = s.toLowerCase();
+      return low.startsWith("surface:") || low === "*" ? low : `surface:${low}`;
+    })
+  );
+  const rawProd = String(merged.producer_surface || gov.producer_surface || meta.producer_surface || "")
+    .trim()
+    .toLowerCase();
+  const normProd = !rawProd ? "" : rawProd.startsWith("surface:") ? rawProd : `surface:${rawProd}`;
+
+  if (normProd && normProd !== "surface:herma" && normProd !== "surface:tessera" && !tags.has("status:verified")) {
+    return false;
+  }
+  if (vis) {
+    if (vis === "public_commons") {
+      // allowed
+    } else if (vis === "private" || vis === "surface_only") {
+      if (normProd !== "surface:herma") return false;
+    } else if (vis === "allowlist_surfaces") {
+      if (normProd !== "surface:herma" && !allowedSurfaces.has("surface:herma") && !allowedSurfaces.has("*")) {
+        return false;
+      }
+    } else {
+      return false;
+    }
+  } else if (
+    allowedSurfaces.size > 0 &&
+    normProd !== "surface:herma" &&
+    !allowedSurfaces.has("surface:herma") &&
+    !allowedSurfaces.has("*")
+  ) {
+    return false;
+  }
+
+  // 4. Cohort / harness targeting check:
+  const cohortTargets = new Set();
+  for (const key of ["cohort", "cohorts", "target_cohort", "target_cohorts", "allowed_cohorts"]) {
+    for (const val of [merged[key], gov[key], meta[key]]) {
+      for (const token of splitCsvOrList(val)) cohortTargets.add(token.toLowerCase());
+    }
+  }
+  for (const key of ["allowed_harnesses", "target_harness"]) {
+    for (const val of [merged[key], gov[key], meta[key]]) {
+      for (const token of splitCsvOrList(val)) {
+        const low = token.toLowerCase();
+        cohortTargets.add(low.startsWith("harness:") || low === "all" ? low : `harness:${low}`);
+      }
+    }
+  }
+  for (const t of tags) {
+    if (t.startsWith("cohort:") || t.startsWith("harness:")) cohortTargets.add(t);
+  }
+
+  if (cohortTargets.size > 0 && harnessKind != null) {
+    if (
+      cohortTargets.has("all") ||
+      cohortTargets.has("*") ||
+      cohortTargets.has("cohort:all") ||
+      cohortTargets.has("harness:all")
+    ) {
+      return true;
+    }
+    const hk = String(harnessKind).trim().toLowerCase();
+    const callerTokens = new Set([hk, `harness:${hk}`]);
+    for (const rawC of splitCsvOrList(cohort)) {
+      const lowC = rawC.toLowerCase();
+      callerTokens.add(lowC);
+      if (lowC.startsWith("cohort:")) callerTokens.add(lowC.slice("cohort:".length));
+      else callerTokens.add(`cohort:${lowC}`);
+    }
+    const expandedTargets = new Set();
+    for (const tgt of cohortTargets) {
+      expandedTargets.add(tgt);
+      if (tgt.startsWith("cohort:")) expandedTargets.add(tgt.slice("cohort:".length));
+    }
+    let matchedAny = false;
+    for (const tok of callerTokens) {
+      if (expandedTargets.has(tok)) {
+        matchedAny = true;
+        break;
+      }
+    }
+    if (!matchedAny) return false;
+  }
+
+  return true;
+}
+
+export function stripGovernanceEnvelopeForProvision(rawVal, extraEnvelope = null) {
+  if (!rawVal || typeof rawVal !== "object" || Array.isArray(rawVal)) return rawVal;
+  const cleaned = {};
+  for (const [k, v] of Object.entries(rawVal)) {
+    if (!GOV_ENVELOPE_KEYS.has(k)) cleaned[k] = v;
+  }
+  const meta = { ...(cleaned.metadata_tags && typeof cleaned.metadata_tags === "object" ? cleaned.metadata_tags : {}) };
+  const gov = rawVal.governance && typeof rawVal.governance === "object" ? rawVal.governance : {};
+  const envMap = extraEnvelope && typeof extraEnvelope === "object" ? extraEnvelope : {};
+
+  const collectedCohorts = [];
+  for (const key of ["cohort", "cohorts", "target_cohort", "target_cohorts", "allowed_cohorts"]) {
+    for (const src of [rawVal[key], gov[key], envMap[key]]) {
+      collectedCohorts.push(...splitCsvOrList(src));
+    }
+  }
+  for (const tag of [...splitCsvOrList(rawVal.tags), ...splitCsvOrList(gov.tags), ...splitCsvOrList(envMap.tags)]) {
+    const low = tag.toLowerCase();
+    if (low.startsWith("cohort:") || low.startsWith("harness:")) collectedCohorts.push(low);
+    else if (low.startsWith("status:") && !("status" in meta)) meta.status = low;
+  }
+  const nonAll = [...new Set(collectedCohorts)].filter((c) => c.toLowerCase() !== "all");
+  if (nonAll.length && !("cohort" in meta)) {
+    meta.cohort = nonAll.join(",");
+  }
+  for (const key of ["visibility_scope", "producer_surface"]) {
+    const val = rawVal[key] || gov[key] || envMap[key];
+    if (typeof val === "string" && val.trim() && !(key in meta)) {
+      const low = val.trim().toLowerCase();
+      if (key === "producer_surface" && low === "surface:tessera") continue;
+      if (key === "visibility_scope" && low === "public_commons") continue;
+      meta[key] = val.trim();
+    }
+  }
+  const allowedSurfs = splitCsvOrList(rawVal.allowed_surfaces || gov.allowed_surfaces || envMap.allowed_surfaces);
+  if (allowedSurfs.length && !("allowed_surfaces" in meta)) {
+    meta.allowed_surfaces = allowedSurfs.join(",");
+  }
+  if (Object.keys(meta).length > 0) cleaned.metadata_tags = meta;
+  return cleaned;
+}
+
+export function stripGovernanceEnvelopeForContext(rawVal) {
+  if (!rawVal || typeof rawVal !== "object" || Array.isArray(rawVal)) return rawVal;
+  const cleaned = {};
+  for (const [k, v] of Object.entries(rawVal)) {
+    if (!GOV_ENVELOPE_KEYS.has(k)) cleaned[k] = v;
+  }
+  return cleaned;
+}
+
+export function provisionPassesLens(stored, { harnessKind, cohort = "" }) {
+  return passesGovernanceLens(
+    { metadata_tags: stored?.provision?.metadata_tags || {} },
+    { namespace: "herma.provisions", harnessKind, cohort }
+  );
 }
 
 export function validateContextEntry(raw) {
@@ -354,6 +926,7 @@ export function validateContextEntry(raw) {
         ? raw.schema_or_body
         : String(raw.schema_or_body);
   const updatedAt = String(raw.updated_at || "").trim() || new Date().toISOString();
+  const version = raw.version != null && Number.isFinite(Number(raw.version)) ? Math.max(1, Math.trunc(Number(raw.version))) : 1;
   return {
     entry_id: entryId,
     kind,
@@ -361,6 +934,7 @@ export function validateContextEntry(raw) {
     summary,
     schema_or_body: schemaOrBody,
     source_uri: sourceUri,
+    version,
     updated_at: updatedAt,
   };
 }
@@ -368,6 +942,15 @@ export function validateContextEntry(raw) {
 export function validateProvisionPayload(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new HermaErr(422, "validation_error", "Invalid Provision", "Expected JSON object.");
+  }
+  const provId = String(raw.prov_id || "").trim();
+  if (!/^PROV-[A-Z0-9][A-Z0-9-]{2,62}$/.test(provId)) {
+    throw new HermaErr(
+      422,
+      "validation_error",
+      "Invalid Provision",
+      "prov_id must match ^PROV-[A-Z0-9][A-Z0-9-]{2,62}$."
+    );
   }
   const action = raw.action || "shim_context";
   if (action !== "shim_context" && action !== "respond_directly") {
@@ -398,12 +981,31 @@ export function validateProvisionPayload(raw) {
     }
     if (!refs.includes(cleaned)) refs.push(cleaned);
   }
+  for (const u of raw.uris || []) {
+    const uriStr = String(u?.uri || "").trim();
+    if (!ALLOWED_URI_SCHEMES.some((s) => uriStr.startsWith(s))) {
+      throw new HermaErr(
+        422,
+        "validation_error",
+        "Invalid Provision URI",
+        `URI '${uriStr}' must start with one of: ${ALLOWED_URI_SCHEMES.join(", ")}`
+      );
+    }
+  }
   return {
     ...raw,
+    prov_id: provId,
+    priority: raw.priority ?? 100,
+    enabled: raw.enabled ?? true,
     action,
     direct_response: raw.direct_response ?? null,
     context_refs: refs,
+    inject_position: raw.inject_position || "system_suffix",
+    dedupe_mode: raw.dedupe_mode || "once_per_conversation",
+    max_chars: raw.max_chars ?? 2400,
     inject_text: raw.inject_text ?? "",
+    uris: Array.isArray(raw.uris) ? raw.uris : [],
+    metadata_tags: raw.metadata_tags && typeof raw.metadata_tags === "object" ? raw.metadata_tags : {},
   };
 }
 
@@ -465,7 +1067,8 @@ export function enforceNotConsumerAssistant(request) {
 }
 
 export function refuseContributorModel(model) {
-  if (String(model || "").trim().toLowerCase().includes("-contributor")) {
+  const cleaned = String(model || "").trim().toLowerCase();
+  if (cleaned === "contributor" || cleaned.includes("-contributor")) {
     throw new HermaErr(
       403,
       "contributor_tier_refused",
@@ -475,7 +1078,34 @@ export function refuseContributorModel(model) {
   }
 }
 
-export async function authenticateHarness(db, request) {
+export function isAdminRequest(request, env) {
+  const candidates = [
+    (env?.HERMA_ADMIN_TOKEN || "").trim(),
+    (env?.BOOTSTRAP_SECRET || "").trim(),
+    (env?.EDGE_SECRET || "").trim(),
+  ].filter(Boolean);
+  if (!candidates.length) return false;
+
+  const suppliedList = [];
+  for (const hdr of ["x-herma-admin-token", "x-bootstrap-secret"]) {
+    const val = (request.headers.get(hdr) || "").trim();
+    if (val) suppliedList.push(val);
+  }
+  const auth = (request.headers.get("authorization") || "").trim();
+  if (auth.toLowerCase().startsWith("bearer ")) {
+    const bearer = auth.slice(7).trim();
+    if (bearer && !bearer.startsWith("hmk_")) suppliedList.push(bearer);
+  }
+  for (const supplied of suppliedList) {
+    for (const expected of candidates) {
+      if (constantTimeEqual(supplied, expected)) return true;
+    }
+  }
+  return false;
+}
+
+export async function authenticateHarness(db, request, { isAdmin = false } = {}) {
+  await ensureSchema(db);
   let raw = (request.headers.get("x-herma-key") || "").trim();
   if (!raw) {
     const auth = (request.headers.get("authorization") || "").trim();
@@ -512,6 +1142,8 @@ export async function authenticateHarness(db, request) {
     label: row.label,
     harness_kind: row.harness_kind,
     scopes: new Set(JSON.parse(row.scopes_json || "[]")),
+    is_admin: Boolean(isAdmin),
+    caller_scope: `key:${row.key_id}`,
   };
 }
 
@@ -544,6 +1176,226 @@ export function requireScope(principal, requiredScope, request) {
     }
   }
 }
+
+// --- Deterministic Anti-RAG Entity Extraction & Candidate Provision Synthesis ---
+
+const URL_SPAN_RE = /(?:https?|tessera|mcp):\/\/\S+|urn:[A-Za-z0-9_.:/-]+/g;
+const TESSERA_URI_RE = /tessera:\/\/(?:blobs|buckets|stores)\/[A-Za-z0-9_./:-]+/g;
+const NOUN_VERB_URI_RE = /\b(?:noun|verb|detail):[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_./:-]+)?/g;
+const FILE_PATH_RE = /(?<![A-Za-z0-9_.:/-])(?:\.\/|\.\.\/|\/)?(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,10}\b/g;
+const BACKTICK_FILE_RE = /`([A-Za-z0-9_.-]+\.(?:py|js|mjs|ts|tsx|sql|json|jsonc|toml|yaml|yml|md|sh|rs|go))`/g;
+const DECL_SYMBOL_RE = /\b(?:def|class|function|interface|type)\s+([A-Za-z_][A-Za-z0-9_]{1,80})\b/g;
+const BACKTICK_SYMBOL_RE = /`([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+(?:\(\))?|[A-Za-z_][A-Za-z0-9_]{1,80}\(\))`/g;
+const CALL_SYMBOL_RE = /\b([A-Za-z_][A-Za-z0-9_]{2,64}\(\))/g;
+const STATUTE_CARD_RE = /\b(?:CARD-[A-Z0-9][A-Z0-9_-]{1,48}|(?:US|UK|EU|AU|CA|SG|IN|GLOBAL|UN|INTL)-[A-Z0-9]{2,16}-[A-Z0-9-]{1,32})\b/g;
+const EXCEPTION_SIG_RE = /\b(?:[A-Za-z_][A-Za-z0-9_.]*\.)?[A-Z][A-Za-z0-9_]*(?:Error|Exception|Conflict|Fault):\s*[^\r\n]{1,140}/g;
+const HTTP_ERR_SIG_RE = /\bHTTP\s+[45]\d{2}(?:\s+[A-Za-z0-9_/-]{2,64}(?:\s+[A-Za-z0-9_/-]{1,32}){0,3})?/g;
+
+const FILE_EXTENSIONS = new Set([
+  "py", "js", "mjs", "ts", "tsx", "sql", "json", "jsonc", "toml", "yaml", "yml", "md", "sh", "rs", "go", "css", "html", "txt",
+]);
+const DOMAIN_TLDS = new Set(["com", "dev", "org", "io", "net", "ai", "gov", "edu", "test", "local"]);
+const IGNORED_CALLS = new Set(["if()", "for()", "while()", "switch()", "catch()", "return()"]);
+
+function cleanEntityToken(raw) {
+  return String(raw || "").trim().replace(/[.,;:)\]}'"`]+$/, "");
+}
+
+function looksLikeDomainSegment(seg) {
+  if (!seg || !seg.includes(".") || seg.startsWith(".")) return false;
+  const tld = seg.split(".").pop().toLowerCase();
+  return DOMAIN_TLDS.has(tld);
+}
+
+export function extractEntities(text, extraPaths = []) {
+  const bounded = String(text || "").slice(0, 65536);
+  const seen = new Set();
+  const results = [];
+
+  const add = (kind, rawVal) => {
+    if (results.length >= 64) return;
+    const val = String(rawVal || "").replace(/\s+/g, " ").trim().slice(0, 240);
+    if (val.length < 2) return;
+    const key = `${kind}\u0000${val}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      results.push({ kind, value: val });
+    }
+  };
+
+  for (const m of bounded.matchAll(TESSERA_URI_RE)) add("tessera_uri", cleanEntityToken(m[0]));
+  for (const m of bounded.matchAll(NOUN_VERB_URI_RE)) add("tessera_uri", cleanEntityToken(m[0]));
+
+  for (const rawPath of extraPaths || []) {
+    const cleanedExtra = cleanEntityToken(rawPath).replace(/^(?:\.\/)+/, "");
+    if (cleanedExtra && !cleanedExtra.startsWith("http://") && !cleanedExtra.startsWith("https://") && !cleanedExtra.startsWith("tessera://")) {
+      add("file_path", cleanedExtra);
+    }
+  }
+
+  const scrubbed = bounded.replace(URL_SPAN_RE, " ");
+  for (const m of scrubbed.matchAll(FILE_PATH_RE)) {
+    const norm = cleanEntityToken(m[0]).replace(/^(?:\.\/)+/, "");
+    const firstSeg = norm.split("/")[0] || "";
+    if (looksLikeDomainSegment(firstSeg)) continue;
+    if (norm) add("file_path", norm);
+  }
+  for (const m of scrubbed.matchAll(BACKTICK_FILE_RE)) add("file_path", cleanEntityToken(m[1]));
+
+  for (const m of bounded.matchAll(DECL_SYMBOL_RE)) add("code_symbol", m[1]);
+  for (const m of bounded.matchAll(BACKTICK_SYMBOL_RE)) {
+    const sym = cleanEntityToken(m[1]);
+    if (!sym.endsWith("()") && sym.includes(".")) {
+      const ext = sym.split(".").pop().toLowerCase();
+      if (FILE_EXTENSIONS.has(ext) || looksLikeDomainSegment(sym)) continue;
+    }
+    add("code_symbol", sym);
+  }
+  for (const m of scrubbed.matchAll(CALL_SYMBOL_RE)) {
+    if (!IGNORED_CALLS.has(m[1].toLowerCase())) add("code_symbol", m[1]);
+  }
+
+  for (const m of bounded.matchAll(STATUTE_CARD_RE)) add("statute_card_id", m[0]);
+
+  for (const m of bounded.matchAll(EXCEPTION_SIG_RE)) add("error_signature", m[0].replace(/[.,;)]+$/, ""));
+  for (const m of bounded.matchAll(HTTP_ERR_SIG_RE)) add("error_signature", m[0].replace(/[.,;)]+$/, ""));
+
+  return results;
+}
+
+export function estimateTokensSaved(promptText, directResponseText) {
+  if (!directResponseText) return 0;
+  const rawChars = String(promptText || "").length + String(directResponseText || "").length;
+  return Math.max(16, Math.floor(rawChars / 4) + 96);
+}
+
+function slugifyUpper(raw, maxLen = 18) {
+  const cleaned = String(raw || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!cleaned) return "ITEM";
+  return cleaned.slice(0, maxLen).replace(/-+$/, "") || "ITEM";
+}
+
+export async function synthesizeCandidateProvisions(entities, activeProvisions, projectTag = "default") {
+  const existingIds = new Set((activeProvisions || []).map((sp) => sp.provision.prov_id));
+  const shimmedUris = new Set(
+    (activeProvisions || []).flatMap((sp) => (sp.provision.uris || []).map((u) => u.uri))
+  );
+  const shimmedRefs = new Set(
+    (activeProvisions || []).flatMap((sp) => sp.provision.context_refs || [])
+  );
+  const existingKeywords = new Set(
+    (activeProvisions || []).flatMap((sp) =>
+      (sp.provision.triggers?.keyword?.any_keywords || []).map((kw) => String(kw).toLowerCase())
+    )
+  );
+
+  const candidates = [];
+  const seenProvIds = new Set();
+
+  for (const ent of entities || []) {
+    if (Number(ent.hit_count || 0) < 2) continue;
+    const val = String(ent.entity_value || "").trim();
+    const h6 = (await sha256Hex(`${ent.entity_kind}:${val}`)).slice(0, 6).toUpperCase();
+
+    if (ent.entity_kind === "error_signature") {
+      const head = val.split(":")[0].trim();
+      const slug = slugifyUpper(head, 20);
+      const provId = `PROV-CAND-ERR-${slug}-${h6}`.slice(0, 48).replace(/-+$/, "");
+      if (existingIds.has(provId) || seenProvIds.has(provId)) continue;
+      const kwList = [head.length >= 3 ? head : val.slice(0, 48)];
+      if (!kwList.some((k) => k.toLowerCase() === val.slice(0, 64).toLowerCase())) {
+        kwList.push(val.slice(0, 64));
+      }
+      candidates.push(
+        validateProvisionPayload({
+          prov_id: provId,
+          title: `Guard Recurring ${head.slice(0, 80)}`,
+          summary: `Reviewable candidate synthesized from ${ent.hit_count} recurring error_signature hits in project ${projectTag}.`.slice(0, 400),
+          priority: 220,
+          enabled: true,
+          action: "shim_context",
+          inject_position: "developer_context",
+          dedupe_mode: "once_per_conversation",
+          max_chars: 1800,
+          inject_text: `Recurring error signature observed (${ent.hit_count}x): ${val}. Verify preconditions, schema contracts, and compare-and-set versions before retrying the failing call.`.slice(0, 12000),
+          metadata_tags: {
+            review_status: "draft_candidate",
+            source_kind: "error_signature",
+            project_tag: projectTag,
+            hit_count: String(ent.hit_count),
+          },
+          triggers: { mode: "any", keyword: { any_keywords: kwList } },
+        })
+      );
+      seenProvIds.add(provId);
+    } else if (ent.entity_kind === "tessera_uri") {
+      if (shimmedUris.has(val) || shimmedRefs.has(val) || existingKeywords.has(val.toLowerCase())) continue;
+      const tail = val.split("/").pop().split(":").pop();
+      const slug = slugifyUpper(tail, 18);
+      const provId = `PROV-CAND-URI-${slug}-${h6}`.slice(0, 48).replace(/-+$/, "");
+      if (existingIds.has(provId) || seenProvIds.has(provId)) continue;
+      const isRef = val.startsWith("noun:") || val.startsWith("verb:") || val.startsWith("detail:");
+      candidates.push(
+        validateProvisionPayload({
+          prov_id: provId,
+          title: `Shim Hot Tessera Context ${val.slice(0, 80)}`,
+          summary: `Reviewable candidate synthesized from ${ent.hit_count} un-shimmed tessera_uri hits in project ${projectTag}.`.slice(0, 400),
+          priority: 210,
+          enabled: true,
+          action: "shim_context",
+          context_refs: isRef ? [val] : [],
+          inject_position: "system_suffix",
+          dedupe_mode: "once_per_conversation",
+          max_chars: 2200,
+          inject_text: `Attach authoritative Tessera resource ${val} whenever this noun, verb, or artifact is referenced so turns remain grounded without re-querying.`,
+          uris: isRef ? [] : [{ uri: val, label: `Hot Tessera Resource (${val.slice(0, 60)})`, kind: "store_record" }],
+          metadata_tags: {
+            review_status: "draft_candidate",
+            source_kind: "tessera_uri",
+            project_tag: projectTag,
+            hit_count: String(ent.hit_count),
+          },
+          triggers: { mode: "any", keyword: { any_keywords: [val] } },
+        })
+      );
+      seenProvIds.add(provId);
+    } else if (ent.entity_kind === "statute_card_id") {
+      if (existingKeywords.has(val.toLowerCase())) continue;
+      const slug = slugifyUpper(val, 20);
+      const provId = `PROV-CAND-CARD-${slug}-${h6}`.slice(0, 48).replace(/-+$/, "");
+      if (existingIds.has(provId) || seenProvIds.has(provId)) continue;
+      candidates.push(
+        validateProvisionPayload({
+          prov_id: provId,
+          title: `Shim Statute Card ${val.slice(0, 80)} Guardrails`,
+          summary: `Reviewable candidate synthesized from ${ent.hit_count} un-shimmed statute_card_id hits in project ${projectTag}.`.slice(0, 400),
+          priority: 230,
+          enabled: true,
+          action: "shim_context",
+          inject_position: "system_suffix",
+          dedupe_mode: "once_per_conversation",
+          max_chars: 2000,
+          inject_text: `When evaluating statute card ${val}, tie risk indicators strictly to primary statutory elements and deterministic arithmetic without making accusatory claims.`,
+          uris: [{ uri: `urn:herma:statute-card:${val}`, label: `Statute Card ${val}`, kind: "statute_card" }],
+          metadata_tags: {
+            review_status: "draft_candidate",
+            source_kind: "statute_card_id",
+            project_tag: projectTag,
+            hit_count: String(ent.hit_count),
+          },
+          triggers: { mode: "any", keyword: { any_keywords: [val] } },
+        })
+      );
+      seenProvIds.add(provId);
+    }
+  }
+  return candidates;
+}
+
+// --- 3-Tier Trigger Engine ---
 
 function globMatch(name, pattern) {
   let re = "^";
@@ -675,12 +1527,12 @@ function evaluateSemantic(spec, text) {
   };
 }
 
-async function evaluateMicromodel(spec, text, env) {
+async function evaluateMicromodel(spec, text, env, { offlineOnly = false } = {}) {
   if (!spec) return { matched: false, reasons: [], confidence: null };
-  const mmUrl = (env.HERMA_MICROMODEL_URL || "").trim();
-  const mmModel = (env.HERMA_MICROMODEL_MODEL || "muse-spark-open").trim();
+  const mmUrl = (env?.HERMA_MICROMODEL_URL || "").trim();
+  const mmModel = (env?.HERMA_MICROMODEL_MODEL || "muse-spark-open").trim();
   refuseContributorModel(mmModel);
-  if (mmUrl) {
+  if (!offlineOnly && mmUrl) {
     try {
       const headers = { "content-type": "application/json" };
       if (env.HERMA_MICROMODEL_API_KEY) headers["authorization"] = `Bearer ${env.HERMA_MICROMODEL_API_KEY}`;
@@ -728,7 +1580,7 @@ async function evaluateMicromodel(spec, text, env) {
   return { matched: false, reasons: [], confidence: 0.0 };
 }
 
-export async function evaluateProvisions(storedList, ctx, env) {
+export async function evaluateProvisions(storedList, ctx, env, { offlineOnly = false } = {}) {
   const results = [];
   for (const stored of storedList) {
     const prov = stored.provision;
@@ -762,7 +1614,7 @@ export async function evaluateProvisions(storedList, ctx, env) {
       } else if (mode === "all") continue;
     }
     if (t.micromodel && !(mode === "any" && matchedTiers.length > 0)) {
-      const r3 = await evaluateMicromodel(t.micromodel, ctx.text, env);
+      const r3 = await evaluateMicromodel(t.micromodel, ctx.text, env, { offlineOnly });
       mmConfidence = r3.confidence;
       if (r3.matched) {
         matchedTiers.push("micromodel");
@@ -890,9 +1742,9 @@ export function renderContextEntriesBlock(refs, contextMap) {
     } else if (typeof entry.schema_or_body === "string" && entry.schema_or_body.trim()) {
       bodyExcerpt = entry.schema_or_body.trim();
     }
-    if (bodyExcerpt.length > 320) bodyExcerpt = bodyExcerpt.slice(0, 319).trimEnd() + "…";
+    if (bodyExcerpt.length > 320) bodyExcerpt = bodyExcerpt.slice(0, 319).trimEnd() + "...";
     let line = `- [${String(entry.kind || "detail").toUpperCase()}] ${entry.entry_id} (${entry.title}): ${String(entry.summary || "").trim()}`;
-    if (bodyExcerpt) line += ` — ${bodyExcerpt}`;
+    if (bodyExcerpt) line += ` -- ${bodyExcerpt}`;
     if (entry.source_uri) {
       line += ` [URI: ${entry.source_uri}]`;
       if (!uris.includes(entry.source_uri)) uris.push(entry.source_uri);
@@ -991,7 +1843,8 @@ export async function assembleAugmentedRequest(
   payload,
   matches,
   maxTotalChars = 8000,
-  contextMap = null
+  contextMap = null,
+  { projectTag = "default", entitiesTracked = 0 } = {}
 ) {
   const prefixBlocks = [];
   const suffixBlocks = [];
@@ -1081,6 +1934,7 @@ export async function assembleAugmentedRequest(
     receipt_id: receiptId,
     harness_kind: principal.harness_kind,
     key_id: principal.key_id,
+    project_tag: projectTag,
     wire_format: envelope.wire_format,
     model: envelope.model,
     provisions_fired: firedIds,
@@ -1091,6 +1945,7 @@ export async function assembleAugmentedRequest(
     responded_directly: respondedDirectly,
     direct_response_text: directResponseText,
     shimmed_context_refs: shimmedContextRefs,
+    entities_tracked: Number(entitiesTracked || 0),
   };
   const receiptSha = await sha256Hex(canonicalJson(core));
   return {
@@ -1099,20 +1954,153 @@ export async function assembleAugmentedRequest(
   };
 }
 
-const STYLE = `:root{color-scheme:light dark;--bg:#0c1017;--card:#131a24;--border:#253244;--fg:#eef2f7;--muted:#9fb0c5;--accent:#67b7ff;--pill:#1b2738}
-@media (prefers-color-scheme:light){:root{--bg:#f6f7f9;--card:#fff;--border:#d8e0ea;--fg:#101824;--muted:#4b5b70;--accent:#0b5fff;--pill:#eaf1fb}}
-*{box-sizing:border-box}body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg);line-height:1.55}
-main{max-width:1040px;margin:0 auto;padding:2.8rem 1.4rem 3.5rem}nav{display:flex;gap:1rem;margin-bottom:1.6rem;font-size:.92rem}
-nav a{color:var(--accent);text-decoration:none;font-weight:600}.pill{display:inline-block;padding:.2rem .6rem;border-radius:999px;background:var(--pill);color:var(--accent);font-size:.76rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
-h1{margin:.6rem 0 .5rem;font-size:clamp(1.7rem,3vw,2.35rem)}.lead{color:var(--muted);max-width:820px;margin:0 0 1.8rem}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:1rem;margin-bottom:1.8rem}
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.2rem}.card h2,.card h3{margin:.2rem 0 .5rem;font-size:1.08rem}
-pre,code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.86rem}pre{background:var(--pill);border:1px solid var(--border);border-radius:8px;padding:.9rem;overflow-x:auto}
-table{width:100%;border-collapse:collapse;font-size:.9rem;background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden}
-th,td{text-align:left;padding:.65rem .85rem;border-bottom:1px solid var(--border);vertical-align:top}th{color:var(--muted);font-weight:600}`;
+// --- Discovery & Server-Rendered HTML ---
 
-export function renderOverviewHtml(provisions, receipts, publicUrl, contextEntries = []) {
-  const pRows = provisions
+export function buildAgentCard(publicUrl) {
+  const base = String(publicUrl || "").replace(/\/+$/, "");
+  return {
+    name: "Herma",
+    description:
+      "Context-shimming AI middleware for configurable coding harnesses: 3-tier trigger evaluation, caller-isolated atomic noun/verb context database, zero-token direct responses, deterministic entity memory, and self-improving rule insights.",
+    url: base,
+    version: HERMA_VERSION,
+    protocol_version: "1.0",
+    capabilities: {
+      streaming: true,
+      mcp: true,
+      context_shimming: true,
+      direct_response: true,
+      caller_isolation: true,
+      entity_memory: true,
+      self_improving_insights: true,
+    },
+    endpoints: {
+      mcp: `${base}/mcp`,
+      preview: `${base}/api/preview`,
+      health: `${base}/healthz`,
+      llms_txt: `${base}/llms.txt`,
+      llms_full_txt: `${base}/llms-full.txt`,
+      handshake: `${base}/v1/handshake`,
+      dry_run: `${base}/v1/dry-run`,
+      chat_completions: `${base}/v1/chat/completions`,
+      responses: `${base}/v1/responses`,
+      messages: `${base}/v1/messages`,
+      memory: `${base}/v1/memory`,
+      outcomes: `${base}/v1/outcomes`,
+      insights: `${base}/v1/insights`,
+    },
+    authentication: {
+      schemes: ["bearer", "x-herma-key"],
+      credential_prefix: "hmk_",
+      configurable_harnesses_only: true,
+      allowed_harnesses: [...ALLOWED_HARNESS_KINDS],
+    },
+    skills: [
+      {
+        id: "list_builtin_provisions",
+        name: "List Builtin Provisions",
+        description: "Inspect starter system_builtin context-shimming and direct-response provisions.",
+      },
+      {
+        id: "preview_shim",
+        name: "Preview Context Shim & Triggers",
+        description: "Dry-run 3-tier builtin triggers and context shimming in memory without persisting state.",
+      },
+      {
+        id: "extract_entities",
+        name: "Extract Top-of-Mind Entities",
+        description: "Deterministically extract file paths, code symbols, Tessera URIs, statute card IDs, and error signatures.",
+      },
+    ],
+  };
+}
+
+export function buildLlmsTxt(publicUrl) {
+  const base = String(publicUrl || "").replace(/\/+$/, "");
+  return [
+    "# Herma",
+    "",
+    "> Context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim caller-isolated noun, verb, and URI context before LLM execution.",
+    "",
+    `- Base URL: ${base}`,
+    `- Full Reference: ${base}/llms-full.txt`,
+    `- Agent Card: ${base}/.well-known/agent-card.json`,
+    `- Stateless MCP JSON-RPC: POST ${base}/mcp`,
+    `- Read-Only Preview: POST ${base}/api/preview`,
+    `- Health: GET ${base}/healthz`,
+    "",
+    "## Core Authenticated Endpoints (`hmk_` Harness Key Required)",
+    "- `POST /v1/handshake`: Negotiate Surface Handshake v1.0 limits (`X-Surface-Id`).",
+    "- `POST /v1/dry-run`: Inspect caller-isolated augmented payload, matches, entities, and receipt.",
+    "- `POST /v1/chat/completions`, `POST /v1/responses`, `POST /v1/messages`: Multi-wire shim or direct-response proxy.",
+    "- `GET|POST /v1/context`, `GET /v1/provisions`, `PUT|DELETE /v1/provisions/{prov_id}`: Caller-scoped atomic CAS CRUD (`system_builtin` protected with 403).",
+    "- `GET /v1/memory`, `POST /v1/outcomes`, `GET /v1/insights`: Deterministic Anti-RAG working entity memory and reviewable candidate rules.",
+    "",
+  ].join("\n");
+}
+
+export function buildLlmsFullTxt(publicUrl) {
+  const base = String(publicUrl || "").replace(/\/+$/, "");
+  const provSummaries = DEFAULT_PROVISIONS.map(
+    (p) => `- \`${p.prov_id}\` (\`${p.action}\`, priority ${p.priority}): ${p.summary}`
+  ).join("\n");
+  return [
+    buildLlmsTxt(base).trimEnd(),
+    "",
+    "## Starter Builtin Provisions (`caller_scope = system_builtin`)",
+    provSummaries,
+    "",
+    "## Security & Isolation Invariants",
+    "- Multi-caller non-poisoning: custom provisions, context entries, receipts, working entities, and outcomes are strictly partitioned by `caller_scope = key:<key_id>`.",
+    "- Builtin protection: non-admin attempts to overwrite or delete `system_builtin` provisions or context entries return `403 builtin_protected`.",
+    "- Admin key lockdown: `/v1/admin/keys` requires bootstrap/admin secret (`403 admin_required` for ordinary `configure` keys).",
+    "- Layer-1 Governance Lens: refuses `status:quarantined` items, verifies SHA-256 on `tessera://blobs/<sha>`, and enforces `visibility_scope`, `allowed_surfaces`, and `X-Herma-Cohort`.",
+    "- Standard mode only: refuses `contributor` and `*-contributor` model identifiers (`403 contributor_tier_refused`).",
+    "",
+  ].join("\n");
+}
+
+const STYLE = `:root{color-scheme:light dark;--bg:#0c1017;--card:#131a24;--border:#253244;--fg:#eef2f7;--muted:#9fb0c5;--accent:#67b7ff;--pill:#1b2738;--danger:#ff7b7b;--ok:#53d69a}
+@media (prefers-color-scheme:light){:root{--bg:#f6f7f9;--card:#fff;--border:#d8e0ea;--fg:#101824;--muted:#4b5b70;--accent:#0b5fff;--pill:#eaf1fb;--danger:#b42318;--ok:#067647}}
+*{box-sizing:border-box}html,body{max-width:100%;overflow-x:hidden;margin:0;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg);line-height:1.55}
+.site-header{border-bottom:1px solid var(--border);background:var(--card)}.header-inner{max-width:1040px;margin:0 auto;padding:.9rem 1.2rem;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.8rem 1.2rem}
+.brand{display:inline-flex;align-items:center;gap:.55rem;color:var(--fg);text-decoration:none;font-weight:700;font-size:1.05rem}.brand-mark{color:var(--accent);flex-shrink:0}
+nav{display:flex;flex-wrap:wrap;gap:.55rem 1rem;font-size:.9rem;align-items:center}nav a{color:var(--accent);text-decoration:none;font-weight:600}nav a:hover{text-decoration:underline}
+main{max-width:1040px;margin:0 auto;padding:2rem 1.2rem 3rem}
+.site-footer{max-width:1040px;margin:0 auto;padding:1.4rem 1.2rem 2.4rem;border-top:1px solid var(--border);color:var(--muted);font-size:.86rem;display:flex;flex-wrap:wrap;gap:.6rem 1.4rem;justify-content:space-between}.site-footer a{color:var(--accent);text-decoration:none}
+.pill{display:inline-block;padding:.2rem .6rem;border-radius:999px;background:var(--pill);color:var(--accent);font-size:.76rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+h1{margin:.6rem 0 .5rem;font-size:clamp(1.55rem,3vw,2.3rem);overflow-wrap:anywhere}.lead{color:var(--muted);max-width:820px;margin:0 0 1.8rem}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,270px),1fr));gap:1rem;margin-bottom:1.8rem}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.15rem;min-width:0}.card h2,.card h3{margin:.2rem 0 .5rem;font-size:1.06rem}
+pre,code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85rem}pre{background:var(--pill);border:1px solid var(--border);border-radius:8px;padding:.85rem;overflow-x:auto;max-width:100%;margin:.5rem 0 0}
+.table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border);border-radius:10px;background:var(--card);margin-bottom:1.4rem}
+table{width:100%;border-collapse:collapse;font-size:.89rem;min-width:540px}th,td{text-align:left;padding:.65rem .85rem;border-bottom:1px solid var(--border);vertical-align:top}tbody tr:last-child td{border-bottom:none}th{color:var(--muted);font-weight:600;white-space:nowrap}
+.inspector{margin:1.8rem 0 2.2rem}.preset-row{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:.8rem}
+.btn{appearance:none;border:1px solid var(--border);background:var(--pill);color:var(--fg);border-radius:8px;padding:.45rem .8rem;font-size:.85rem;font-weight:600;cursor:pointer}.btn-primary{background:var(--accent);color:#fff;border-color:var(--accent)}.btn:disabled{opacity:.6;cursor:wait}
+.form-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:.75rem;margin:.75rem 0}
+label{display:block;font-size:.82rem;font-weight:600;color:var(--muted);margin-bottom:.25rem}textarea,input[type="text"],select{width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:8px;padding:.55rem .7rem;font:inherit;font-size:.88rem}textarea{min-height:84px;resize:vertical}
+.preview-status{margin-top:.75rem;font-size:.86rem;color:var(--muted)}.preview-status.error{color:var(--danger);font-weight:600}.preview-status.ok{color:var(--ok)}
+.entity-tags{display:flex;flex-wrap:wrap;gap:.4rem;margin:.5rem 0}.entity-chip{display:inline-block;padding:.18rem .55rem;border-radius:6px;background:var(--pill);border:1px solid var(--border);font-size:.8rem}`;
+
+function renderHeader() {
+  return `<header class="site-header"><div class="header-inner"><a class="brand" href="/">${BRAND_SVG}<span>Herma</span></a><nav aria-label="Primary"><a href="/">Overview</a><a href="/connect">Connect Harness</a><a href="/healthz">Health JSON</a><a href="/llms.txt">llms.txt</a><a href="/.well-known/agent-card.json">Agent Card</a><a href="https://tessera.ta-amps.workers.dev/board">Tessera Cloud</a><a href="https://github.com/ta-amps/herma">GitHub</a></nav></div></header>`;
+}
+
+function renderFooter(publicUrl) {
+  return `<footer class="site-footer"><span>Endpoint: <code>${esc(publicUrl)}</code> · Backed by Cloudflare D1 (<code>ta-amps-herma</code>) · Standard mode only (<code>-contributor</code> refused).</span><span><a href="/llms.txt">llms.txt</a> · <a href="/llms-full.txt">llms-full.txt</a> · <a href="/.well-known/agent-card.json">agent-card.json</a></span></footer>`;
+}
+
+export function renderOverviewHtml(
+  provisions,
+  receiptsOrUnused,
+  publicUrl,
+  contextEntries = [],
+  aggregateCounts = null
+) {
+  const builtinProvs = (provisions || []).filter(
+    (sp) => !sp.caller_scope || sp.caller_scope === SYSTEM_BUILTIN_SCOPE
+  );
+  const pRows = builtinProvs
     .map((sp) => {
       const p = sp.provision;
       const tiers = ["keyword", "semantic", "micromodel"].filter((k) => p.triggers?.[k]);
@@ -1125,57 +2113,80 @@ export function renderOverviewHtml(provisions, receipts, publicUrl, contextEntri
     .slice(0, 25)
     .map(
       (e) =>
-        `<tr><td><code>${esc(e.entry_id)}</code></td><td><code>${esc(e.kind)}</code></td><td>${esc(e.title)}</td><td>${esc(e.summary)}</td><td>${e.source_uri ? `<code>${esc(e.source_uri)}</code>` : "—"}</td></tr>`
+        `<tr><td><code>${esc(e.entry_id)}</code></td><td><code>${esc(e.kind)}</code></td><td>${esc(e.title)}</td><td>${esc(e.summary)}</td><td>${e.source_uri ? `<code>${esc(e.source_uri)}</code>` : "--"}</td></tr>`
     )
     .join("");
-  const rRows = receipts
-    .slice(0, 10)
-    .map((r) => {
-      const modeTag = r.responded_directly ? "direct" : "shim";
-      return `<tr><td><code>${esc(String(r.receipt_sha256 || "").slice(0, 16))}…</code></td><td><code>${esc(r.harness_kind)}</code></td><td><code>${esc(r.wire_format)}</code> · <code>${esc(r.model)}</code></td><td><code>${esc((r.provisions_fired || []).join(", ") || "none")}</code> (${modeTag})</td><td>${r.injected_chars ?? 0} chars</td></tr>`;
-    })
-    .join("");
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Herma v${HERMA_VERSION} — Context-Shimming AI Middleware</title><style>${STYLE}</style></head><body><main>
-<nav><a href="/">Overview</a><a href="/connect">Connect Harness</a><a href="/api/health">Health JSON</a><a href="https://tessera.ta-amps.workers.dev/board">Tessera Cloud</a><a href="https://github.com/ta-amps/herma">GitHub</a></nav>
-<span class="pill">Herma v${HERMA_VERSION} · 24/7 Cloudflare D1 + Tessera Cloud</span>
+
+  const counts = aggregateCounts || {
+    total_intercepted_requests: Array.isArray(receiptsOrUnused) ? receiptsOrUnused.length : 0,
+    total_working_entities: 0,
+    total_rule_outcomes: 0,
+  };
+
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><link rel="icon" href="/favicon.svg" type="image/svg+xml"/><title>Herma v${HERMA_VERSION} -- Context-Shimming AI Middleware</title><style>${STYLE}</style></head><body>
+${renderHeader()}
+<main>
+<span class="pill">Herma v${HERMA_VERSION} · Programmable AI Request Middleware · 24/7 Cloudflare D1 + Tessera Cloud</span>
 <h1>Context-Shimming AI Middleware for Configurable Coding Harnesses</h1>
-<p class="lead"><strong>Herma:</strong> context-shimming AI middleware for configurable coding harnesses — intercepts requests via <strong>keyword</strong>, <strong>semantic</strong>, or <strong>micromodel</strong> rules to <strong>respond directly</strong> or shim atomic <strong>noun, verb, and URI context</strong> from a user-configured database before LLM execution. Generic consumer assistants and contributor-tier models remain deterministically refused.</p>
+<p class="lead"><strong>Herma:</strong> context-shimming AI middleware for configurable coding harnesses -- intercepts requests via <strong>keyword</strong>, <strong>semantic</strong>, or <strong>micromodel</strong> rules to <strong>respond directly</strong> or shim atomic <strong>noun, verb, and URI context</strong> from a user-configured database before LLM execution. Generic consumer assistants and contributor-tier models remain deterministically refused.</p>
 <section class="grid">
-<div class="card"><span class="pill">Tier 1–3 Rules</span><h3>Keyword, Semantic &amp; Micromodel</h3><p>Evaluates prompt terms, file path globs, tool names, semantic similarity, and micromodel intent routing without bloating static system prompts.</p></div>
-<div class="card"><span class="pill">shim_context</span><h3>Atomic Noun, Verb &amp; URI Shims</h3><p>Shims matched <code>noun:*</code>, <code>verb:*</code>, and <code>detail:*</code> context entries from D1 (<code>context_entries</code>) or <code>Tessera</code> Cloud stores into a bounded <code>[NOUN/VERB CONTEXT]</code> block.</p></div>
+<div class="card"><span class="pill">Tier 1-3 Rules</span><h3>Keyword, Semantic &amp; Micromodel</h3><p>Evaluates prompt terms, file path globs, tool names, semantic similarity, and micromodel intent routing without bloating static system prompts.</p></div>
+<div class="card"><span class="pill">Caller-Isolated Shims</span><h3>Atomic Noun, Verb &amp; Entity Memory</h3><p>Isolates custom rules, context entries, receipts, and top-of-mind working entities per <code>caller_scope</code> while protecting <code>system_builtin</code> guardrails.</p></div>
 <div class="card"><span class="pill">respond_directly</span><h3>Zero-Token Direct Responses</h3><p>Short-circuits upstream calls when a rule can answer directly across OpenAI, Responses, and Anthropic protocols while recording a SHA-256 <code>InjectionReceipt</code>.</p></div>
 </section>
-<h2>Active Cloud Provisions (${provisions.length})</h2>
-<table><thead><tr><th>ID</th><th>Title &amp; Action</th><th>Triggers</th><th>URIs &amp; Priority</th><th>Store</th></tr></thead><tbody>${pRows || "<tr><td colspan='5'>No provisions seeded yet.</td></tr>"}</tbody></table>
-<h2 style="margin-top:2rem;">Atomic Noun, Verb &amp; Detail Context Database (${(contextEntries || []).length})</h2>
-<table><thead><tr><th>Entry ID</th><th>Kind</th><th>Title</th><th>Summary</th><th>Source URI</th></tr></thead><tbody>${cRows || "<tr><td colspan='5'>No noun/verb/detail entries configured yet (<code>POST /v1/context</code>).</td></tr>"}</tbody></table>
-<h2 style="margin-top:2rem;">Recent Persistent Injection Receipts (${receipts.length})</h2>
-<table><thead><tr><th>SHA-256</th><th>Harness</th><th>Wire / Model</th><th>Provisions Fired</th><th>Chars</th></tr></thead><tbody>${rRows || "<tr><td colspan='5'>No intercepted requests recorded yet.</td></tr>"}</tbody></table>
-<p style="margin-top:1.5rem;color:var(--muted);font-size:.88rem;">Endpoint: <code>${esc(publicUrl)}</code> · Backed by Cloudflare D1 (<code>ta-amps-herma</code>) · Standard mode only (<code>-contributor</code> refused).</p>
-</main></body></html>`;
+<section class="card inspector" aria-labelledby="inspector-heading">
+<span class="pill">Read-Only Inspector · persisted: false</span>
+<h2 id="inspector-heading">Shim Trigger &amp; Entity Extractor Preview</h2>
+<p style="color:var(--muted);margin:0.2rem 0 0.8rem;font-size:0.9rem;">Test starter <code>system_builtin</code> provisions and deterministic regex entity extraction in memory without writing receipts or reading caller state.</p>
+<div class="preset-row">
+<button class="btn" type="button" data-herma-preset="fencing">Preset: Tessera Lease Fencing</button>
+<button class="btn" type="button" data-herma-preset="direct">Preset: Direct Noun/Verb Schema</button>
+<button class="btn" type="button" data-herma-preset="statute">Preset: Statute Card &amp; Error Retry</button>
+</div>
+<div><label for="herma-preview-prompt">Outbound Harness Prompt</label><textarea id="herma-preview-prompt" placeholder="e.g. Update src/tessera/_tasks.py to verify noun:tessera.lease_fence and US-ROSCA-8403"></textarea></div>
+<div class="form-row">
+<div><label for="herma-preview-path">Workspace Paths (comma-separated)</label><input id="herma-preview-path" type="text" placeholder="src/tessera/_tasks.py"/></div>
+<div><label for="herma-preview-wire">Wire Protocol</label><select id="herma-preview-wire"><option value="chat_completions">OpenAI /v1/chat/completions</option><option value="responses">Responses /v1/responses</option><option value="messages">Anthropic /v1/messages</option></select></div>
+</div>
+<button id="herma-preview-btn" class="btn btn-primary" type="button">Run Read-Only Preview</button>
+<div id="herma-preview-status" class="preview-status" role="status" aria-live="polite">Enter a coding-harness prompt or choose a preset above to preview builtin triggers and entity extraction (persisted: false).</div>
+<div id="herma-preview-output"></div>
+</section>
+<h2>Starter Builtin Provisions (${builtinProvs.length})</h2>
+<div class="table-wrap"><table><thead><tr><th>ID</th><th>Title &amp; Action</th><th>Triggers</th><th>URIs &amp; Priority</th><th>Store</th></tr></thead><tbody>${pRows || "<tr><td colspan='5'>No builtin provisions seeded yet.</td></tr>"}</tbody></table></div>
+<h2>Starter Builtin Noun, Verb &amp; Detail Context (${(contextEntries || []).length})</h2>
+<div class="table-wrap"><table><thead><tr><th>Entry ID</th><th>Kind</th><th>Title</th><th>Summary</th><th>Source URI</th></tr></thead><tbody>${cRows || "<tr><td colspan='5'>No builtin noun/verb/detail entries configured yet.</td></tr>"}</tbody></table></div>
+<h2>Aggregate Middleware Telemetry (Caller Receipts Isolated)</h2>
+<div class="table-wrap"><table><thead><tr><th>Builtin Provisions</th><th>Builtin Context Entries</th><th>Intercepted Turns</th><th>Tracked Entities</th><th>Outcome Signals</th></tr></thead><tbody><tr><td><code>${builtinProvs.length}</code></td><td><code>${(contextEntries || []).length}</code></td><td><code>${Number(counts.total_intercepted_requests || 0)}</code></td><td><code>${Number(counts.total_working_entities || 0)}</code></td><td><code>${Number(counts.total_rule_outcomes || 0)}</code></td></tr></tbody></table></div>
+</main>
+${renderFooter(publicUrl)}
+<script src="/preview.js" defer></script>
+</body></html>`;
 }
 
 export function renderConnectHtml(publicUrl) {
-  const base = esc(publicUrl.replace(/\/+$/, ""));
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Connect a Configurable Coding Harness — Herma</title><style>${STYLE}</style></head><body><main>
-<nav><a href="/">Overview</a><a href="/connect">Connect Harness</a><a href="/api/health">Health JSON</a><a href="https://github.com/ta-amps/herma">GitHub</a></nav>
+  const base = esc(String(publicUrl || "").replace(/\/+$/, ""));
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><link rel="icon" href="/favicon.svg" type="image/svg+xml"/><title>Connect a Configurable Coding Harness -- Herma</title><style>${STYLE}</style></head><body>
+${renderHeader()}
+<main>
 <span class="pill">Configurable Harnesses Only</span>
 <h1>Connect Muse Code, OpenCode, Claude Code, or Codex</h1>
 <p class="lead">Only fully configurable agentic coding harnesses that control custom base URLs, headers, and scoped <code>hmk_</code> credentials can route through or configure Herma. Generic consumer chat clients (such as Muse Personal Assistant) are deterministically refused with <code>HTTP 403 harness_required</code>.</p>
-<div class="card" style="margin-bottom:1.2rem;"><h3>1. Populate Atomic Noun / Verb Context Entries</h3><pre>curl -fsS -X POST ${base}/v1/context \\
+<div class="card" style="margin-bottom:1.2rem;"><h3>1. Populate Caller-Scoped Noun / Verb Context Entries</h3><pre>curl -fsS -X POST ${base}/v1/context \\
   -H "Content-Type: application/json" \\
   -H "X-Herma-Key: hmk_&lt;id&gt;.&lt;secret&gt;" \\
   -H "X-Herma-Harness: opencode" \\
-  -d '{"entry_id":"noun:tessera.lease_fence","kind":"noun","title":"Monotonic Lease Fence","summary":"Fences out stale workers on submit/heartbeat."}'</pre></div>
+  -d '{"entry_id":"noun:custom.lease_contract","kind":"noun","title":"Custom Lease Contract","summary":"Caller-scoped atomic noun definition."}'</pre></div>
 <div class="card" style="margin-bottom:1.2rem;"><h3>2. Dry-Run 3-Tier Context Shimming or Direct Response</h3><pre>curl -fsS -X POST ${base}/v1/dry-run \\
   -H "Content-Type: application/json" \\
   -H "X-Herma-Key: hmk_&lt;id&gt;.&lt;secret&gt;" \\
   -H "X-Herma-Harness: opencode" \\
+  -H "X-Herma-Project: my-repo" \\
   -d '{"wire_format":"chat_completions","payload":{"model":"muse-spark-open","messages":[{"role":"user","content":"Show the canonical noun/verb schema"}]}}'</pre></div>
-<div class="card"><h3>3. Sync Provisions &amp; Noun/Verb Context from Tessera Cloud</h3><pre>curl -fsS -X POST ${base}/v1/sync/tessera \\
-  -H "Content-Type: application/json" \\
+<div class="card"><h3>3. Sync Governed Provisions &amp; Inspect Self-Improving Insights</h3><pre>curl -fsS ${base}/v1/insights?project_tag=my-repo \\
   -H "X-Herma-Key: hmk_&lt;id&gt;.&lt;secret&gt;" \\
-  -H "X-Herma-Harness: muse-code" \\
-  -d '{"base_url":"https://tessera.ta-amps.workers.dev","bearer_token":"tsk_...","namespace":"herma.provisions"}'</pre></div>
-</main></body></html>`;
+  -H "X-Herma-Harness: muse-code"</pre></div>
+</main>
+${renderFooter(publicUrl)}
+</body></html>`;
 }

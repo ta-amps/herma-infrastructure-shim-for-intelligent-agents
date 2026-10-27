@@ -1,9 +1,10 @@
-"""SQLite WAL provision/context/key/receipt store plus Tessera CAS and remote-handshake sync."""
+"""SQLite WAL caller-isolated store, atomic CAS, governance lens, entity memory, and outcome telemetry."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 import sqlite3
 import time
@@ -18,6 +19,8 @@ from tessera.errors import NotFound as TesseraNotFound
 from tessera.store import Store as TesseraStore
 
 from herma.errors import (
+    BuiltinProtectedError,
+    ContextConflictError,
     HarnessRequiredError,
     HermaError,
     ProvisionConflictError,
@@ -29,20 +32,59 @@ from herma.harness_gate import (
     parse_bearer_or_header,
     verify_secret_constant_time,
 )
+from herma.memory import (
+    estimate_tokens_saved,
+    extract_entities,
+    synthesize_candidate_provisions,
+)
 from herma.schemas import (
     ALLOWED_URI_SCHEMES,
     SURFACE_ID_PATTERN,
+    SYSTEM_BUILTIN_SCOPE,
     ContextEntry,
     ContextEntryKind,
+    EntityKind,
+    ExtractedEntity,
     HandshakeRequest,
     HandshakeResponse,
     HarnessKeyInfo,
     HarnessKind,
     HarnessScope,
     InjectionReceipt,
+    InsightsResponse,
+    OutcomeKind,
+    OutcomeReportRequest,
     Provision,
     ProvisionURI,
+    RuleOutcomeRecord,
+    RuleTelemetry,
     StoredProvision,
+    WorkingEntity,
+)
+
+BLOB_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+SAFE_BUCKET_SEG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./:-]{0,511}$")
+GOV_ENVELOPE_KEYS = frozenset(
+    {
+        "governance",
+        "tags",
+        "status",
+        "quarantined",
+        "visibility_scope",
+        "allowed_surfaces",
+        "producer_surface",
+        "cohort",
+        "cohorts",
+        "target_cohort",
+        "target_cohorts",
+        "allowed_cohorts",
+        "allowed_harnesses",
+        "owner_key_id",
+        "namespace",
+    }
+)
+KNOWN_STATUS_VALUES = frozenset(
+    {"quarantined", "verified", "unverified", "pending", "rejected", "draft"}
 )
 
 SCHEMA_SQL = """
@@ -50,22 +92,28 @@ PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS provisions (
-    prov_id TEXT PRIMARY KEY,
-    version INTEGER NOT NULL,
+    caller_scope TEXT NOT NULL DEFAULT 'system_builtin',
+    prov_id TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
     content_sha256 TEXT NOT NULL,
     source_store TEXT NOT NULL,
     body_json TEXT NOT NULL,
-    updated_at REAL NOT NULL
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (caller_scope, prov_id)
 );
 
 CREATE TABLE IF NOT EXISTS context_entries (
-    entry_id TEXT PRIMARY KEY,
+    caller_scope TEXT NOT NULL DEFAULT 'system_builtin',
+    entry_id TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
     kind TEXT NOT NULL,
     title TEXT NOT NULL,
     summary TEXT NOT NULL,
     body_json TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (caller_scope, entry_id)
 );
+CREATE INDEX IF NOT EXISTS idx_context_scope_kind ON context_entries (caller_scope, kind, entry_id);
 
 CREATE TABLE IF NOT EXISTS harness_keys (
     key_id TEXT PRIMARY KEY,
@@ -79,10 +127,44 @@ CREATE TABLE IF NOT EXISTS harness_keys (
 
 CREATE TABLE IF NOT EXISTS injection_receipts (
     receipt_id TEXT PRIMARY KEY,
+    caller_scope TEXT NOT NULL DEFAULT 'system_builtin',
+    project_tag TEXT NOT NULL DEFAULT 'default',
     receipt_sha256 TEXT NOT NULL,
     body_json TEXT NOT NULL,
     created_at REAL NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_receipts_scope_time
+    ON injection_receipts (caller_scope, project_tag, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS working_entities (
+    caller_scope TEXT NOT NULL,
+    project_tag TEXT NOT NULL DEFAULT 'default',
+    entity_kind TEXT NOT NULL,
+    entity_value TEXT NOT NULL,
+    hit_count INTEGER NOT NULL DEFAULT 1,
+    first_seen_at REAL NOT NULL,
+    last_seen_at REAL NOT NULL,
+    last_receipt_id TEXT NOT NULL,
+    PRIMARY KEY (caller_scope, project_tag, entity_kind, entity_value)
+);
+CREATE INDEX IF NOT EXISTS idx_working_entities_hot
+    ON working_entities (caller_scope, project_tag, hit_count DESC, last_seen_at DESC);
+
+CREATE TABLE IF NOT EXISTS rule_outcomes (
+    outcome_id TEXT PRIMARY KEY,
+    caller_scope TEXT NOT NULL,
+    project_tag TEXT NOT NULL DEFAULT 'default',
+    receipt_id TEXT NOT NULL,
+    prov_id TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    tokens_saved_est INTEGER NOT NULL DEFAULT 0,
+    latency_ms REAL NOT NULL DEFAULT 0.0,
+    error_signature TEXT,
+    created_at REAL NOT NULL,
+    UNIQUE (caller_scope, receipt_id, prov_id)
+);
+CREATE INDEX IF NOT EXISTS idx_rule_outcomes_scope
+    ON rule_outcomes (caller_scope, project_tag, prov_id, created_at DESC);
 """
 
 
@@ -92,6 +174,264 @@ def canonical_json(obj: Any) -> str:
 
 def sha256_canonical(obj: Any) -> str:
     return hashlib.sha256(canonical_json(obj).encode("utf-8")).hexdigest()
+
+
+def validate_blob_sha256(blob_sha: str) -> str:
+    cleaned = blob_sha.strip()
+    if not BLOB_SHA256_RE.fullmatch(cleaned):
+        raise HermaError(
+            400,
+            "invalid_blob_sha",
+            "Invalid Tessera Blob Digest",
+            f"Tessera blob digest {blob_sha!r} must match ^[0-9a-f]{{64}}$.",
+        )
+    return cleaned
+
+
+def verify_blob_bytes(blob_sha: str, raw_bytes: bytes) -> str:
+    expected = validate_blob_sha256(blob_sha)
+    actual = hashlib.sha256(raw_bytes).hexdigest()
+    if actual != expected:
+        raise HermaError(
+            422,
+            "blob_integrity_mismatch",
+            "Tessera Blob Integrity Mismatch",
+            f"Blob SHA-256 verification failed: expected {expected}, got {actual}.",
+        )
+    return raw_bytes.decode("utf-8", errors="replace")[:780]
+
+
+def _split_csv_or_list(raw: Any) -> list[str]:
+    if isinstance(raw, str):
+        return [p.strip() for p in raw.split(",") if p.strip()]
+    if isinstance(raw, Sequence) and not isinstance(raw, (bytes, bytearray)):
+        return [str(p).strip() for p in raw if str(p).strip()]
+    return []
+
+
+def passes_governance_lens(
+    raw_item: Any,
+    *,
+    namespace: str = "herma.provisions",
+    harness_kind: str | None = None,
+    cohort: str = "",
+    extra_envelope: Mapping[str, Any] | None = None,
+) -> bool:
+    """Enforce Herma's Layer-1 Governance Lens on Tessera items and active provisions."""
+    merged: dict[str, Any] = {}
+    if isinstance(extra_envelope, Mapping):
+        merged.update(extra_envelope)
+    if isinstance(raw_item, Mapping):
+        merged.update(raw_item)
+
+    gov_raw = merged.get("governance")
+    gov: Mapping[str, Any] = gov_raw if isinstance(gov_raw, Mapping) else {}
+    meta_raw = merged.get("metadata_tags")
+    meta: Mapping[str, Any] = meta_raw if isinstance(meta_raw, Mapping) else {}
+
+    tags: set[str] = set()
+    for src in (merged.get("tags"), gov.get("tags"), meta.get("tags")):
+        for item in _split_csv_or_list(src):
+            tags.add(item.lower())
+
+    for status_candidate in (
+        merged.get("status"),
+        gov.get("status"),
+        meta.get("status"),
+        meta.get("governance_status"),
+    ):
+        if isinstance(status_candidate, str) and status_candidate.strip():
+            low = status_candidate.strip().lower()
+            if low.startswith("status:"):
+                tags.add(low)
+            elif low in KNOWN_STATUS_VALUES:
+                tags.add(f"status:{low}")
+
+    # 1. Hard quarantine refusal:
+    if (
+        "status:quarantined" in tags
+        or merged.get("quarantined") is True
+        or gov.get("quarantined") is True
+        or str(meta.get("quarantined", "")).strip().lower() == "true"
+    ):
+        return False
+
+    # 2. Verification requirement for status tags and cross-surface producers:
+    has_status_tag = any(t.startswith("status:") for t in tags)
+    if has_status_tag and "status:verified" not in tags:
+        return False
+
+    # 3. Surface visibility allowance for surface:herma:
+    vis = (
+        str(
+            merged.get("visibility_scope")
+            or gov.get("visibility_scope")
+            or meta.get("visibility_scope")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
+    allowed_surfaces = {
+        (s.lower() if s.lower().startswith("surface:") or s == "*" else f"surface:{s.lower()}")
+        for s in (
+            *_split_csv_or_list(merged.get("allowed_surfaces")),
+            *_split_csv_or_list(gov.get("allowed_surfaces")),
+            *_split_csv_or_list(meta.get("allowed_surfaces")),
+        )
+    }
+    raw_prod = (
+        str(
+            merged.get("producer_surface")
+            or gov.get("producer_surface")
+            or meta.get("producer_surface")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
+    norm_prod = (
+        ""
+        if not raw_prod
+        else (raw_prod if raw_prod.startswith("surface:") else f"surface:{raw_prod}")
+    )
+
+    # Cross-surface third-party producers must carry explicit status:verified:
+    if (
+        norm_prod
+        and norm_prod not in ("surface:herma", "surface:tessera")
+        and "status:verified" not in tags
+    ):
+        return False
+
+    if vis:
+        if vis == "public_commons":
+            pass
+        elif vis in ("private", "surface_only"):
+            if norm_prod != "surface:herma":
+                return False
+        elif vis == "allowlist_surfaces":
+            if (
+                norm_prod != "surface:herma"
+                and "surface:herma" not in allowed_surfaces
+                and "*" not in allowed_surfaces
+            ):
+                return False
+        else:
+            return False
+    elif (
+        allowed_surfaces
+        and norm_prod != "surface:herma"
+        and "surface:herma" not in allowed_surfaces
+        and "*" not in allowed_surfaces
+    ):
+        return False
+
+    # 4. Cohort / harness targeting check:
+    cohort_targets: set[str] = set()
+    for key in ("cohort", "cohorts", "target_cohort", "target_cohorts", "allowed_cohorts"):
+        for val in (merged.get(key), gov.get(key), meta.get(key)):
+            for token in _split_csv_or_list(val):
+                low = token.lower()
+                cohort_targets.add(low)
+    for key in ("allowed_harnesses", "target_harness"):
+        for val in (merged.get(key), gov.get(key), meta.get(key)):
+            for token in _split_csv_or_list(val):
+                low = token.lower()
+                cohort_targets.add(
+                    low if low.startswith("harness:") or low == "all" else f"harness:{low}"
+                )
+    for t in tags:
+        if t.startswith(("cohort:", "harness:")):
+            cohort_targets.add(t)
+
+    if cohort_targets and harness_kind is not None:
+        if cohort_targets & {"all", "*", "cohort:all", "harness:all"}:
+            return True
+        hk = harness_kind.strip().lower()
+        caller_tokens: set[str] = {hk, f"harness:{hk}"}
+        for raw_c in _split_csv_or_list(cohort):
+            low_c = raw_c.lower()
+            caller_tokens.add(low_c)
+            if low_c.startswith("cohort:"):
+                caller_tokens.add(low_c.removeprefix("cohort:"))
+            else:
+                caller_tokens.add(f"cohort:{low_c}")
+        expanded_targets: set[str] = set()
+        for tgt in cohort_targets:
+            expanded_targets.add(tgt)
+            if tgt.startswith("cohort:"):
+                expanded_targets.add(tgt.removeprefix("cohort:"))
+        if expanded_targets.isdisjoint(caller_tokens):
+            return False
+
+    return True
+
+
+def _strip_governance_envelope_for_provision(
+    raw_val: dict[str, Any],
+    extra_envelope: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Preserve governance/cohort cues into metadata_tags while keeping Provision extra='forbid' clean."""
+    cleaned = {k: v for k, v in raw_val.items() if k not in GOV_ENVELOPE_KEYS}
+    meta = dict(cleaned.get("metadata_tags") or {})
+    gov_raw = raw_val.get("governance")
+    gov: Mapping[str, Any] = gov_raw if isinstance(gov_raw, Mapping) else {}
+    env_map: Mapping[str, Any] = extra_envelope if isinstance(extra_envelope, Mapping) else {}
+
+    collected_cohorts: list[str] = []
+    for key in ("cohort", "cohorts", "target_cohort", "target_cohorts", "allowed_cohorts"):
+        for src in (raw_val.get(key), gov.get(key), env_map.get(key)):
+            collected_cohorts.extend(_split_csv_or_list(src))
+    for tag in (
+        *_split_csv_or_list(raw_val.get("tags")),
+        *_split_csv_or_list(gov.get("tags")),
+        *_split_csv_or_list(env_map.get("tags")),
+    ):
+        low = tag.lower()
+        if low.startswith(("cohort:", "harness:")):
+            collected_cohorts.append(low)
+        elif low.startswith("status:") and "status" not in meta:
+            meta["status"] = low
+    non_all_cohorts = [c for c in dict.fromkeys(collected_cohorts) if c.lower() != "all"]
+    if non_all_cohorts and "cohort" not in meta:
+        meta["cohort"] = ",".join(non_all_cohorts)
+    for key in ("visibility_scope", "producer_surface"):
+        val = raw_val.get(key) or gov.get(key) or env_map.get(key)
+        if isinstance(val, str) and val.strip() and key not in meta:
+            if key == "producer_surface" and val.strip().lower() == "surface:tessera":
+                continue
+            if key == "visibility_scope" and val.strip().lower() == "public_commons":
+                continue
+            meta[key] = val.strip()
+    allowed_surfs = _split_csv_or_list(
+        raw_val.get("allowed_surfaces")
+        or gov.get("allowed_surfaces")
+        or env_map.get("allowed_surfaces")
+    )
+    if allowed_surfs and "allowed_surfaces" not in meta:
+        meta["allowed_surfaces"] = ",".join(allowed_surfs)
+    if meta:
+        cleaned["metadata_tags"] = meta
+    return cleaned
+
+
+def _strip_governance_envelope_for_context(raw_val: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in raw_val.items() if k not in GOV_ENVELOPE_KEYS}
+
+
+def provision_passes_lens(
+    stored: StoredProvision,
+    *,
+    harness_kind: str,
+    cohort: str = "",
+) -> bool:
+    return passes_governance_lens(
+        {"metadata_tags": stored.provision.metadata_tags},
+        namespace="herma.provisions",
+        harness_kind=harness_kind,
+        cohort=cohort,
+    )
 
 
 def _parse_tessera_context_ref(ref: str) -> tuple[ContextEntryKind, str, str] | None:
@@ -119,7 +459,7 @@ def _value_to_context_entry(
             raw_val.get("summary")
             or f"Synced {kind} context from Tessera store {store_ns}/{rec_key}."
         )[:600]
-        raw_body = raw_val.get("schema_or_body", raw_val)
+        raw_body = raw_val.get("schema_or_body", _strip_governance_envelope_for_context(raw_val))
         schema_or_body: dict[str, Any] | str = (
             raw_body if isinstance(raw_body, (dict, str)) else canonical_json(raw_body)
         )
@@ -149,12 +489,13 @@ def _value_to_context_entry(
 
 
 class ProvisionStore:
-    """Thread/process-safe SQLite WAL store for provisions, context entries, keys, and receipts."""
+    """Thread/process-safe SQLite WAL store with multi-caller isolation, CAS, memory, and telemetry."""
 
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
+            self._migrate_if_needed(conn)
             conn.executescript(SCHEMA_SQL)
 
     def _connect(self) -> sqlite3.Connection:
@@ -162,52 +503,233 @@ class ProvisionStore:
         conn.row_factory = sqlite3.Row
         return conn
 
-    # --- Provision CRUD with Compare-And-Set ---
+    @staticmethod
+    def _migrate_if_needed(conn: sqlite3.Connection) -> None:
+        """Safely upgrade legacy single-PK SQLite databases to caller_scope composite PKs."""
+        prov_cols = {
+            str(r["name"]): int(r["pk"])
+            for r in conn.execute("PRAGMA table_info(provisions)").fetchall()
+        }
+        if prov_cols and prov_cols.get("caller_scope", 0) == 0:
+            has_scope_col = "caller_scope" in prov_cols
+            scope_expr = (
+                "COALESCE(caller_scope, 'system_builtin')" if has_scope_col else "'system_builtin'"
+            )
+            conn.executescript(
+                f"""
+                CREATE TABLE IF NOT EXISTS provisions_v2 (
+                    caller_scope TEXT NOT NULL DEFAULT 'system_builtin',
+                    prov_id TEXT NOT NULL,
+                    version INTEGER NOT NULL DEFAULT 1,
+                    content_sha256 TEXT NOT NULL,
+                    source_store TEXT NOT NULL,
+                    body_json TEXT NOT NULL,
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY (caller_scope, prov_id)
+                );
+                INSERT OR REPLACE INTO provisions_v2
+                    (caller_scope, prov_id, version, content_sha256, source_store, body_json, updated_at)
+                SELECT
+                    {scope_expr},
+                    prov_id,
+                    version,
+                    content_sha256,
+                    CASE WHEN source_store = 'examples' THEN 'system_builtin' ELSE source_store END,
+                    body_json,
+                    updated_at
+                FROM provisions;
+                DROP TABLE provisions;
+                ALTER TABLE provisions_v2 RENAME TO provisions;
+                """  # noqa: S608
+            )
+
+        ctx_cols = {
+            str(r["name"]): int(r["pk"])
+            for r in conn.execute("PRAGMA table_info(context_entries)").fetchall()
+        }
+        if ctx_cols and (ctx_cols.get("caller_scope", 0) == 0 or "version" not in ctx_cols):
+            scope_expr = (
+                "COALESCE(caller_scope, 'system_builtin')"
+                if "caller_scope" in ctx_cols
+                else "'system_builtin'"
+            )
+            ver_expr = "COALESCE(version, 1)" if "version" in ctx_cols else "1"
+            conn.executescript(
+                f"""
+                CREATE TABLE IF NOT EXISTS context_entries_v2 (
+                    caller_scope TEXT NOT NULL DEFAULT 'system_builtin',
+                    entry_id TEXT NOT NULL,
+                    version INTEGER NOT NULL DEFAULT 1,
+                    kind TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    body_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (caller_scope, entry_id)
+                );
+                INSERT OR REPLACE INTO context_entries_v2
+                    (caller_scope, entry_id, version, kind, title, summary, body_json, updated_at)
+                SELECT
+                    {scope_expr},
+                    entry_id,
+                    {ver_expr},
+                    kind,
+                    title,
+                    summary,
+                    body_json,
+                    updated_at
+                FROM context_entries;
+                DROP TABLE context_entries;
+                ALTER TABLE context_entries_v2 RENAME TO context_entries;
+                """  # noqa: S608
+            )
+
+        rcpt_cols = {
+            str(r["name"]) for r in conn.execute("PRAGMA table_info(injection_receipts)").fetchall()
+        }
+        if rcpt_cols:
+            if "caller_scope" not in rcpt_cols:
+                conn.execute(
+                    "ALTER TABLE injection_receipts ADD COLUMN caller_scope TEXT NOT NULL DEFAULT 'system_builtin'"
+                )
+            if "project_tag" not in rcpt_cols:
+                conn.execute(
+                    "ALTER TABLE injection_receipts ADD COLUMN project_tag TEXT NOT NULL DEFAULT 'default'"
+                )
+            conn.commit()
+
+    # --- Builtin Ownership & Protection ---
+
+    def has_builtin_provision(self, prov_id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM provisions WHERE caller_scope = ? AND prov_id = ?",
+                (SYSTEM_BUILTIN_SCOPE, prov_id),
+            ).fetchone()
+        return row is not None
+
+    def has_builtin_context_entry(self, entry_id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM context_entries WHERE caller_scope = ? AND entry_id = ?",
+                (SYSTEM_BUILTIN_SCOPE, entry_id),
+            ).fetchone()
+        return row is not None
+
+    # --- Provision CRUD with Single-Statement Atomic Compare-And-Set ---
 
     def put_provision(
         self,
         provision: Provision,
         *,
+        caller_scope: str = SYSTEM_BUILTIN_SCOPE,
         expected_version: int | None = None,
         source_store: str = "local",
         check_cas: bool = True,
+        is_admin: bool = True,
     ) -> StoredProvision:
+        if not is_admin and self.has_builtin_provision(provision.prov_id):
+            raise BuiltinProtectedError(provision.prov_id)
+
+        target_scope = caller_scope
+        if (
+            is_admin
+            and caller_scope != SYSTEM_BUILTIN_SCOPE
+            and self.has_builtin_provision(provision.prov_id)
+        ):
+            target_scope = SYSTEM_BUILTIN_SCOPE
+
         now = time.time()
         payload = provision.model_dump(mode="json")
+        body_str = canonical_json(payload)
         digest = sha256_canonical(payload)
+        effective_cas = check_cas or (expected_version is not None)
+
         with self._connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute(
-                "SELECT version FROM provisions WHERE prov_id = ?",
-                (provision.prov_id,),
-            ).fetchone()
-            current_ver = None if row is None else int(row["version"])
-            if check_cas and current_ver != expected_version:
-                conn.rollback()
-                raise ProvisionConflictError(provision.prov_id, expected_version, current_ver)
-            next_ver = (current_ver or 0) + 1
-            conn.execute(
-                """
-                INSERT INTO provisions (prov_id, version, content_sha256, source_store, body_json, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(prov_id) DO UPDATE SET
-                    version = excluded.version,
-                    content_sha256 = excluded.content_sha256,
-                    source_store = excluded.source_store,
-                    body_json = excluded.body_json,
-                    updated_at = excluded.updated_at
-                """,
-                (
-                    provision.prov_id,
-                    next_ver,
-                    digest,
-                    source_store,
-                    canonical_json(payload),
-                    now,
-                ),
-            )
-            conn.commit()
+            if effective_cas:
+                if expected_version is not None and expected_version < 0:
+                    cur_row = conn.execute(
+                        "SELECT version FROM provisions WHERE caller_scope = ? AND prov_id = ?",
+                        (target_scope, provision.prov_id),
+                    ).fetchone()
+                    actual_ver = None if cur_row is None else int(cur_row["version"])
+                    raise ProvisionConflictError(provision.prov_id, expected_version, actual_ver)
+
+                if expected_version in (None, 0):
+                    cur = conn.execute(
+                        """
+                        INSERT OR IGNORE INTO provisions
+                            (caller_scope, prov_id, version, content_sha256, source_store, body_json, updated_at)
+                        VALUES (?, ?, 1, ?, ?, ?, ?)
+                        """,
+                        (target_scope, provision.prov_id, digest, source_store, body_str, now),
+                    )
+                    if cur.rowcount != 1:
+                        cur_row = conn.execute(
+                            "SELECT version FROM provisions WHERE caller_scope = ? AND prov_id = ?",
+                            (target_scope, provision.prov_id),
+                        ).fetchone()
+                        actual_ver = None if cur_row is None else int(cur_row["version"])
+                        conn.rollback()
+                        raise ProvisionConflictError(
+                            provision.prov_id, expected_version, actual_ver
+                        )
+                    conn.commit()
+                    next_ver = 1
+                else:
+                    cur = conn.execute(
+                        """
+                        UPDATE provisions
+                        SET version = version + 1,
+                            content_sha256 = ?,
+                            source_store = ?,
+                            body_json = ?,
+                            updated_at = ?
+                        WHERE caller_scope = ? AND prov_id = ? AND version = ?
+                        """,
+                        (
+                            digest,
+                            source_store,
+                            body_str,
+                            now,
+                            target_scope,
+                            provision.prov_id,
+                            expected_version,
+                        ),
+                    )
+                    if cur.rowcount != 1:
+                        cur_row = conn.execute(
+                            "SELECT version FROM provisions WHERE caller_scope = ? AND prov_id = ?",
+                            (target_scope, provision.prov_id),
+                        ).fetchone()
+                        actual_ver = None if cur_row is None else int(cur_row["version"])
+                        conn.rollback()
+                        raise ProvisionConflictError(
+                            provision.prov_id, expected_version, actual_ver
+                        )
+                    conn.commit()
+                    next_ver = expected_version + 1
+            else:
+                ver_row = conn.execute(
+                    """
+                    INSERT INTO provisions
+                        (caller_scope, prov_id, version, content_sha256, source_store, body_json, updated_at)
+                    VALUES (?, ?, 1, ?, ?, ?, ?)
+                    ON CONFLICT (caller_scope, prov_id) DO UPDATE SET
+                        version = provisions.version + 1,
+                        content_sha256 = excluded.content_sha256,
+                        source_store = excluded.source_store,
+                        body_json = excluded.body_json,
+                        updated_at = excluded.updated_at
+                    RETURNING version
+                    """,
+                    (target_scope, provision.prov_id, digest, source_store, body_str, now),
+                ).fetchone()
+                conn.commit()
+                next_ver = int(ver_row["version"]) if ver_row is not None else 1
+
         return StoredProvision(
+            caller_scope=target_scope,
             provision=provision,
             version=next_ver,
             content_sha256=digest,
@@ -215,27 +737,98 @@ class ProvisionStore:
             updated_at=now,
         )
 
-    def get_provision(self, prov_id: str) -> StoredProvision:
+    def get_provision(
+        self,
+        prov_id: str,
+        *,
+        caller_scope: str = SYSTEM_BUILTIN_SCOPE,
+    ) -> StoredProvision:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM provisions WHERE prov_id = ?",
-                (prov_id,),
+                """
+                SELECT * FROM provisions
+                WHERE prov_id = ? AND caller_scope IN (?, ?)
+                ORDER BY CASE WHEN caller_scope = ? THEN 0 ELSE 1 END ASC
+                LIMIT 1
+                """,
+                (prov_id, SYSTEM_BUILTIN_SCOPE, caller_scope, SYSTEM_BUILTIN_SCOPE),
             ).fetchone()
         if row is None:
             raise ProvisionNotFoundError(prov_id)
         return self._row_to_stored(row)
 
-    def list_provisions(self, *, enabled_only: bool = False) -> list[StoredProvision]:
+    def list_provisions(
+        self,
+        *,
+        caller_scope: str = SYSTEM_BUILTIN_SCOPE,
+        include_builtin: bool = True,
+        enabled_only: bool = False,
+    ) -> list[StoredProvision]:
+        scopes = (
+            (SYSTEM_BUILTIN_SCOPE,)
+            if caller_scope == SYSTEM_BUILTIN_SCOPE or not include_builtin
+            else (SYSTEM_BUILTIN_SCOPE, caller_scope)
+        )
         with self._connect() as conn:
-            rows = conn.execute("SELECT * FROM provisions ORDER BY prov_id ASC").fetchall()
-        items = [self._row_to_stored(r) for r in rows]
+            if len(scopes) == 1:
+                only_scope = caller_scope if not include_builtin else SYSTEM_BUILTIN_SCOPE
+                rows = conn.execute(
+                    "SELECT * FROM provisions WHERE caller_scope = ? ORDER BY prov_id ASC",
+                    (only_scope,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM provisions
+                    WHERE caller_scope IN (?, ?)
+                    ORDER BY CASE WHEN caller_scope = ? THEN 0 ELSE 1 END ASC, prov_id ASC
+                    """,
+                    (SYSTEM_BUILTIN_SCOPE, caller_scope, SYSTEM_BUILTIN_SCOPE),
+                ).fetchall()
+
+        merged: dict[str, StoredProvision] = {}
+        for r in rows:
+            sp = self._row_to_stored(r)
+            # Locked system_builtin IDs are authoritative and cannot be shadowed by custom IDs:
+            if sp.provision.prov_id not in merged:
+                merged[sp.provision.prov_id] = sp
+        items = list(merged.values())
         if enabled_only:
             items = [item for item in items if item.provision.enabled]
         return sorted(items, key=lambda s: (-s.provision.priority, s.provision.prov_id))
 
-    def delete_provision(self, prov_id: str) -> None:
+    def list_provisions_for_caller(
+        self,
+        caller_scope: str,
+        *,
+        enabled_only: bool = False,
+    ) -> list[StoredProvision]:
+        return self.list_provisions(
+            caller_scope=caller_scope,
+            include_builtin=True,
+            enabled_only=enabled_only,
+        )
+
+    def delete_provision(
+        self,
+        prov_id: str,
+        *,
+        caller_scope: str = SYSTEM_BUILTIN_SCOPE,
+        is_admin: bool = True,
+    ) -> None:
+        if not is_admin and self.has_builtin_provision(prov_id):
+            raise BuiltinProtectedError(prov_id)
+
         with self._connect() as conn:
-            cur = conn.execute("DELETE FROM provisions WHERE prov_id = ?", (prov_id,))
+            cur = conn.execute(
+                "DELETE FROM provisions WHERE caller_scope = ? AND prov_id = ?",
+                (caller_scope, prov_id),
+            )
+            if cur.rowcount == 0 and is_admin and caller_scope != SYSTEM_BUILTIN_SCOPE:
+                cur = conn.execute(
+                    "DELETE FROM provisions WHERE caller_scope = ? AND prov_id = ?",
+                    (SYSTEM_BUILTIN_SCOPE, prov_id),
+                )
             conn.commit()
         if cur.rowcount == 0:
             raise ProvisionNotFoundError(prov_id)
@@ -243,7 +836,13 @@ class ProvisionStore:
     @staticmethod
     def _row_to_stored(row: sqlite3.Row) -> StoredProvision:
         prov = Provision.model_validate(json.loads(str(row["body_json"])))
+        scope = (
+            str(row["caller_scope"])
+            if "caller_scope" in row.keys()  # noqa: SIM118
+            else SYSTEM_BUILTIN_SCOPE
+        )
         return StoredProvision(
+            caller_scope=scope,
             provision=prov,
             version=int(row["version"]),
             content_sha256=str(row["content_sha256"]),
@@ -251,58 +850,207 @@ class ProvisionStore:
             updated_at=float(row["updated_at"]),
         )
 
-    # --- Atomic Noun, Verb & Detail Context Database ---
+    # --- Atomic Noun, Verb & Detail Context Database (Caller-Scoped + Single-Statement CAS) ---
 
-    def upsert_context_entry(self, entry: ContextEntry) -> ContextEntry:
+    def upsert_context_entry(
+        self,
+        entry: ContextEntry,
+        *,
+        caller_scope: str = SYSTEM_BUILTIN_SCOPE,
+        expected_version: int | None = None,
+        check_cas: bool = False,
+        is_admin: bool = True,
+    ) -> ContextEntry:
+        if not is_admin and self.has_builtin_context_entry(entry.entry_id):
+            raise BuiltinProtectedError(entry.entry_id)
+
+        target_scope = caller_scope
+        if (
+            is_admin
+            and caller_scope != SYSTEM_BUILTIN_SCOPE
+            and self.has_builtin_context_entry(entry.entry_id)
+        ):
+            target_scope = SYSTEM_BUILTIN_SCOPE
+
         envelope = {
             "schema_or_body": entry.schema_or_body,
             "source_uri": entry.source_uri,
         }
+        body_str = canonical_json(envelope)
+        effective_cas = check_cas or (expected_version is not None)
+
         with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO context_entries (entry_id, kind, title, summary, body_json, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(entry_id) DO UPDATE SET
-                    kind = excluded.kind,
-                    title = excluded.title,
-                    summary = excluded.summary,
-                    body_json = excluded.body_json,
-                    updated_at = excluded.updated_at
-                """,
-                (
-                    entry.entry_id,
-                    entry.kind,
-                    entry.title,
-                    entry.summary,
-                    canonical_json(envelope),
-                    entry.updated_at,
-                ),
-            )
-            conn.commit()
-        return entry
+            if effective_cas:
+                if expected_version is not None and expected_version < 0:
+                    cur_row = conn.execute(
+                        "SELECT version FROM context_entries WHERE caller_scope = ? AND entry_id = ?",
+                        (target_scope, entry.entry_id),
+                    ).fetchone()
+                    actual_ver = None if cur_row is None else int(cur_row["version"])
+                    raise ContextConflictError(entry.entry_id, expected_version, actual_ver)
+
+                if expected_version in (None, 0):
+                    cur = conn.execute(
+                        """
+                        INSERT OR IGNORE INTO context_entries
+                            (caller_scope, entry_id, version, kind, title, summary, body_json, updated_at)
+                        VALUES (?, ?, 1, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            target_scope,
+                            entry.entry_id,
+                            entry.kind,
+                            entry.title,
+                            entry.summary,
+                            body_str,
+                            entry.updated_at,
+                        ),
+                    )
+                    if cur.rowcount != 1:
+                        cur_row = conn.execute(
+                            "SELECT version FROM context_entries WHERE caller_scope = ? AND entry_id = ?",
+                            (target_scope, entry.entry_id),
+                        ).fetchone()
+                        actual_ver = None if cur_row is None else int(cur_row["version"])
+                        conn.rollback()
+                        raise ContextConflictError(entry.entry_id, expected_version, actual_ver)
+                    conn.commit()
+                    next_ver = 1
+                else:
+                    cur = conn.execute(
+                        """
+                        UPDATE context_entries
+                        SET version = version + 1,
+                            kind = ?,
+                            title = ?,
+                            summary = ?,
+                            body_json = ?,
+                            updated_at = ?
+                        WHERE caller_scope = ? AND entry_id = ? AND version = ?
+                        """,
+                        (
+                            entry.kind,
+                            entry.title,
+                            entry.summary,
+                            body_str,
+                            entry.updated_at,
+                            target_scope,
+                            entry.entry_id,
+                            expected_version,
+                        ),
+                    )
+                    if cur.rowcount != 1:
+                        cur_row = conn.execute(
+                            "SELECT version FROM context_entries WHERE caller_scope = ? AND entry_id = ?",
+                            (target_scope, entry.entry_id),
+                        ).fetchone()
+                        actual_ver = None if cur_row is None else int(cur_row["version"])
+                        conn.rollback()
+                        raise ContextConflictError(entry.entry_id, expected_version, actual_ver)
+                    conn.commit()
+                    next_ver = expected_version + 1
+            else:
+                ver_row = conn.execute(
+                    """
+                    INSERT INTO context_entries
+                        (caller_scope, entry_id, version, kind, title, summary, body_json, updated_at)
+                    VALUES (?, ?, 1, ?, ?, ?, ?, ?)
+                    ON CONFLICT (caller_scope, entry_id) DO UPDATE SET
+                        version = context_entries.version + 1,
+                        kind = excluded.kind,
+                        title = excluded.title,
+                        summary = excluded.summary,
+                        body_json = excluded.body_json,
+                        updated_at = excluded.updated_at
+                    RETURNING version
+                    """,
+                    (
+                        target_scope,
+                        entry.entry_id,
+                        entry.kind,
+                        entry.title,
+                        entry.summary,
+                        body_str,
+                        entry.updated_at,
+                    ),
+                ).fetchone()
+                conn.commit()
+                next_ver = int(ver_row["version"]) if ver_row is not None else 1
+
+        return entry.model_copy(update={"version": next_ver})
 
     def list_context_entries(
         self,
         kind: ContextEntryKind | None = None,
         prefix: str = "",
+        *,
+        caller_scope: str = SYSTEM_BUILTIN_SCOPE,
+        include_builtin: bool = True,
     ) -> list[ContextEntry]:
         with self._connect() as conn:
-            if kind is not None:
-                rows = conn.execute(
-                    "SELECT * FROM context_entries WHERE kind = ? ORDER BY entry_id ASC",
-                    (kind,),
-                ).fetchall()
+            if caller_scope == SYSTEM_BUILTIN_SCOPE or not include_builtin:
+                only_scope = caller_scope if not include_builtin else SYSTEM_BUILTIN_SCOPE
+                if kind is not None:
+                    rows = conn.execute(
+                        "SELECT * FROM context_entries WHERE caller_scope = ? AND kind = ? ORDER BY entry_id ASC",
+                        (only_scope, kind),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT * FROM context_entries WHERE caller_scope = ? ORDER BY entry_id ASC",
+                        (only_scope,),
+                    ).fetchall()
             else:
-                rows = conn.execute(
-                    "SELECT * FROM context_entries ORDER BY entry_id ASC"
-                ).fetchall()
-        items = [self._row_to_context_entry(r) for r in rows]
+                if kind is not None:
+                    rows = conn.execute(
+                        """
+                        SELECT * FROM context_entries
+                        WHERE caller_scope IN (?, ?) AND kind = ?
+                        ORDER BY CASE WHEN caller_scope = ? THEN 0 ELSE 1 END ASC, entry_id ASC
+                        """,
+                        (SYSTEM_BUILTIN_SCOPE, caller_scope, kind, SYSTEM_BUILTIN_SCOPE),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        """
+                        SELECT * FROM context_entries
+                        WHERE caller_scope IN (?, ?)
+                        ORDER BY CASE WHEN caller_scope = ? THEN 0 ELSE 1 END ASC, entry_id ASC
+                        """,
+                        (SYSTEM_BUILTIN_SCOPE, caller_scope, SYSTEM_BUILTIN_SCOPE),
+                    ).fetchall()
+
+        merged: dict[str, ContextEntry] = {}
+        for r in rows:
+            item = self._row_to_context_entry(r)
+            if item.entry_id not in merged:
+                merged[item.entry_id] = item
+        items = sorted(merged.values(), key=lambda e: e.entry_id)
         if prefix:
             items = [item for item in items if item.entry_id.startswith(prefix)]
         return items
 
-    def get_context_entries(self, refs: Sequence[str]) -> list[ContextEntry]:
+    def list_context_entries_for_caller(
+        self,
+        caller_scope: str,
+        *,
+        kind: ContextEntryKind | None = None,
+        prefix: str = "",
+    ) -> list[ContextEntry]:
+        return self.list_context_entries(
+            kind=kind,
+            prefix=prefix,
+            caller_scope=caller_scope,
+            include_builtin=True,
+        )
+
+    def get_context_entries(
+        self,
+        refs: Sequence[str],
+        *,
+        caller_scope: str = SYSTEM_BUILTIN_SCOPE,
+        include_builtin: bool = True,
+    ) -> list[ContextEntry]:
         unique_refs: list[str] = []
         for raw in refs:
             cleaned = raw.strip()
@@ -312,12 +1060,34 @@ class ProvisionStore:
             return []
         placeholders = ",".join("?" for _ in unique_refs)
         with self._connect() as conn:
-            rows = conn.execute(
-                f"SELECT * FROM context_entries WHERE entry_id IN ({placeholders})",  # noqa: S608
-                tuple(unique_refs),
-            ).fetchall()
-        by_id = {str(r["entry_id"]): self._row_to_context_entry(r) for r in rows}
+            if caller_scope == SYSTEM_BUILTIN_SCOPE or not include_builtin:
+                only_scope = caller_scope if not include_builtin else SYSTEM_BUILTIN_SCOPE
+                rows = conn.execute(
+                    f"SELECT * FROM context_entries WHERE caller_scope = ? AND entry_id IN ({placeholders})",  # noqa: S608
+                    (only_scope, *unique_refs),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    f"""
+                    SELECT * FROM context_entries
+                    WHERE caller_scope IN (?, ?) AND entry_id IN ({placeholders})
+                    ORDER BY CASE WHEN caller_scope = ? THEN 0 ELSE 1 END ASC
+                    """,  # noqa: S608
+                    (SYSTEM_BUILTIN_SCOPE, caller_scope, *unique_refs, SYSTEM_BUILTIN_SCOPE),
+                ).fetchall()
+        by_id: dict[str, ContextEntry] = {}
+        for r in rows:
+            eid = str(r["entry_id"])
+            if eid not in by_id:
+                by_id[eid] = self._row_to_context_entry(r)
         return [by_id[ref] for ref in unique_refs if ref in by_id]
+
+    def get_context_entries_for_caller(
+        self,
+        caller_scope: str,
+        refs: Sequence[str],
+    ) -> list[ContextEntry]:
+        return self.get_context_entries(refs, caller_scope=caller_scope, include_builtin=True)
 
     @staticmethod
     def _row_to_context_entry(row: sqlite3.Row) -> ContextEntry:
@@ -339,6 +1109,7 @@ class ProvisionStore:
         else:
             schema_or_body = canonical_json(parsed)
 
+        ver = int(row["version"]) if "version" in row.keys() else 1  # noqa: SIM118
         return ContextEntry(
             entry_id=str(row["entry_id"]),
             kind=cast(ContextEntryKind, str(row["kind"])),
@@ -346,6 +1117,7 @@ class ProvisionStore:
             summary=str(row["summary"]),
             schema_or_body=schema_or_body,
             source_uri=source_uri,
+            version=ver,
             updated_at=str(row["updated_at"]),
         )
 
@@ -389,7 +1161,12 @@ class ProvisionStore:
         )
         return token, info
 
-    def authenticate_headers(self, headers: Mapping[str, str]) -> HarnessPrincipal:
+    def authenticate_headers(
+        self,
+        headers: Mapping[str, str],
+        *,
+        is_admin: bool = False,
+    ) -> HarnessPrincipal:
         key_id, supplied_secret = parse_bearer_or_header(headers)
         with self._connect() as conn:
             row = conn.execute(
@@ -408,6 +1185,7 @@ class ProvisionStore:
             label=str(row["label"]),
             harness_kind=harness_kind_val,
             scopes=frozenset(scopes_raw),
+            is_admin=is_admin,
         )
 
     def list_keys(self) -> list[HarnessKeyInfo]:
@@ -437,18 +1215,31 @@ class ProvisionStore:
             conn.commit()
         return cur.rowcount > 0
 
-    # --- Cryptographic Injection Receipts ---
+    # --- Caller-Scoped Cryptographic Injection Receipts ---
 
-    def record_receipt(self, receipt: InjectionReceipt) -> None:
+    def record_receipt(
+        self,
+        receipt: InjectionReceipt,
+        *,
+        caller_scope: str | None = None,
+        project_tag: str | None = None,
+    ) -> None:
+        resolved_scope = caller_scope or (
+            f"key:{receipt.key_id}" if receipt.key_id else SYSTEM_BUILTIN_SCOPE
+        )
+        resolved_proj = project_tag or receipt.project_tag or "default"
         payload = receipt.model_dump(mode="json")
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO injection_receipts (receipt_id, receipt_sha256, body_json, created_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO injection_receipts
+                    (receipt_id, caller_scope, project_tag, receipt_sha256, body_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     receipt.receipt_id,
+                    resolved_scope,
+                    resolved_proj,
                     receipt.receipt_sha256,
                     canonical_json(payload),
                     receipt.created_at,
@@ -456,25 +1247,443 @@ class ProvisionStore:
             )
             conn.commit()
 
-    def list_receipts(self, limit: int = 50) -> list[InjectionReceipt]:
+    def list_receipts(
+        self,
+        limit: int = 50,
+        *,
+        caller_scope: str | None = None,
+        project_tag: str | None = None,
+    ) -> list[InjectionReceipt]:
+        cap = max(1, min(limit, 500))
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT body_json FROM injection_receipts ORDER BY created_at DESC LIMIT ?",
-                (max(1, min(limit, 500)),),
-            ).fetchall()
+            if caller_scope is not None and project_tag is not None:
+                rows = conn.execute(
+                    """
+                    SELECT body_json FROM injection_receipts
+                    WHERE caller_scope = ? AND project_tag = ?
+                    ORDER BY created_at DESC LIMIT ?
+                    """,
+                    (caller_scope, project_tag, cap),
+                ).fetchall()
+            elif caller_scope is not None:
+                rows = conn.execute(
+                    """
+                    SELECT body_json FROM injection_receipts
+                    WHERE caller_scope = ?
+                    ORDER BY created_at DESC LIMIT ?
+                    """,
+                    (caller_scope, cap),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT body_json FROM injection_receipts ORDER BY created_at DESC LIMIT ?",
+                    (cap,),
+                ).fetchall()
         return [InjectionReceipt.model_validate(json.loads(str(r["body_json"]))) for r in rows]
 
-    # --- Tessera Atomic Noun, Verb & Blob Store Sync ---
+    def public_aggregate_counts(self) -> dict[str, int]:
+        """Return strictly non-sensitive aggregate telemetry counts for public HTML pages."""
+        with self._connect() as conn:
+            total_rcpts = int(
+                conn.execute("SELECT COUNT(*) AS n FROM injection_receipts").fetchone()["n"]
+            )
+            entities_cnt = int(
+                conn.execute("SELECT COUNT(*) AS n FROM working_entities").fetchone()["n"]
+            )
+            outcomes_cnt = int(
+                conn.execute("SELECT COUNT(*) AS n FROM rule_outcomes").fetchone()["n"]
+            )
+        return {
+            "total_intercepted_requests": total_rcpts,
+            "total_working_entities": entities_cnt,
+            "total_rule_outcomes": outcomes_cnt,
+        }
+
+    # --- Anti-RAG Top-of-Mind Entity Memory & Self-Improving Outcomes ---
+
+    def record_working_entities(
+        self,
+        *,
+        caller_scope: str,
+        project_tag: str,
+        entities: Sequence[ExtractedEntity],
+        receipt_id: str,
+        seen_at: float | None = None,
+    ) -> int:
+        if not entities:
+            return 0
+        ts = seen_at if seen_at is not None else time.time()
+        with self._connect() as conn:
+            for ent in entities:
+                conn.execute(
+                    """
+                    INSERT INTO working_entities
+                        (caller_scope, project_tag, entity_kind, entity_value, hit_count, first_seen_at, last_seen_at, last_receipt_id)
+                    VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+                    ON CONFLICT (caller_scope, project_tag, entity_kind, entity_value) DO UPDATE SET
+                        hit_count = working_entities.hit_count + 1,
+                        last_seen_at = excluded.last_seen_at,
+                        last_receipt_id = excluded.last_receipt_id
+                    """,
+                    (caller_scope, project_tag, ent.kind, ent.value, ts, ts, receipt_id),
+                )
+            conn.commit()
+        return len(entities)
+
+    def list_working_entities(
+        self,
+        *,
+        caller_scope: str,
+        project_tag: str | None = None,
+        kind: EntityKind | None = None,
+        limit: int = 50,
+    ) -> list[WorkingEntity]:
+        cap = max(1, min(limit, 200))
+        clauses = ["caller_scope = ?"]
+        params: list[Any] = [caller_scope]
+        if project_tag is not None:
+            clauses.append("project_tag = ?")
+            params.append(project_tag)
+        if kind is not None:
+            clauses.append("entity_kind = ?")
+            params.append(kind)
+        where_sql = " AND ".join(clauses)
+        params.append(cap)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM working_entities
+                WHERE {where_sql}
+                ORDER BY hit_count DESC, last_seen_at DESC, entity_kind ASC, entity_value ASC
+                LIMIT ?
+                """,  # noqa: S608
+                tuple(params),
+            ).fetchall()
+        return [
+            WorkingEntity(
+                caller_scope=str(r["caller_scope"]),
+                project_tag=str(r["project_tag"]),
+                entity_kind=cast(EntityKind, str(r["entity_kind"])),
+                entity_value=str(r["entity_value"]),
+                hit_count=int(r["hit_count"]),
+                first_seen_at=float(r["first_seen_at"]),
+                last_seen_at=float(r["last_seen_at"]),
+                last_receipt_id=str(r["last_receipt_id"]),
+            )
+            for r in rows
+        ]
+
+    def record_turn_telemetry(
+        self,
+        *,
+        caller_scope: str,
+        project_tag: str,
+        receipt: InjectionReceipt,
+        entities: Sequence[ExtractedEntity],
+        prompt_text: str,
+        latency_ms: float,
+    ) -> None:
+        """Persist receipt, working_entities, and automatic turn N -> turn N-1 retry_error outcomes."""
+        error_sigs = [e.value for e in entities if e.kind == "error_signature"]
+        tokens_saved = (
+            estimate_tokens_saved(prompt_text, receipt.direct_response_text)
+            if receipt.responded_directly
+            else 0
+        )
+
+        with self._connect() as conn:
+            # 1. Inspect immediately preceding turn N-1 in (caller_scope, project_tag):
+            prev_row = conn.execute(
+                """
+                SELECT receipt_id, body_json FROM injection_receipts
+                WHERE caller_scope = ? AND project_tag = ?
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (caller_scope, project_tag),
+            ).fetchone()
+            if prev_row is not None and error_sigs:
+                prev_rcpt_id = str(prev_row["receipt_id"])
+                try:
+                    prev_body = json.loads(str(prev_row["body_json"]))
+                    prev_fired = [
+                        str(p).split("@", 1)[0] for p in prev_body.get("provisions_fired", []) if p
+                    ]
+                except json.JSONDecodeError:
+                    prev_fired = []
+                for prev_prov_id in prev_fired:
+                    conn.execute(
+                        """
+                        INSERT INTO rule_outcomes
+                            (outcome_id, caller_scope, project_tag, receipt_id, prov_id, outcome, tokens_saved_est, latency_ms, error_signature, created_at)
+                        VALUES (?, ?, ?, ?, ?, 'retry_error', 0, 0.0, ?, ?)
+                        ON CONFLICT (caller_scope, receipt_id, prov_id) DO UPDATE SET
+                            outcome = 'retry_error',
+                            error_signature = excluded.error_signature
+                        """,
+                        (
+                            f"out_{secrets.token_hex(8)}",
+                            caller_scope,
+                            project_tag,
+                            prev_rcpt_id,
+                            prev_prov_id,
+                            error_sigs[0],
+                            receipt.created_at,
+                        ),
+                    )
+
+            # 2. Persist current receipt:
+            conn.execute(
+                """
+                INSERT INTO injection_receipts
+                    (receipt_id, caller_scope, project_tag, receipt_sha256, body_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    receipt.receipt_id,
+                    caller_scope,
+                    project_tag,
+                    receipt.receipt_sha256,
+                    canonical_json(receipt.model_dump(mode="json")),
+                    receipt.created_at,
+                ),
+            )
+
+            # 3. Persist working_entities for current turn:
+            for ent in entities:
+                conn.execute(
+                    """
+                    INSERT INTO working_entities
+                        (caller_scope, project_tag, entity_kind, entity_value, hit_count, first_seen_at, last_seen_at, last_receipt_id)
+                    VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+                    ON CONFLICT (caller_scope, project_tag, entity_kind, entity_value) DO UPDATE SET
+                        hit_count = working_entities.hit_count + 1,
+                        last_seen_at = excluded.last_seen_at,
+                        last_receipt_id = excluded.last_receipt_id
+                    """,
+                    (
+                        caller_scope,
+                        project_tag,
+                        ent.kind,
+                        ent.value,
+                        receipt.created_at,
+                        receipt.created_at,
+                        receipt.receipt_id,
+                    ),
+                )
+
+            # 4. Log initial 'accepted' outcome for each provision fired on turn N:
+            for fired_ref in receipt.provisions_fired:
+                prov_id = fired_ref.split("@", 1)[0]
+                conn.execute(
+                    """
+                    INSERT INTO rule_outcomes
+                        (outcome_id, caller_scope, project_tag, receipt_id, prov_id, outcome, tokens_saved_est, latency_ms, error_signature, created_at)
+                    VALUES (?, ?, ?, ?, ?, 'accepted', ?, ?, NULL, ?)
+                    ON CONFLICT (caller_scope, receipt_id, prov_id) DO UPDATE SET
+                        tokens_saved_est = excluded.tokens_saved_est,
+                        latency_ms = excluded.latency_ms
+                    """,
+                    (
+                        f"out_{secrets.token_hex(8)}",
+                        caller_scope,
+                        project_tag,
+                        receipt.receipt_id,
+                        prov_id,
+                        tokens_saved,
+                        round(latency_ms, 3),
+                        receipt.created_at,
+                    ),
+                )
+            conn.commit()
+
+    def record_explicit_outcome(
+        self,
+        *,
+        caller_scope: str,
+        report: OutcomeReportRequest,
+        header_project_tag: str = "default",
+    ) -> list[RuleOutcomeRecord]:
+        now = time.time()
+        with self._connect() as conn:
+            rcpt_row = conn.execute(
+                "SELECT project_tag, body_json FROM injection_receipts WHERE caller_scope = ? AND receipt_id = ?",
+                (caller_scope, report.receipt_id),
+            ).fetchone()
+            if rcpt_row is None:
+                raise HermaError(
+                    404,
+                    "receipt_not_found",
+                    "Receipt Not Found",
+                    f"Receipt {report.receipt_id!r} was not found in caller scope.",
+                )
+            resolved_proj = report.project_tag or str(rcpt_row["project_tag"]) or header_project_tag
+            rcpt_body = json.loads(str(rcpt_row["body_json"]))
+            fired_provs = [
+                str(p).split("@", 1)[0] for p in rcpt_body.get("provisions_fired", []) if p
+            ]
+            target_provs = [report.prov_id] if report.prov_id else fired_provs
+            if not target_provs:
+                raise HermaError(
+                    400,
+                    "missing_prov_id",
+                    "Missing Provision ID",
+                    "Receipt had no matched provisions; specify prov_id explicitly.",
+                )
+
+            if report.error_signature:
+                extracted_errs = extract_entities(report.error_signature)
+                sig_val = (
+                    extracted_errs[0].value
+                    if any(e.kind == "error_signature" for e in extracted_errs)
+                    else report.error_signature.strip()
+                )
+                conn.execute(
+                    """
+                    INSERT INTO working_entities
+                        (caller_scope, project_tag, entity_kind, entity_value, hit_count, first_seen_at, last_seen_at, last_receipt_id)
+                    VALUES (?, ?, 'error_signature', ?, 1, ?, ?, ?)
+                    ON CONFLICT (caller_scope, project_tag, entity_kind, entity_value) DO UPDATE SET
+                        hit_count = working_entities.hit_count + 1,
+                        last_seen_at = excluded.last_seen_at,
+                        last_receipt_id = excluded.last_receipt_id
+                    """,
+                    (caller_scope, resolved_proj, sig_val[:240], now, now, report.receipt_id),
+                )
+
+            records: list[RuleOutcomeRecord] = []
+            for pid in target_provs:
+                oid = f"out_{secrets.token_hex(8)}"
+                row = conn.execute(
+                    """
+                    INSERT INTO rule_outcomes
+                        (outcome_id, caller_scope, project_tag, receipt_id, prov_id, outcome, tokens_saved_est, latency_ms, error_signature, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (caller_scope, receipt_id, prov_id) DO UPDATE SET
+                        outcome = excluded.outcome,
+                        tokens_saved_est = CASE
+                            WHEN excluded.tokens_saved_est > 0 THEN excluded.tokens_saved_est
+                            ELSE rule_outcomes.tokens_saved_est
+                        END,
+                        latency_ms = CASE
+                            WHEN excluded.latency_ms > 0 THEN excluded.latency_ms
+                            ELSE rule_outcomes.latency_ms
+                        END,
+                        error_signature = COALESCE(excluded.error_signature, rule_outcomes.error_signature)
+                    RETURNING *
+                    """,
+                    (
+                        oid,
+                        caller_scope,
+                        resolved_proj,
+                        report.receipt_id,
+                        pid,
+                        report.outcome,
+                        report.tokens_saved_est,
+                        report.latency_ms,
+                        report.error_signature,
+                        now,
+                    ),
+                ).fetchone()
+                if row is not None:
+                    records.append(
+                        RuleOutcomeRecord(
+                            outcome_id=str(row["outcome_id"]),
+                            caller_scope=str(row["caller_scope"]),
+                            project_tag=str(row["project_tag"]),
+                            receipt_id=str(row["receipt_id"]),
+                            prov_id=str(row["prov_id"]),
+                            outcome=cast(OutcomeKind, str(row["outcome"])),
+                            tokens_saved_est=int(row["tokens_saved_est"]),
+                            latency_ms=float(row["latency_ms"]),
+                            error_signature=(
+                                None
+                                if row["error_signature"] is None
+                                else str(row["error_signature"])
+                            ),
+                            created_at=float(row["created_at"]),
+                        )
+                    )
+            conn.commit()
+        return records
+
+    def build_insights(
+        self,
+        *,
+        caller_scope: str,
+        project_tag: str | None = None,
+    ) -> InsightsResponse:
+        top_entities = self.list_working_entities(
+            caller_scope=caller_scope,
+            project_tag=project_tag,
+            limit=50,
+        )
+        clauses = ["caller_scope = ?"]
+        params: list[Any] = [caller_scope]
+        if project_tag is not None:
+            clauses.append("project_tag = ?")
+            params.append(project_tag)
+        where_sql = " AND ".join(clauses)
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT
+                    prov_id,
+                    COUNT(*) AS fires,
+                    SUM(CASE WHEN outcome = 'accepted' THEN 1 ELSE 0 END) AS accepted_count,
+                    SUM(CASE WHEN outcome = 'retry_error' THEN 1 ELSE 0 END) AS retry_error_count,
+                    COALESCE(SUM(tokens_saved_est), 0) AS tokens_saved_est,
+                    COALESCE(AVG(latency_ms), 0.0) AS avg_latency_ms
+                FROM rule_outcomes
+                WHERE {where_sql}
+                GROUP BY prov_id
+                ORDER BY fires DESC, prov_id ASC
+                """,  # noqa: S608
+                tuple(params),
+            ).fetchall()
+
+        telemetry: list[RuleTelemetry] = []
+        for r in rows:
+            fires = int(r["fires"])
+            retry_cnt = int(r["retry_error_count"] or 0)
+            telemetry.append(
+                RuleTelemetry(
+                    prov_id=str(r["prov_id"]),
+                    fires=fires,
+                    accepted_count=int(r["accepted_count"] or 0),
+                    retry_error_count=retry_cnt,
+                    tokens_saved_est=int(r["tokens_saved_est"] or 0),
+                    retry_error_rate=round(retry_cnt / fires, 4) if fires > 0 else 0.0,
+                    avg_latency_ms=round(float(r["avg_latency_ms"] or 0.0), 3),
+                )
+            )
+
+        active_provs = self.list_provisions_for_caller(caller_scope, enabled_only=True)
+        candidates = synthesize_candidate_provisions(
+            top_entities,
+            active_provs,
+            project_tag=project_tag or "default",
+        )
+        return InsightsResponse(
+            caller_scope=caller_scope,
+            project_tag=project_tag,
+            top_entities=top_entities,
+            rule_telemetry=telemetry,
+            candidate_provisions=candidates,
+        )
+
+    # --- Tessera Atomic Noun, Verb & Blob Store Sync (Enforcing Layer-1 Governance Lens) ---
 
     def publish_to_tessera_store(
         self,
         tessera_store: TesseraStore,
         *,
         namespace: str = "herma.provisions",
+        caller_scope: str = SYSTEM_BUILTIN_SCOPE,
     ) -> list[str]:
-        """Publish all local provisions + context entries + index nouns into a Tessera store."""
+        """Publish local provisions + context entries + index nouns into a Tessera store."""
         published_ids: list[str] = []
-        for stored in self.list_provisions():
+        for stored in self.list_provisions(caller_scope=caller_scope):
             prov_dict = stored.provision.model_dump(mode="json")
             try:
                 cur = tessera_store.get_record(namespace, stored.provision.prov_id)
@@ -501,7 +1710,7 @@ class ProvisionStore:
             expected_version=idx_exp,
         )
 
-        context_items = self.list_context_entries()
+        context_items = self.list_context_entries(caller_scope=caller_scope)
         if context_items:
             ctx_ns = f"{namespace}.context"
             ctx_ids: list[str] = []
@@ -538,15 +1747,44 @@ class ProvisionStore:
         tessera_store: TesseraStore,
         *,
         namespace: str = "herma.provisions",
+        caller_scope: str = SYSTEM_BUILTIN_SCOPE,
+        harness_kind: str | None = None,
+        cohort: str = "",
+        is_admin: bool = True,
     ) -> list[StoredProvision]:
-        """Load versioned provisions, blob excerpts, and noun/verb context_refs from Tessera."""
+        """Load versioned provisions, verified SHA-256 blobs, and governed noun/verb refs."""
         ctx_ns = f"{namespace}.context"
         try:
             ctx_idx = tessera_store.get_record(ctx_ns, "index")
             for entry_id in list(ctx_idx.value.get("entry_ids", [])):
                 try:
                     c_rec = tessera_store.get_record(ctx_ns, str(entry_id))
-                    self.upsert_context_entry(ContextEntry.model_validate(c_rec.value))
+                    c_env = (
+                        c_rec.model_dump(mode="json", exclude={"value"})
+                        if hasattr(c_rec, "model_dump")
+                        else None
+                    )
+                    if not passes_governance_lens(
+                        c_rec.value,
+                        namespace=ctx_ns,
+                        harness_kind=harness_kind,
+                        cohort=cohort,
+                        extra_envelope=c_env,
+                    ):
+                        continue
+                    raw_c = (
+                        _strip_governance_envelope_for_context(c_rec.value)
+                        if isinstance(c_rec.value, dict)
+                        else c_rec.value
+                    )
+                    entry = ContextEntry.model_validate(raw_c)
+                    if not is_admin and self.has_builtin_context_entry(entry.entry_id):
+                        continue
+                    self.upsert_context_entry(
+                        entry,
+                        caller_scope=caller_scope,
+                        is_admin=is_admin,
+                    )
                 except TesseraNotFound:
                     continue
         except TesseraNotFound:
@@ -556,22 +1794,64 @@ class ProvisionStore:
         prov_ids: list[str] = list(idx.value.get("prov_ids", []))
         synced: list[StoredProvision] = []
         for prov_id in prov_ids:
-            rec = tessera_store.get_record(namespace, prov_id)
-            prov = Provision.model_validate(rec.value)
+            try:
+                rec = tessera_store.get_record(namespace, prov_id)
+            except TesseraNotFound:
+                continue
+            if not isinstance(rec.value, dict):
+                continue
+            rec_env = (
+                rec.model_dump(mode="json", exclude={"value"})
+                if hasattr(rec, "model_dump")
+                else None
+            )
+            if not passes_governance_lens(
+                rec.value,
+                namespace=namespace,
+                harness_kind=harness_kind,
+                cohort=cohort,
+                extra_envelope=rec_env,
+            ):
+                continue
+            cleaned_prov = _strip_governance_envelope_for_provision(rec.value, rec_env)
+            prov = Provision.model_validate(cleaned_prov)
+            if not is_admin and self.has_builtin_provision(prov.prov_id):
+                continue
+
             resolved_uris: list[ProvisionURI] = []
             for u in prov.uris:
                 if u.uri.startswith("tessera://blobs/") and not u.inline_excerpt:
-                    blob_sha = u.uri.removeprefix("tessera://blobs/").strip()
+                    blob_sha = validate_blob_sha256(u.uri.removeprefix("tessera://blobs/"))
                     raw_bytes = tessera_store.get_blob(blob_sha)
-                    excerpt = raw_bytes.decode("utf-8", errors="replace")[:780]
+                    excerpt = verify_blob_bytes(blob_sha, raw_bytes)
                     resolved_uris.append(u.model_copy(update={"inline_excerpt": excerpt}))
                 elif u.uri.startswith("tessera://buckets/") and not u.inline_excerpt:
                     rest = u.uri.removeprefix("tessera://buckets/").strip()
                     bucket_name, sep, obj_key = rest.partition("/")
-                    if sep and bucket_name and obj_key and hasattr(tessera_store, "get_object"):
-                        _, raw_bytes = tessera_store.get_object(bucket_name, obj_key)
-                        excerpt = raw_bytes.decode("utf-8", errors="replace")[:780]
-                        resolved_uris.append(u.model_copy(update={"inline_excerpt": excerpt}))
+                    if (
+                        sep
+                        and bucket_name
+                        and obj_key
+                        and ".." not in rest
+                        and SAFE_BUCKET_SEG_RE.fullmatch(obj_key)
+                        and hasattr(tessera_store, "get_object")
+                    ):
+                        meta_obj, raw_bytes = tessera_store.get_object(bucket_name, obj_key)
+                        meta_dict = (
+                            meta_obj.model_dump(mode="json")
+                            if hasattr(meta_obj, "model_dump")
+                            else (meta_obj if isinstance(meta_obj, Mapping) else {})
+                        )
+                        if passes_governance_lens(
+                            meta_dict,
+                            namespace=f"bucket:{bucket_name}",
+                            harness_kind=harness_kind,
+                            cohort=cohort,
+                        ):
+                            excerpt = raw_bytes.decode("utf-8", errors="replace")[:780]
+                            resolved_uris.append(u.model_copy(update={"inline_excerpt": excerpt}))
+                        else:
+                            resolved_uris.append(u)
                     else:
                         resolved_uris.append(u)
                 else:
@@ -585,14 +1865,37 @@ class ProvisionStore:
                     kind, store_ns, rec_key = parsed_ref
                     try:
                         noun_rec = tessera_store.get_record(store_ns, rec_key)
+                        n_env = (
+                            noun_rec.model_dump(mode="json", exclude={"value"})
+                            if hasattr(noun_rec, "model_dump")
+                            else None
+                        )
+                        if not passes_governance_lens(
+                            noun_rec.value,
+                            namespace=store_ns,
+                            harness_kind=harness_kind,
+                            cohort=cohort,
+                            extra_envelope=n_env,
+                        ):
+                            continue
+                        if not is_admin and self.has_builtin_context_entry(ref):
+                            continue
                         self.upsert_context_entry(
-                            _value_to_context_entry(ref, kind, store_ns, rec_key, noun_rec.value)
+                            _value_to_context_entry(ref, kind, store_ns, rec_key, noun_rec.value),
+                            caller_scope=caller_scope,
+                            is_admin=is_admin,
                         )
                     except TesseraNotFound:
                         pass
 
             synced.append(
-                self.put_provision(prov, source_store=f"tessera:{namespace}", check_cas=False)
+                self.put_provision(
+                    prov,
+                    caller_scope=caller_scope,
+                    source_store=f"tessera:{namespace}",
+                    check_cas=False,
+                    is_admin=is_admin,
+                )
             )
         return synced
 
@@ -602,8 +1905,12 @@ class ProvisionStore:
         bearer_token: str,
         *,
         namespace: str = "herma.provisions",
+        caller_scope: str = SYSTEM_BUILTIN_SCOPE,
+        harness_kind: str | None = None,
+        cohort: str = "",
+        is_admin: bool = True,
     ) -> list[StoredProvision]:
-        """Pull provisions, blobs, and noun/verb context_refs over HTTP from a Tessera service."""
+        """Pull governed provisions, verified SHA-256 blobs, and noun/verb refs over HTTP."""
         root = base_url.rstrip("/")
         headers = {"Authorization": f"Bearer {bearer_token}"}
         synced: list[StoredProvision] = []
@@ -619,8 +1926,28 @@ class ProvisionStore:
                         f"{root}/v1/stores/{quote(ctx_ns, safe='')}/records/{quote(entry_id, safe='')}"
                     )
                     if c_resp.status_code == 200:
+                        c_json = c_resp.json()
+                        c_val = c_json.get("value")
+                        if not passes_governance_lens(
+                            c_val,
+                            namespace=ctx_ns,
+                            harness_kind=harness_kind,
+                            cohort=cohort,
+                            extra_envelope=c_json if isinstance(c_json, Mapping) else None,
+                        ):
+                            continue
+                        raw_c = (
+                            _strip_governance_envelope_for_context(c_val)
+                            if isinstance(c_val, dict)
+                            else c_val
+                        )
+                        entry = ContextEntry.model_validate(raw_c)
+                        if not is_admin and self.has_builtin_context_entry(entry.entry_id):
+                            continue
                         self.upsert_context_entry(
-                            ContextEntry.model_validate(c_resp.json()["value"])
+                            entry,
+                            caller_scope=caller_scope,
+                            is_admin=is_admin,
                         )
 
             idx_resp = await client.get(
@@ -633,25 +1960,62 @@ class ProvisionStore:
                     f"{root}/v1/stores/{quote(namespace, safe='')}/records/{quote(prov_id, safe='')}"
                 )
                 rec_resp.raise_for_status()
-                prov = Provision.model_validate(rec_resp.json()["value"])
+                rec_json = rec_resp.json()
+                raw_val = rec_json.get("value")
+                if not isinstance(raw_val, dict):
+                    continue
+                if not passes_governance_lens(
+                    raw_val,
+                    namespace=namespace,
+                    harness_kind=harness_kind,
+                    cohort=cohort,
+                    extra_envelope=rec_json if isinstance(rec_json, Mapping) else None,
+                ):
+                    continue
+                prov = Provision.model_validate(
+                    _strip_governance_envelope_for_provision(
+                        raw_val,
+                        rec_json if isinstance(rec_json, Mapping) else None,
+                    )
+                )
+                if not is_admin and self.has_builtin_provision(prov.prov_id):
+                    continue
+
                 resolved_uris: list[ProvisionURI] = []
                 for u in prov.uris:
                     if u.uri.startswith("tessera://blobs/") and not u.inline_excerpt:
-                        blob_sha = u.uri.removeprefix("tessera://blobs/").strip()
+                        blob_sha = validate_blob_sha256(u.uri.removeprefix("tessera://blobs/"))
                         b_resp = await client.get(f"{root}/v1/blobs/{blob_sha}")
                         b_resp.raise_for_status()
-                        excerpt = b_resp.text[:780]
+                        excerpt = verify_blob_bytes(blob_sha, b_resp.content)
                         resolved_uris.append(u.model_copy(update={"inline_excerpt": excerpt}))
                     elif u.uri.startswith("tessera://buckets/") and not u.inline_excerpt:
                         rest = u.uri.removeprefix("tessera://buckets/").strip()
                         bucket_name, sep, obj_key = rest.partition("/")
-                        if sep and bucket_name and obj_key:
+                        if (
+                            sep
+                            and bucket_name
+                            and obj_key
+                            and ".." not in rest
+                            and SAFE_BUCKET_SEG_RE.fullmatch(obj_key)
+                        ):
                             o_resp = await client.get(
-                                f"{root}/v1/buckets/{bucket_name}/objects/{obj_key}"
+                                f"{root}/v1/buckets/{quote(bucket_name, safe='')}/objects/{quote(obj_key, safe='/')}"
                             )
                             o_resp.raise_for_status()
-                            excerpt = o_resp.text[:780]
-                            resolved_uris.append(u.model_copy(update={"inline_excerpt": excerpt}))
+                            hdr_tags = o_resp.headers.get("x-tessera-tags", "")
+                            if passes_governance_lens(
+                                {"tags": hdr_tags} if hdr_tags else {},
+                                namespace=f"bucket:{bucket_name}",
+                                harness_kind=harness_kind,
+                                cohort=cohort,
+                            ):
+                                excerpt = o_resp.text[:780]
+                                resolved_uris.append(
+                                    u.model_copy(update={"inline_excerpt": excerpt})
+                                )
+                            else:
+                                resolved_uris.append(u)
                         else:
                             resolved_uris.append(u)
                     else:
@@ -667,15 +2031,31 @@ class ProvisionStore:
                             f"{root}/v1/stores/{quote(store_ns, safe='')}/records/{quote(rec_key, safe='/')}"
                         )
                         if n_resp.status_code == 200:
+                            n_json = n_resp.json()
+                            n_val = n_json.get("value")
+                            if not passes_governance_lens(
+                                n_val,
+                                namespace=store_ns,
+                                harness_kind=harness_kind,
+                                cohort=cohort,
+                                extra_envelope=n_json if isinstance(n_json, Mapping) else None,
+                            ):
+                                continue
+                            if not is_admin and self.has_builtin_context_entry(ref):
+                                continue
                             self.upsert_context_entry(
-                                _value_to_context_entry(
-                                    ref, kind, store_ns, rec_key, n_resp.json().get("value")
-                                )
+                                _value_to_context_entry(ref, kind, store_ns, rec_key, n_val),
+                                caller_scope=caller_scope,
+                                is_admin=is_admin,
                             )
 
                 synced.append(
                     self.put_provision(
-                        prov, source_store=f"tessera_http:{namespace}", check_cas=False
+                        prov,
+                        caller_scope=caller_scope,
+                        source_store=f"tessera_http:{namespace}",
+                        check_cas=False,
+                        is_admin=is_admin,
                     )
                 )
         return synced
@@ -689,6 +2069,8 @@ class ProvisionStore:
         surface_id: str = "herma",
         handshake_path: str = "/v1/handshake",
         provisions_path: str = "/v1/provisions",
+        caller_scope: str = SYSTEM_BUILTIN_SCOPE,
+        is_admin: bool = True,
     ) -> list[StoredProvision]:
         """Negotiate clamped parameters via remote handshake and load versioned provisions."""
         root = base_url.rstrip("/")
@@ -718,7 +2100,14 @@ class ProvisionStore:
             body = prov_resp.json()
             if isinstance(body, dict) and isinstance(body.get("context_entries"), list):
                 for raw_entry in body["context_entries"]:
-                    self.upsert_context_entry(ContextEntry.model_validate(raw_entry))
+                    entry = ContextEntry.model_validate(raw_entry)
+                    if not is_admin and self.has_builtin_context_entry(entry.entry_id):
+                        continue
+                    self.upsert_context_entry(
+                        entry,
+                        caller_scope=caller_scope,
+                        is_admin=is_admin,
+                    )
             raw_list = (
                 body["provisions"] if isinstance(body, dict) and "provisions" in body else body
             )
@@ -730,10 +2119,18 @@ class ProvisionStore:
                     else item
                 )
                 prov = Provision.model_validate(raw_prov)
+                if not is_admin and self.has_builtin_provision(prov.prov_id):
+                    continue
                 if prov.max_chars > clamped_max_chars:
                     prov = prov.model_copy(update={"max_chars": clamped_max_chars})
                 synced.append(
-                    self.put_provision(prov, source_store="remote_handshake", check_cas=False)
+                    self.put_provision(
+                        prov,
+                        caller_scope=caller_scope,
+                        source_store="remote_handshake",
+                        check_cas=False,
+                        is_admin=is_admin,
+                    )
                 )
             return synced
 
@@ -746,8 +2143,6 @@ class ProvisionStore:
         header_surface_id: str = "",
     ) -> HandshakeResponse:
         """Negotiate Surface Handshake v1.0 for an authenticated configurable harness or surface."""
-        import re
-
         proto = request.protocol_version.strip()
         if not proto.startswith("1."):
             raise HermaError(
@@ -774,8 +2169,10 @@ class ProvisionStore:
                 f"surface_id {surface_id!r} must match {SURFACE_ID_PATTERN}.",
             )
         clamped_max_chars = max(120, min(16_000, int(request.requested_max_chars)))
-        active_count = len(self.list_provisions(enabled_only=True))
-        ctx_count = len(self.list_context_entries())
+        active_count = len(
+            self.list_provisions_for_caller(principal.caller_scope, enabled_only=True)
+        )
+        ctx_count = len(self.list_context_entries_for_caller(principal.caller_scope))
         capabilities = [
             "keyword_triggers",
             "semantic_triggers",
@@ -783,9 +2180,14 @@ class ProvisionStore:
             "context_shimming",
             "respond_directly",
             "multi_wire_proxy",
+            "caller_isolation",
+            "governance_lens",
+            "entity_memory",
+            "self_improving_insights",
             "tessera_sync",
             "remote_handshake_sync",
             "surface_handshake_v1",
+            "mcp_jsonrpc",
         ]
         handshake_id = sha256_canonical(
             {
@@ -794,6 +2196,7 @@ class ProvisionStore:
                 "protocol_version": "1.0",
                 "surface_id": surface_id,
                 "harness_kind": principal.harness_kind,
+                "caller_scope": principal.caller_scope,
                 "clamped_max_chars": clamped_max_chars,
             }
         )

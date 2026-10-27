@@ -1,29 +1,30 @@
 # Architecture
 
-**Herma:** context-shimming AI middleware for configurable coding harnesses — intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic noun, verb, and URI context from a user-configured database before LLM execution.
+**Herma:** context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic noun, verb, and URI context from a user-configured database before LLM execution.
 
 ```mermaid
 flowchart LR
   H["Configurable Coding Harness<br/>muse-code / opencode / claude-code / codex"] --> E["Cloudflare Worker Edge<br/>D1 + HSTS/CSP + x-edge-auth"]
-  E --> G["Harness Gate<br/>hmk_ scopes + consumer refusal"]
+  E --> G["Harness Gate & Caller Scope<br/>hmk_ key:<id> + builtin lock"]
   G --> T["3-Tier Trigger Engine<br/>1. Keyword  2. Semantic  3. Micromodel"]
-  S[("Provisions + Noun/Verb Context DB<br/>SQLite / D1 / Tessera / Handshake")] --> T
+  S[("Caller-Isolated Provisions + Context DB<br/>SQLite / D1 / Governed Tessera / Handshake")] --> T
   T -->|"action: respond_directly"| D["Direct Protocol Response<br/>0 upstream tokens + SHA-256 Receipt"]
-  T -->|"action: shim_context"| I["Context Shim + Dedupe + Budget<br/>[NOUN/VERB CONTEXT] + URIs + Receipt"]
+  T -->|"action: shim_context"| I["Context Shim + Entity Memory<br/>[NOUN/VERB CONTEXT] + URIs + Outcomes"]
   I --> U["Upstream LLM Endpoint<br/>/v1/chat/completions · /v1/responses · /v1/messages"]
 ```
 
 ## Components
 
-- `herma/errors.py` — RFC 9457 `problem+json` error hierarchy.
-- `herma/schemas.py` — strict Pydantic v2 models for `Provision` (`shim_context` / `respond_directly` + `context_refs`), `ContextEntry` (`noun` / `verb` / `detail`), URIs, triggers, harness keys, `DryRunResponse`, and `InjectionReceipt`.
-- `herma/harness_gate.py` — constant-time `hmk_` verification, consumer-surface refusal, `configure` harness attestation, and `-contributor` refusal.
-- `herma/triggers/` — `keyword.py`, `semantic.py`, `micromodel.py`, and `engine.py`.
-- `herma/store.py` — SQLite WAL store (`provisions`, `context_entries`, `harness_keys`, `injection_receipts`), compare-and-set updates, Tessera CAS/blob/noun-verb store sync, and remote handshake sync.
-- `herma/injector.py` — multi-protocol envelope extraction, `[NOUN/VERB CONTEXT]` rendering, direct-response assembly, turn deduplication, and SHA-256 receipts.
-- `herma/proxy.py` — direct-response short-circuiting (`chat.completion`, `response`, `message`) and upstream forwarding (JSON and streaming SSE) with allowlisted upstream hosts.
-- `herma/api/` — FastAPI app (`:7730`) serving `/v1/context`, `/v1/provisions`, `/v1/dry-run`, and proxy endpoints behind `HERMA_EDGE_SECRET` lockdown plus server-rendered status pages.
-- `deploy/cloudflare/` — 24/7 native Cloudflare Worker + D1 (`ta-amps-herma`) + `TESSERA` Service Binding with full context-shimming and direct-response parity.
+- `herma/errors.py` -- RFC 9457 `problem+json` error hierarchy (`403 harness_required`, `403 admin_required`, `403 builtin_protected`, `403 contributor_tier_refused`, `409 version_conflict`).
+- `herma/schemas.py` -- strict Pydantic v2 models for `Provision` (`shim_context` / `respond_directly` + `context_refs`), `ContextEntry` (`noun` / `verb` / `detail` + `version`), `WorkingEntity`, `RuleOutcomeRecord`, `InsightsResponse`, `DryRunResponse`, and `InjectionReceipt`.
+- `herma/harness_gate.py` -- constant-time `hmk_` verification, `caller_scope = key:<key_id>`, consumer-surface refusal, `configure` harness attestation, and `contributor` / `*-contributor` refusal.
+- `herma/triggers/` -- `keyword.py`, `semantic.py`, `micromodel.py`, and `engine.py`.
+- `herma/memory.py` -- zero-LLM deterministic entity extraction (`file_path`, `code_symbol`, `tessera_uri`, `statute_card_id`, `error_signature`) and reviewable `candidate_provisions` synthesis.
+- `herma/store.py` -- caller-partitioned SQLite WAL store (`provisions`, `context_entries`, `harness_keys`, `injection_receipts`, `working_entities`, `rule_outcomes`), single-statement atomic SQL CAS, Layer-1 Governance Lens + SHA-256 blob verification, Tessera store sync, and remote handshake sync.
+- `herma/injector.py` -- multi-protocol envelope extraction, `[NOUN/VERB CONTEXT]` rendering, direct-response assembly, turn deduplication, entity extraction, and SHA-256 receipts.
+- `herma/proxy.py` -- direct-response short-circuiting (`chat.completion`, `response`, `message`), turn telemetry persistence, and upstream forwarding (JSON and streaming SSE).
+- `herma/api/` -- FastAPI app (`:7730`) serving caller-isolated `/v1/*` endpoints, `/v1/memory`, `/v1/outcomes`, `/v1/insights`, read-only `POST /api/preview`, stateless JSON-RPC 2.0 `POST /mcp`, discovery routes (`/llms.txt`, `/llms-full.txt`, `/.well-known/agent-card.json`, `/robots.txt`, `/healthz`, `/favicon.svg`), and responsive SVG-branded HTML pages.
+- `deploy/cloudflare/` -- 24/7 native Cloudflare Worker + D1 (`ta-amps-herma`) + `TESSERA` Service Binding with full caller-isolation, CAS, governance lens, entity memory, preview, and MCP parity.
 
 ## Invariants
 
@@ -31,11 +32,15 @@ flowchart LR
 |---|---|---|
 | H01 | Generic consumer chat assistants, browser navigation requests, and cookie-authenticated calls are deterministically refused | `test_consumer_assistant_and_browser_navigation_refused`, `test_http_edge_lockdown_and_dry_run_across_wire_formats` |
 | H02 | Provision management and remote sync require both configure scope and explicit matching X-Herma-Harness attestation | `test_consumer_assistant_and_browser_navigation_refused`, `test_route_only_key_cannot_configure` |
-| H03 | Contributor-tier models (-contributor) are refused across outbound LLM payloads and micromodel trigger classifiers | `test_tier3_micromodel_classifier_and_contributor_refusal`, `test_http_edge_lockdown_and_dry_run_across_wire_formats` |
+| H03 | Contributor-tier models (contributor and -contributor) are refused across outbound LLM payloads and micromodel trigger classifiers before offline fallback | `test_tier3_micromodel_classifier_and_contributor_refusal`, `test_http_edge_lockdown_and_dry_run_across_wire_formats`, `test_governance_lens_blob_sha256_integrity_and_contributor_offline_refusal` |
 | H04 | Tier-1 keyword, bounded regex, path-glob, and tool-name triggers match deterministically without network calls | `test_tier1_keyword_regex_path_and_tool_triggers` |
 | H05 | Tier-2 semantic triggers match paraphrased intent without literal keyword overlap | `test_tier2_semantic_paraphrase_without_literal_id` |
 | H06 | Tier-1 or Tier-2 hits short-circuit Tier-3 micromodel calls when trigger mode is any | `test_engine_short_circuits_micromodel_when_keyword_matches` |
-| H07 | Compare-and-set versions prevent silent provision overwrites, Tessera blob URIs resolve deterministically, and remote handshakes clamp max_chars | `test_cas_conflict_and_tessera_blob_sync`, `test_remote_handshake_clamps_max_chars` |
+| H07 | Single-statement atomic SQL compare-and-set versions prevent silent provision and context_entries overwrites, Tessera blob URIs verify SHA-256 digests, and remote handshakes clamp max_chars | `test_cas_conflict_and_tessera_blob_sync`, `test_remote_handshake_clamps_max_chars`, `test_multi_caller_non_poisoning_builtin_lock_admin_keys_and_cas_parity` |
 | H08 | Multi-turn conversations deduplicate once_per_conversation provisions and HERMA_EDGE_SECRET blocks direct origin traffic lacking x-edge-auth | `test_http_edge_lockdown_and_dry_run_across_wire_formats` |
-| H09 | Matched context_refs shim bounded atomic noun, verb, and detail entries from context_entries or Tessera stores and record shimmed_context_refs in the receipt | `test_store_context_entries_and_tessera_noun_verb_resolution`, `test_api_context_database_and_noun_verb_shimming` |
+| H09 | Matched context_refs shim bounded atomic noun, verb, and detail entries from caller-scoped context_entries or governed Tessera stores and record shimmed_context_refs in the receipt | `test_store_context_entries_and_tessera_noun_verb_resolution`, `test_api_context_database_and_noun_verb_shimming` |
 | H10 | Provisions with action=respond_directly return protocol-faithful completions across chat_completions, responses, and messages without invoking upstream LLM transport while recording a SHA-256 receipt | `test_direct_response_short_circuits_upstream_across_all_protocols`, `test_cloudflare_worker_context_shim_and_direct_response_parity` |
+| H11 | Caller-scoped provisions, context_entries, and receipts never poison or leak across keys, system_builtin records return 403 builtin_protected on non-admin writes, and /v1/admin/keys requires bootstrap/admin credentials | `test_multi_caller_non_poisoning_builtin_lock_admin_keys_and_cas_parity` |
+| H12 | Layer-1 Tessera governance refuses status:quarantined records, requires status:verified across surfaces, enforces visibility_scope/cohort/harness tags, and verifies 64-hex SHA-256 digests on tessera://blobs URIs | `test_governance_lens_blob_sha256_integrity_and_contributor_offline_refusal` |
+| H13 | Deterministic regex extraction tracks 5 entity kinds per (caller_scope, project_tag), attributes Turn N error signatures to Turn N-1 fired rules as retry_error, and emits Provision-valid candidate_provisions without mutating active rules | `test_deterministic_entity_memory_retry_outcomes_and_candidate_insights_parity` |
+| H14 | Public POST /api/preview evaluates system_builtin rules with persisted=false, SVG brand chrome renders cleanly, and discovery routes plus stateless JSON-RPC POST /mcp match across Python and Cloudflare Worker | `test_public_preview_svg_brand_chrome_discovery_and_stateless_mcp_parity` |
