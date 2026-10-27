@@ -19,6 +19,7 @@ from tessera.store import Store as TesseraStore
 
 from herma.errors import (
     HarnessRequiredError,
+    HermaError,
     ProvisionConflictError,
     ProvisionNotFoundError,
 )
@@ -30,8 +31,11 @@ from herma.harness_gate import (
 )
 from herma.schemas import (
     ALLOWED_URI_SCHEMES,
+    SURFACE_ID_PATTERN,
     ContextEntry,
     ContextEntryKind,
+    HandshakeRequest,
+    HandshakeResponse,
     HarnessKeyInfo,
     HarnessKind,
     HarnessScope,
@@ -720,10 +724,89 @@ class ProvisionStore:
             )
             synced: list[StoredProvision] = []
             for item in raw_list:
-                prov = Provision.model_validate(item)
+                raw_prov = (
+                    item["provision"]
+                    if isinstance(item, dict) and isinstance(item.get("provision"), dict)
+                    else item
+                )
+                prov = Provision.model_validate(raw_prov)
                 if prov.max_chars > clamped_max_chars:
                     prov = prov.model_copy(update={"max_chars": clamped_max_chars})
                 synced.append(
                     self.put_provision(prov, source_store="remote_handshake", check_cas=False)
                 )
             return synced
+
+    def negotiate_handshake(
+        self,
+        request: HandshakeRequest,
+        *,
+        principal: HarnessPrincipal,
+        backend_version: str,
+        header_surface_id: str = "",
+    ) -> HandshakeResponse:
+        """Negotiate Surface Handshake v1.0 for an authenticated configurable harness or surface."""
+        import re
+
+        proto = request.protocol_version.strip()
+        if not proto.startswith("1."):
+            raise HermaError(
+                400,
+                "unsupported_protocol",
+                "Unsupported Handshake Protocol",
+                f"Unsupported protocol_version {proto!r}; expected '1.0'.",
+            )
+        hdr_clean = header_surface_id.strip()
+        body_clean = (request.surface_id or "").strip()
+        if hdr_clean and body_clean and hdr_clean != body_clean:
+            raise HermaError(
+                400,
+                "surface_mismatch",
+                "Surface ID Mismatch",
+                f"X-Surface-Id header {hdr_clean!r} != body surface_id {body_clean!r}.",
+            )
+        surface_id = body_clean or hdr_clean or "herma"
+        if not re.fullmatch(SURFACE_ID_PATTERN, surface_id):
+            raise HermaError(
+                400,
+                "invalid_surface_id",
+                "Invalid Surface ID",
+                f"surface_id {surface_id!r} must match {SURFACE_ID_PATTERN}.",
+            )
+        clamped_max_chars = max(120, min(16_000, int(request.requested_max_chars)))
+        active_count = len(self.list_provisions(enabled_only=True))
+        ctx_count = len(self.list_context_entries())
+        capabilities = [
+            "keyword_triggers",
+            "semantic_triggers",
+            "micromodel_triggers",
+            "context_shimming",
+            "respond_directly",
+            "multi_wire_proxy",
+            "tessera_sync",
+            "remote_handshake_sync",
+            "surface_handshake_v1",
+        ]
+        handshake_id = sha256_canonical(
+            {
+                "backend": "herma",
+                "backend_version": backend_version,
+                "protocol_version": "1.0",
+                "surface_id": surface_id,
+                "harness_kind": principal.harness_kind,
+                "clamped_max_chars": clamped_max_chars,
+            }
+        )
+        return HandshakeResponse(
+            protocol_version="1.0",
+            backend="herma",
+            backend_version=backend_version,
+            surface_id=surface_id,
+            harness_kind=principal.harness_kind,
+            clamped_max_chars=clamped_max_chars,
+            active_provisions=active_count,
+            context_entries=ctx_count,
+            transactional_db_exempt_from_middleware=True,
+            capabilities=capabilities,
+            handshake_id=handshake_id,
+        )

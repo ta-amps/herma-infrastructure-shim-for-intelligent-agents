@@ -633,7 +633,80 @@ export default {
         );
       }
 
-      // 3. Authenticated `route` endpoints (`/v1/dry-run`, `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, `/v1/receipts`)
+      // 3. Authenticated `route` endpoints (`/v1/handshake`, `/v1/dry-run`, `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, `/v1/receipts`)
+      if (path === "/v1/handshake") {
+        if (method !== "POST") return methodNotAllowed(["POST"]);
+        enforceNotConsumerAssistant(request);
+        const principal = await authenticateHarness(db, request);
+        requireScope(principal, "route", request);
+        let body;
+        try {
+          body = await request.json();
+        } catch {
+          throw new HermaErr(400, "invalid_json", "Invalid JSON", "Handshake body must be valid JSON.");
+        }
+        const proto = String(body?.protocol_version ?? "1.0").trim();
+        if (!proto.startsWith("1.")) {
+          throw new HermaErr(400, "unsupported_protocol", "Unsupported Handshake Protocol", `Unsupported protocol_version '${proto}'; expected '1.0'.`);
+        }
+        const hdrSurf = (request.headers.get("x-surface-id") || "").trim();
+        const bodySurf = body?.surface_id == null ? "" : String(body.surface_id).trim();
+        if (hdrSurf && bodySurf && hdrSurf !== bodySurf) {
+          throw new HermaErr(400, "surface_mismatch", "Surface ID Mismatch", `X-Surface-Id '${hdrSurf}' != body surface_id '${bodySurf}'.`);
+        }
+        const surfaceId = bodySurf || hdrSurf || "herma";
+        if (!/^[a-z0-9][a-z0-9_-]{0,47}$/.test(surfaceId)) {
+          throw new HermaErr(400, "invalid_surface_id", "Invalid Surface ID", `Invalid surface_id '${surfaceId}'.`);
+        }
+        const reqMax = body?.requested_max_chars == null ? 4000 : Number(body.requested_max_chars);
+        if (!Number.isFinite(reqMax) || reqMax < 0) {
+          throw new HermaErr(400, "invalid_max_chars", "Invalid Max Chars", "requested_max_chars must be a non-negative integer.");
+        }
+        const clampedMaxChars = Math.max(120, Math.min(16000, Math.trunc(reqMax)));
+        const activeProvs = await listProvisions(db, true);
+        const ctxRow = await db.prepare("SELECT COUNT(*) AS n FROM context_entries").first();
+        const handshakeId = await sha256Hex(
+          canonicalJson({
+            backend: "herma",
+            backend_version: HERMA_VERSION,
+            protocol_version: "1.0",
+            surface_id: surfaceId,
+            harness_kind: principal.harness_kind,
+            clamped_max_chars: clampedMaxChars,
+          })
+        );
+        return jsonResp(
+          {
+            protocol_version: "1.0",
+            backend: "herma",
+            backend_version: HERMA_VERSION,
+            surface_id: surfaceId,
+            harness_kind: principal.harness_kind,
+            clamped_max_chars: clampedMaxChars,
+            active_provisions: activeProvs.length,
+            context_entries: Number(ctxRow?.n || 0),
+            transactional_db_exempt_from_middleware: true,
+            capabilities: [
+              "keyword_triggers",
+              "semantic_triggers",
+              "micromodel_triggers",
+              "context_shimming",
+              "respond_directly",
+              "multi_wire_proxy",
+              "tessera_sync",
+              "remote_handshake_sync",
+              "surface_handshake_v1",
+            ],
+            handshake_id: handshakeId,
+          },
+          200,
+          {
+            "x-surface-id": surfaceId,
+            "x-handshake-id": handshakeId,
+          }
+        );
+      }
+
       if (path === "/v1/dry-run") {
         if (method !== "POST") return methodNotAllowed(["POST"]);
         enforceNotConsumerAssistant(request);
@@ -656,14 +729,21 @@ export default {
           contextMap
         );
         await recordReceipt(db, receipt);
-        return jsonResp({
-          augmented_payload,
-          matches: matched.map((m) => m.match),
-          receipt,
-          responded_directly: receipt.responded_directly,
-          direct_response_text: receipt.direct_response_text,
-          shimmed_context_refs: receipt.shimmed_context_refs,
-        });
+        const dryHdrs = {};
+        const reqSurf = (request.headers.get("x-surface-id") || "").trim();
+        if (reqSurf) dryHdrs["x-surface-id"] = reqSurf;
+        return jsonResp(
+          {
+            augmented_payload,
+            matches: matched.map((m) => m.match),
+            receipt,
+            responded_directly: receipt.responded_directly,
+            direct_response_text: receipt.direct_response_text,
+            shimmed_context_refs: receipt.shimmed_context_refs,
+          },
+          200,
+          dryHdrs
+        );
       }
 
       const wireMap = {
@@ -698,6 +778,8 @@ export default {
           "x-herma-receipt-sha256": receipt.receipt_sha256,
           "x-herma-provisions-fired": (receipt.provisions_fired || []).join(","),
         };
+        const wireSurf = (request.headers.get("x-surface-id") || "").trim();
+        if (wireSurf) baseMetaHeaders["x-surface-id"] = wireSurf;
         if (receipt.shimmed_context_refs?.length) {
           baseMetaHeaders["x-herma-shimmed-context"] = receipt.shimmed_context_refs.join(",");
         }
@@ -785,7 +867,12 @@ export default {
         if (method !== "GET") return methodNotAllowed(["GET"]);
         const principal = await authenticateHarness(db, request);
         requireScope(principal, "configure", request);
-        return jsonResp({ provisions: await listProvisions(db, false) });
+        const includeContext = ["1", "true", "yes"].includes(
+          (url.searchParams.get("include_context") || "").toLowerCase()
+        );
+        const out = { provisions: await listProvisions(db, false) };
+        if (includeContext) out.context_entries = await listContextEntries(db, {});
+        return jsonResp(out);
       }
 
       const provMatch = /^\/v1\/provisions\/([^/]+)$/.exec(path);
@@ -857,8 +944,12 @@ export default {
         const list = Array.isArray(pd) ? pd : pd.provisions || [];
         const synced = [];
         for (const item of list) {
-          if (item.max_chars > clampedMax) item.max_chars = clampedMax;
-          synced.push(await putProvision(db, item, { sourceStore: "remote_handshake", checkCas: false }));
+          const rawProv =
+            item && typeof item === "object" && item.provision && typeof item.provision === "object"
+              ? { ...item.provision }
+              : { ...item };
+          if (rawProv.max_chars > clampedMax) rawProv.max_chars = clampedMax;
+          synced.push(await putProvision(db, rawProv, { sourceStore: "remote_handshake", checkCas: false }));
         }
         return jsonResp({ synced: synced.map((s) => s.provision.prov_id), count: synced.length });
       }

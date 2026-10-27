@@ -24,6 +24,7 @@ from herma.schemas import (
     ContextEntryKind,
     DryRunRequest,
     DryRunResponse,
+    HandshakeRequest,
     Provision,
 )
 from herma.store import ProvisionStore
@@ -169,8 +170,28 @@ def create_app() -> FastAPI:
 
     # --- Authenticated 'route' endpoints for configurable harnesses ---
 
+    @application.post("/v1/handshake")
+    def handshake_api(req: Request, body: HandshakeRequest) -> JSONResponse:
+        enforce_not_consumer_assistant(req.headers)
+        store = get_store()
+        principal = store.authenticate_headers(req.headers)
+        require_scope(principal, "route", req.headers)
+        negotiated = store.negotiate_handshake(
+            body,
+            principal=principal,
+            backend_version=__version__,
+            header_surface_id=req.headers.get("x-surface-id", ""),
+        )
+        return JSONResponse(
+            content=negotiated.model_dump(mode="json"),
+            headers={
+                "x-surface-id": negotiated.surface_id,
+                "x-handshake-id": negotiated.handshake_id,
+            },
+        )
+
     @application.post("/v1/dry-run")
-    async def dry_run(req: Request, body: DryRunRequest) -> dict[str, Any]:
+    async def dry_run(req: Request, body: DryRunRequest) -> JSONResponse:
         enforce_not_consumer_assistant(req.headers)
         store = get_store()
         principal = store.authenticate_headers(req.headers)
@@ -190,7 +211,11 @@ def create_app() -> FastAPI:
             direct_response_text=outcome.receipt.direct_response_text,
             shimmed_context_refs=outcome.receipt.shimmed_context_refs,
         )
-        return resp.model_dump(mode="json")
+        out_hdrs: dict[str, str] = {}
+        surf = req.headers.get("x-surface-id", "").strip()
+        if surf:
+            out_hdrs["x-surface-id"] = surf
+        return JSONResponse(content=resp.model_dump(mode="json"), headers=out_hdrs)
 
     async def _proxy_wire(req: Request, wire_format: Any) -> Response:
         enforce_not_consumer_assistant(req.headers)
@@ -207,6 +232,9 @@ def create_app() -> FastAPI:
             outcome=outcome,
             incoming_headers=req.headers,
         )
+        surf = req.headers.get("x-surface-id", "").strip()
+        if surf:
+            resp_headers = {**resp_headers, "x-surface-id": surf}
         if isinstance(content, bytes):
             return Response(content=content, status_code=status, headers=resp_headers)
         stream_iter: AsyncIterator[bytes] = content
@@ -272,11 +300,21 @@ def create_app() -> FastAPI:
         }
 
     @application.get("/v1/provisions")
-    def list_provisions_api(req: Request) -> dict[str, Any]:
+    def list_provisions_api(
+        req: Request,
+        include_context: bool = Query(default=False),
+    ) -> dict[str, Any]:
         store = get_store()
         principal = store.authenticate_headers(req.headers)
         require_scope(principal, "configure", req.headers)
-        return {"provisions": [s.model_dump(mode="json") for s in store.list_provisions()]}
+        out: dict[str, Any] = {
+            "provisions": [s.model_dump(mode="json") for s in store.list_provisions()]
+        }
+        if include_context:
+            out["context_entries"] = [
+                e.model_dump(mode="json") for e in store.list_context_entries()
+            ]
+        return out
 
     @application.put("/v1/provisions/{prov_id}")
     def put_provision_api(

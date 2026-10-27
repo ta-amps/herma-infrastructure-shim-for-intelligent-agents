@@ -286,3 +286,35 @@ class DryRunResponse(BaseModel):
     responded_directly: bool = False
     direct_response_text: str | None = None
     shimmed_context_refs: list[str] = Field(default_factory=list)
+
+
+SURFACE_ID_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,47}$"
+
+
+class HandshakeRequest(BaseModel):
+    """Surface Handshake v1.0 negotiation request sent by harnesses or product surfaces."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    protocol_version: str = Field(default="1.0", max_length=16)
+    surface_id: str | None = Field(default=None, pattern=SURFACE_ID_PATTERN)
+    surface_version: str = Field(default="0.1.0", max_length=64)
+    requested_max_chars: int = Field(default=4000, ge=0, le=10_000_000)
+
+
+class HandshakeResponse(BaseModel):
+    """Negotiated Surface Handshake v1.0 receipt returned by Herma middleware."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    protocol_version: str = "1.0"
+    backend: str = "herma"
+    backend_version: str
+    surface_id: str
+    harness_kind: HarnessKind
+    clamped_max_chars: int
+    active_provisions: int
+    context_entries: int
+    transactional_db_exempt_from_middleware: bool = True
+    capabilities: list[str] = Field(default_factory=list)
+    handshake_id: str

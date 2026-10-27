@@ -706,3 +706,169 @@ console.log(JSON.stringify({
     assert out["msgBody"]["content"][0]["type"] == "text"
     assert "Canonical Herma + Tessera Noun/Verb Contract" in out["msgBody"]["content"][0]["text"]
     assert out["homeHasFraming"] is True
+
+
+@pytest.mark.anyio
+async def test_herma_handshake_endpoint_and_peer_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_upstream = tmp_path / "upstream.db"
+    monkeypatch.setenv("HERMA_DB", str(db_upstream))
+    upstream_store = ProvisionStore(db_upstream)
+    seed_examples_if_present(upstream_store)
+    raw_key, _ = upstream_store.issue_key(
+        label="peer-sync",
+        harness_kind="opencode",
+        scopes=["route", "configure"],
+    )
+    app = create_app()
+    with TestClient(app) as tc:
+        # Consumer assistant refused on /v1/handshake
+        r_consumer = tc.post(
+            "/v1/handshake",
+            headers={
+                "X-Herma-Key": raw_key,
+                "X-Herma-Harness": "opencode",
+                "User-Agent": "Muse-Personal-Assistant/1.0",
+            },
+            json={"protocol_version": "1.0", "surface_id": "kothar"},
+        )
+        assert r_consumer.status_code == 403
+
+        # Parameter clamping & surface_id header echo
+        r_hs = tc.post(
+            "/v1/handshake",
+            headers={
+                "X-Herma-Key": raw_key,
+                "X-Herma-Harness": "opencode",
+                "X-Surface-Id": "kothar",
+            },
+            json={
+                "protocol_version": "1.0",
+                "surface_id": "kothar",
+                "requested_max_chars": 900_000,
+            },
+        )
+        assert r_hs.status_code == 200
+        assert r_hs.headers["x-surface-id"] == "kothar"
+        assert HEX64_RE.match(r_hs.headers["x-handshake-id"])
+        hs_json = r_hs.json()
+        assert hs_json["backend"] == "herma"
+        assert hs_json["clamped_max_chars"] == 16_000
+        assert hs_json["transactional_db_exempt_from_middleware"] is True
+        assert hs_json["active_provisions"] >= 1
+
+        # Mismatched X-Surface-Id header vs body rejected with 400
+        r_mismatch = tc.post(
+            "/v1/handshake",
+            headers={
+                "X-Herma-Key": raw_key,
+                "X-Herma-Harness": "opencode",
+                "X-Surface-Id": "shamash",
+            },
+            json={"protocol_version": "1.0", "surface_id": "kothar"},
+        )
+        assert r_mismatch.status_code == 400
+
+        # GET /v1/provisions?include_context=true returns StoredProvision + context_entries
+        r_prov = tc.get(
+            "/v1/provisions?include_context=true",
+            headers={"X-Herma-Key": raw_key, "X-Herma-Harness": "opencode"},
+        )
+        assert r_prov.status_code == 200
+        prov_bundle = r_prov.json()
+        assert len(prov_bundle["provisions"]) >= 1
+        assert len(prov_bundle["context_entries"]) >= 1
+
+        # Peer Herma sync_from_remote_handshake unwraps StoredProvision & loads context_entries
+        def _peer_handler(req: httpx.Request) -> httpx.Response:
+            fwd_hdrs = {k: v for k, v in req.headers.items() if k.lower() != "host"}
+            fwd_hdrs["X-Herma-Harness"] = "opencode"
+            if req.method == "POST":
+                resp = tc.post(
+                    req.url.path,
+                    headers=fwd_hdrs,
+                    content=req.content,
+                )
+            else:
+                q = f"?{req.url.query.decode()}" if req.url.query else ""
+                resp = tc.get(f"{req.url.path}{q}", headers=fwd_hdrs)
+            return httpx.Response(resp.status_code, json=resp.json(), headers=dict(resp.headers))
+
+        transport = httpx.MockTransport(_peer_handler)
+        orig_init = httpx.AsyncClient.__init__
+
+        def _patched_init(self: Any, *args: Any, **kwargs: Any) -> None:
+            kwargs["transport"] = transport
+            orig_init(self, *args, **kwargs)
+
+        monkeypatch.setattr(httpx.AsyncClient, "__init__", _patched_init)
+
+        downstream = ProvisionStore(tmp_path / "downstream.db")
+        synced = await downstream.sync_from_remote_handshake(
+            "https://herma-peer.example.test",
+            token=raw_key,
+            surface_id="kothar",
+            handshake_path="/v1/handshake",
+            provisions_path="/v1/provisions?include_context=true",
+        )
+        assert len(synced) >= 1
+        assert len(downstream.list_context_entries()) >= 1
+
+    # Also verify Cloudflare Worker POST /v1/handshake in Node
+    worker_url = (REPO_ROOT / "deploy" / "cloudflare" / "worker.js").as_uri()
+    node_script = """
+const { default: worker } = await import(process.env.WORKER_URL);
+class S {
+  constructor(db, sql, a=[]) { this.db=db; this.sql=sql.trim(); this.a=a; }
+  bind(...a) { return new S(this.db, this.sql, a); }
+  async run() { this.db.exec(this.sql, this.a); return { success: true }; }
+  async first() { return this.db.q(this.sql, this.a)[0] ?? null; }
+  async all() { return { results: this.db.q(this.sql, this.a) }; }
+}
+class D {
+  constructor() { this.k=new Map(); this.p=new Map(); this.c=new Map(); }
+  prepare(s) { return new S(this, s); }
+  async batch(xs) { for (const x of xs) await x.run(); return []; }
+  exec(s, a) {
+    if (s.includes("INTO harness_keys")) this.k.set(a[0], { key_id:a[0], label:a[1], harness_kind:a[2], scopes_json:a[3], secret_sha256:a[4], created_at:a[5], revoked_at:null });
+    if (s.includes("INTO provisions")) this.p.set(a[0], { prov_id:a[0], version:1, content_sha256:a[1], source_store:"ex", body_json:a[2], updated_at:a[3] });
+    if (s.includes("INTO context_entries")) this.c.set(a[0], { entry_id:a[0], kind:a[1], title:a[2], summary:a[3], body_json:a[4], updated_at:a[5] });
+  }
+  q(s, a) {
+    if (s.includes("COUNT(*) AS n FROM context_entries")) return [{ n: this.c.size }];
+    if (s.includes("COUNT(*) AS n FROM provisions")) return [{ n: this.p.size }];
+    if (s.includes("FROM harness_keys WHERE key_id = ?")) return this.k.has(a[0]) ? [this.k.get(a[0])] : [];
+    if (s.includes("FROM provisions")) return [...this.p.values()];
+    if (s.includes("FROM context_entries")) return [...this.c.values()];
+    return [];
+  }
+}
+const db = new D();
+const env = { STORAGE_MODE: "cloud", HERMA_DB: db, BOOTSTRAP_SECRET: "boot-hs" };
+const kr = await worker.fetch(new Request("https://herma.ta-amps.workers.dev/v1/admin/keys", {
+  method: "POST",
+  headers: { "content-type": "application/json", "x-bootstrap-secret": "boot-hs" },
+  body: JSON.stringify({ label: "hs", harness_kind: "opencode", scopes: ["route", "configure"] }),
+}), env);
+const kj = await kr.json();
+const hr = await worker.fetch(new Request("https://herma.ta-amps.workers.dev/v1/handshake", {
+  method: "POST",
+  headers: { "content-type": "application/json", "x-herma-key": kj.key, "x-herma-harness": "opencode", "x-surface-id": "kinema" },
+  body: JSON.stringify({ protocol_version: "1.0", surface_id: "kinema", requested_max_chars: 999999 }),
+}), env);
+console.log(JSON.stringify({ status: hr.status, surfHdr: hr.headers.get("x-surface-id"), body: await hr.json() }));
+"""
+    proc = subprocess.run(
+        ["node", "--input-type=module", "-e", node_script],
+        cwd=REPO_ROOT,
+        env={**os.environ, "WORKER_URL": worker_url},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    cf = json.loads(proc.stdout.strip())
+    assert cf["status"] == 200
+    assert cf["surfHdr"] == "kinema"
+    assert cf["body"]["clamped_max_chars"] == 16_000
+    assert cf["body"]["backend"] == "herma"
