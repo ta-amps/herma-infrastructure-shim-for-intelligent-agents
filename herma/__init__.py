@@ -1,4 +1,4 @@
-"""Herma: programmable AI request middleware for configurable agentic coding harnesses."""
+"""Herma: context-shimming AI middleware for configurable coding harnesses."""
 
 __all__ = ["__version__"]
 

@@ -1,0 +1,46 @@
+{
+  "entries": [
+    {
+      "entry_id": "noun:tessera.lease_fence",
+      "kind": "noun",
+      "title": "Tessera Monotonic Lease Fence",
+      "summary": "Compare-and-set task lease token incremented on every claim to fence out stale workers.",
+      "schema_or_body": {
+        "fields": {
+          "task_id": "string",
+          "fence": "integer >= 1",
+          "lease_expires_at": "float"
+        },
+        "invariant": "submit/heartbeat/park reject fence < current_fence"
+      },
+      "source_uri": "https://tessera.ta-amps.workers.dev/llms.txt",
+      "updated_at": "2026-10-27T00:00:00+00:00"
+    },
+    {
+      "entry_id": "verb:tessera.claim",
+      "kind": "verb",
+      "title": "Tessera Atomic Claim Verb",
+      "summary": "Atomically leases the next highest-priority ready task in a queue and mints a fresh fence token.",
+      "schema_or_body": {
+        "endpoint": "POST /v1/queues/{queue}/claim",
+        "inputs": ["worker_id", "lease_seconds"],
+        "returns": ["task_id", "fence", "payload"]
+      },
+      "source_uri": "mcp://tessera/tools/claim",
+      "updated_at": "2026-10-27T00:00:00+00:00"
+    },
+    {
+      "entry_id": "detail:herma.shim_budget",
+      "kind": "detail",
+      "title": "Herma Bounded Context Shim Budget",
+      "summary": "Caps per-provision and total shimmed context characters while deduplicating prior conversation turns.",
+      "schema_or_body": {
+        "default_max_chars": 2400,
+        "default_max_total_chars": 8000,
+        "dedupe_modes": ["once_per_conversation", "every_turn"]
+      },
+      "source_uri": "urn:ta-amps:spec:herma-context-shim-v1",
+      "updated_at": "2026-10-27T00:00:00+00:00"
+    }
+  ]
+}

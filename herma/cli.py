@@ -1,4 +1,4 @@
-"""Command-line interface for Herma: seed, keys, dry-run, 3-tier demo, and serve."""
+"""Command-line interface for Herma: seed, keys, context, dry-run, 3-tier demo, and serve."""
 
 from __future__ import annotations
 
@@ -41,6 +41,18 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
         h_store = ProvisionStore(herma_db)
         seed_examples_if_present(h_store)
 
+        # Publish an atomic noun directly in Tessera's noun store and reference it via noun:<store>/<key>:
+        t_store.put_record(
+            "tessera.nouns",
+            "fenced_submit",
+            {
+                "title": "Fenced Submit Contract",
+                "summary": "Requires worker_id + monotonic fence to commit task result atomically.",
+                "schema_or_body": {"verb": "submit", "requires": ["task_id", "fence", "result"]},
+            },
+            expected_version=None,
+        )
+
         # Store a content-addressed reference excerpt blob in Tessera and attach tessera://blobs/<sha256>
         blob_bytes = (
             b"Every task lease carries a monotonic fencing token; submit refuses stale fences "
@@ -50,6 +62,7 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
         first = h_store.get_provision("PROV-TESSERA-FENCING").provision
         enriched = first.model_copy(
             update={
+                "context_refs": [*first.context_refs, "noun:tessera.nouns/fenced_submit"],
                 "uris": [
                     *first.uris,
                     ProvisionURI(
@@ -57,13 +70,13 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
                         label="Tessera Fencing Excerpt Blob",
                         kind="store_record",
                     ),
-                ]
+                ],
             }
         )
         h_store.put_provision(enriched, check_cas=False)
         published_ids = h_store.publish_to_tessera_store(t_store)
 
-        # Sync into a clean Herma runtime store from Tessera, resolving blob excerpts automatically:
+        # Sync into a clean Herma runtime store from Tessera, resolving blob + noun/verb context_refs:
         runtime_store = ProvisionStore(tmp_dir / "runtime.db")
         synced = runtime_store.sync_from_tessera_store(t_store)
 
@@ -96,14 +109,14 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
         except ContributorTierRefusedError:
             contributor_refused = True
 
-        # 3. Fire Tier 1 (keyword/path), Tier 2 (semantic paraphrase), and Tier 3 (micromodel):
+        # 3. Fire Tier 1 (keyword/path + noun/verb shim), Tier 2 (semantic), Tier 3 (micromodel), and Direct Response:
         if live_ollama and ollama_key_file:
             key_txt = Path(ollama_key_file).read_text(encoding="utf-8").strip()
             os.environ["HERMA_MICROMODEL_URL"] = "https://ollama.com/v1/chat/completions"
             os.environ["HERMA_MICROMODEL_MODEL"] = "muse-spark-open"
             os.environ["HERMA_MICROMODEL_API_KEY"] = key_txt
 
-        # Tier-1 keyword + path match:
+        # Tier-1 keyword + path match + atomic noun/verb context shimming:
         out_kw = await mw.intercept(
             principal=principal,
             wire_format="chat_completions",
@@ -140,6 +153,27 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
                 ],
             },
         )
+        # Direct response short-circuit (zero upstream LLM tokens):
+        out_direct = await mw.intercept(
+            principal=principal,
+            wire_format="chat_completions",
+            payload={
+                "model": "muse-spark-open",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "Show the canonical noun/verb schema for queue claims.",
+                    }
+                ],
+            },
+        )
+        direct_status, direct_headers, direct_bytes = await mw.forward_upstream(
+            wire_format="chat_completions",
+            outcome=out_direct,
+            incoming_headers={},
+        )
+        assert isinstance(direct_bytes, bytes)
+        direct_json = json.loads(direct_bytes.decode("utf-8"))
 
         # 4. Turn-2 deduplication check:
         turn2_messages = [
@@ -192,8 +226,16 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
         assert consumer_refused
         assert contributor_refused
         assert "PROV-TESSERA-FENCING@v1" in out_kw.receipt.provisions_fired
+        assert "noun:tessera.lease_fence" in out_kw.receipt.shimmed_context_refs
+        assert "verb:tessera.claim" in out_kw.receipt.shimmed_context_refs
+        assert "noun:tessera.nouns/fenced_submit" in out_kw.receipt.shimmed_context_refs
+        assert "[NOUN/VERB CONTEXT]" in out_kw.augmented_payload["messages"][0]["content"]
         assert len(out_sem.receipt.provisions_fired) >= 1
         assert "PROV-NGO-HUMAN-BOUNDARY@v1" in out_micro.receipt.provisions_fired
+        assert out_direct.receipt.responded_directly is True
+        assert direct_status == 200
+        assert direct_headers.get("x-herma-direct-response") == "true"
+        assert direct_json["usage"]["total_tokens"] == 0
         assert "PROV-TESSERA-FENCING" in out_dedupe.receipt.deduped_skipped
 
         return {
@@ -202,28 +244,37 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
             "tessera_published": published_ids,
             "tessera_blob_resolved_sha256": blob_sha,
             "synced_count": len(synced),
+            "context_entries_synced": len(runtime_store.list_context_entries()),
             "harness_key_id": key_info.key_id,
             "consumer_assistant_refused": consumer_refused,
             "contributor_tier_refused": contributor_refused,
             "tier1_keyword_receipt": out_kw.receipt.receipt_sha256,
+            "tier1_shimmed_context_refs": out_kw.receipt.shimmed_context_refs,
             "tier2_semantic_receipt": out_sem.receipt.receipt_sha256,
             "tier3_micromodel_receipt": out_micro.receipt.receipt_sha256,
             "tier3_tiers_matched": out_micro.receipt.tiers_matched,
+            "direct_response_receipt": out_direct.receipt.receipt_sha256,
+            "direct_response_preview": (out_direct.receipt.direct_response_text or "")[:140],
             "turn2_deduped_skipped": out_dedupe.receipt.deduped_skipped,
             "live_ollama_excerpt": live_completion_excerpt,
         }
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="herma", description="Herma AI request middleware CLI.")
+    parser = argparse.ArgumentParser(
+        prog="herma", description="Herma context-shimming AI middleware CLI."
+    )
     parser.add_argument(
         "--db", default="", help="Path to SQLite DB (default: $HERMA_DB or .herma/herma.db)"
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("version", help="Print version")
-    sub.add_parser("seed", help="Seed example provisions into the active SQLite store")
+    sub.add_parser(
+        "seed", help="Seed example provisions and noun/verb context into the active SQLite store"
+    )
     sub.add_parser("provisions", help="List stored provisions")
+    sub.add_parser("context", help="List stored atomic noun/verb/detail context entries")
 
     keys_p = sub.add_parser("keys", help="Manage scoped configurable-harness credentials")
     keys_sub = keys_p.add_subparsers(dest="keys_cmd", required=True)
@@ -242,14 +293,15 @@ def main(argv: list[str] | None = None) -> int:
     rev_p.add_argument("key_id")
 
     dry_p = sub.add_parser(
-        "dry-run", help="Evaluate triggers and preview augmented request locally"
+        "dry-run", help="Evaluate triggers and preview shimmed context or direct response locally"
     )
     dry_p.add_argument("--prompt", required=True)
     dry_p.add_argument("--model", default="muse-spark-open")
     dry_p.add_argument("--path", action="append", default=[])
 
     demo_p = sub.add_parser(
-        "demo", help="Run end-to-end 3-tier trigger + Tessera sync verification"
+        "demo",
+        help="Run end-to-end 3-tier trigger + noun/verb shim + direct response + Tessera sync check",
     )
     demo_p.add_argument("--live-ollama", action="store_true")
     demo_p.add_argument("--ollama-key-file", default="")
@@ -269,7 +321,14 @@ def main(argv: list[str] | None = None) -> int:
         store = ProvisionStore(db_path)
         added = seed_examples_if_present(store)
         print(
-            json.dumps({"seeded": added, "total": len(store.list_provisions()), "db": str(db_path)})
+            json.dumps(
+                {
+                    "seeded": added,
+                    "total_provisions": len(store.list_provisions()),
+                    "total_context_entries": len(store.list_context_entries()),
+                    "db": str(db_path),
+                }
+            )
         )
         return 0
 
@@ -277,7 +336,13 @@ def main(argv: list[str] | None = None) -> int:
         store = ProvisionStore(db_path)
         for sp in store.list_provisions():
             p = Provision.model_validate(sp.provision.model_dump())
-            print(f"{p.prov_id}\tv{sp.version}\tprio={p.priority}\t{p.title}")
+            print(f"{p.prov_id}\tv{sp.version}\t{p.action}\tprio={p.priority}\t{p.title}")
+        return 0
+
+    if args.cmd == "context":
+        store = ProvisionStore(db_path)
+        for entry in store.list_context_entries():
+            print(f"{entry.entry_id}\t{entry.kind}\t{entry.title}")
         return 0
 
     if args.cmd == "keys":
@@ -329,6 +394,9 @@ def main(argv: list[str] | None = None) -> int:
                     {
                         "matches": [m.model_dump(mode="json") for m in outcome.matches],
                         "receipt": outcome.receipt.model_dump(mode="json"),
+                        "responded_directly": outcome.receipt.responded_directly,
+                        "direct_response_text": outcome.receipt.direct_response_text,
+                        "shimmed_context_refs": outcome.receipt.shimmed_context_refs,
                         "augmented_payload": outcome.augmented_payload,
                     },
                     indent=2,

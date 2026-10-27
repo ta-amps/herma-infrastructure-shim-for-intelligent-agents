@@ -1,0 +1,39 @@
+{
+  "prov_id": "PROV-DIRECT-NOUN-VERB-SCHEMA",
+  "title": "Direct Canonical Noun & Verb Schema Lookup",
+  "summary": "Responds directly with canonical atomic noun/verb schema definitions from Herma's context database without calling an upstream LLM.",
+  "priority": 350,
+  "enabled": true,
+  "action": "respond_directly",
+  "direct_response": "Canonical Herma + Tessera Noun/Verb Contract: shared state artifacts are compare-and-set NOUNs guarded by expected_version, and work items are leased VERB tiles (enqueue -> claim -> heartbeat -> submit/park) guarded by a monotonic fence token.",
+  "context_refs": [
+    "noun:tessera.lease_fence",
+    "verb:tessera.claim"
+  ],
+  "inject_position": "system_prefix",
+  "dedupe_mode": "every_turn",
+  "max_chars": 3000,
+  "inject_text": "Return the canonical noun/verb schema contract directly without invoking an upstream LLM.",
+  "uris": [
+    {
+      "uri": "https://tessera.ta-amps.workers.dev/llms.txt",
+      "label": "Tessera Noun & Verb Protocol Summary",
+      "kind": "schema",
+      "inline_excerpt": "Atomic compare-and-set nouns and fenced queue verbs."
+    }
+  ],
+  "metadata_tags": {
+    "domain": "context-database",
+    "mode": "direct-response"
+  },
+  "triggers": {
+    "mode": "any",
+    "keyword": {
+      "any_keywords": [
+        "canonical noun/verb schema",
+        "herma direct schema",
+        "/herma-schema"
+      ]
+    }
+  }
+}

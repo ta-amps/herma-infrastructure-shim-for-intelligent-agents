@@ -1,4 +1,4 @@
-"""Extracts signals from OpenAI/Meta/Anthropic payloads and injects matched provisions + URIs."""
+"""Extracts signals from OpenAI/Meta/Anthropic payloads and shims rules, URIs, and noun/verb context."""
 
 from __future__ import annotations
 
@@ -6,18 +6,20 @@ import copy
 import re
 import secrets
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from herma.harness_gate import HarnessPrincipal, refuse_contributor_model
 from herma.schemas import (
+    ContextEntry,
     InjectionReceipt,
     StoredProvision,
     TriggerMatch,
     TriggerTier,
     WireFormat,
 )
-from herma.store import sha256_canonical
+from herma.store import canonical_json, sha256_canonical
 from herma.triggers.engine import TriggerContext
 
 PATH_TOKEN_RE = re.compile(r"(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,8}")
@@ -135,16 +137,73 @@ def extract_envelope(
     )
 
 
-def render_provision_block(stored: StoredProvision) -> tuple[str, list[str]]:
-    """Render a deterministic, bounded provision + URI block."""
+def render_context_entries_block(
+    refs: Sequence[str],
+    context_entries: Mapping[str, ContextEntry] | None,
+) -> tuple[str, list[str], list[str]]:
+    """Format matched atomic noun/verb/detail database entries into a bounded context block."""
+    if not refs or not context_entries:
+        return "", [], []
+
+    lines: list[str] = []
+    shimmed_refs: list[str] = []
+    entry_uris: list[str] = []
+    for ref in refs:
+        entry = context_entries.get(ref)
+        if entry is None:
+            continue
+        if entry.entry_id not in shimmed_refs:
+            shimmed_refs.append(entry.entry_id)
+        if isinstance(entry.schema_or_body, dict) and entry.schema_or_body:
+            body_excerpt = canonical_json(entry.schema_or_body)
+        elif isinstance(entry.schema_or_body, str) and entry.schema_or_body.strip():
+            body_excerpt = entry.schema_or_body.strip()
+        else:
+            body_excerpt = ""
+        if len(body_excerpt) > 320:
+            body_excerpt = body_excerpt[:319].rstrip() + "…"
+
+        line = f"- [{entry.kind.upper()}] {entry.entry_id} ({entry.title}): {entry.summary.strip()}"
+        if body_excerpt:
+            line += f" — {body_excerpt}"
+        if entry.source_uri:
+            line += f" [URI: {entry.source_uri}]"
+            if entry.source_uri not in entry_uris:
+                entry_uris.append(entry.source_uri)
+        lines.append(line)
+
+    if not lines:
+        return "", [], []
+    return (
+        "\n".join(["[NOUN/VERB CONTEXT]", *lines, "[/NOUN/VERB CONTEXT]"]),
+        shimmed_refs,
+        entry_uris,
+    )
+
+
+def render_provision_block(
+    stored: StoredProvision,
+    context_entries: Mapping[str, ContextEntry] | None = None,
+) -> tuple[str, list[str], list[str]]:
+    """Render a deterministic, bounded provision + atomic noun/verb context + URI block."""
     prov = stored.provision
     header = f"[HERMA PROVISION: {prov.prov_id}@v{stored.version} | {prov.title}]"
-    lines = [header, prov.inject_text.strip()]
-    injected_uris: list[str] = []
+    lines = [header]
+    if prov.inject_text.strip():
+        lines.append(prov.inject_text.strip())
+
+    ctx_block, shimmed_refs, ctx_uris = render_context_entries_block(
+        prov.context_refs, context_entries
+    )
+    if ctx_block:
+        lines.append(ctx_block)
+
+    injected_uris: list[str] = list(ctx_uris)
     if prov.uris:
         lines.append("Authoritative References & URIs:")
         for u in prov.uris:
-            injected_uris.append(u.uri)
+            if u.uri not in injected_uris:
+                injected_uris.append(u.uri)
             line = f"- [{u.label}]({u.uri}) ({u.kind})"
             if u.inline_excerpt:
                 line += f": {u.inline_excerpt.strip()}"
@@ -155,7 +214,7 @@ def render_provision_block(stored: StoredProvision) -> tuple[str, list[str]]:
         rendered = (
             rendered[: prov.max_chars - 36].rstrip() + f"\n[/HERMA PROVISION: {prov.prov_id}]"
         )
-    return rendered, injected_uris
+    return rendered, injected_uris, shimmed_refs
 
 
 def _apply_block_to_payload(
@@ -216,8 +275,9 @@ def assemble_augmented_request(
     payload: dict[str, Any],
     matches: list[tuple[StoredProvision, TriggerMatch]],
     max_total_chars: int = 8000,
+    context_entries: Mapping[str, ContextEntry] | None = None,
 ) -> tuple[dict[str, Any], InjectionReceipt]:
-    """Inject matched provisions within budget, deduplicate prior turns, and mint SHA-256 receipt."""
+    """Shim matched rules + noun/verb context or prepare a direct response, and mint SHA-256 receipt."""
     prefix_blocks: list[str] = []
     suffix_blocks: list[str] = []
     dev_blocks: list[str] = []
@@ -226,6 +286,9 @@ def assemble_augmented_request(
     deduped_skipped: list[str] = []
     tiers_seen: list[TriggerTier] = []
     uris_injected: list[str] = []
+    shimmed_context_refs: list[str] = []
+    responded_directly = False
+    direct_response_text: str | None = None
     chars_used = 0
 
     for stored, match in matches:
@@ -237,7 +300,31 @@ def assemble_augmented_request(
             deduped_skipped.append(prov.prov_id)
             continue
 
-        block, block_uris = render_provision_block(stored)
+        if prov.action == "respond_directly" and prov.direct_response:
+            if not responded_directly:
+                responded_directly = True
+                base_direct = prov.direct_response.strip()
+                ctx_block, c_refs, c_uris = render_context_entries_block(
+                    prov.context_refs, context_entries
+                )
+                rendered_direct = f"{base_direct}\n\n{ctx_block}" if ctx_block else base_direct
+                if len(rendered_direct) > prov.max_chars:
+                    rendered_direct = rendered_direct[: prov.max_chars].rstrip()
+                direct_response_text = rendered_direct
+                chars_used += len(rendered_direct)
+                fired_ids.append(f"{prov.prov_id}@v{stored.version}")
+                for tier in match.matched_tiers:
+                    if tier not in tiers_seen:
+                        tiers_seen.append(tier)
+                for r in c_refs:
+                    if r not in shimmed_context_refs:
+                        shimmed_context_refs.append(r)
+                for u_str in [*c_uris, *(u.uri for u in prov.uris)]:
+                    if u_str not in uris_injected:
+                        uris_injected.append(u_str)
+            continue
+
+        block, block_uris, block_refs = render_provision_block(stored, context_entries)
         if chars_used + len(block) > max_total_chars:
             continue
 
@@ -249,6 +336,9 @@ def assemble_augmented_request(
         for u in block_uris:
             if u not in uris_injected:
                 uris_injected.append(u)
+        for r in block_refs:
+            if r not in shimmed_context_refs:
+                shimmed_context_refs.append(r)
 
         if prov.inject_position == "system_prefix":
             prefix_blocks.append(block)
@@ -278,6 +368,9 @@ def assemble_augmented_request(
         "uris_injected": uris_injected,
         "injected_chars": chars_used,
         "deduped_skipped": deduped_skipped,
+        "responded_directly": responded_directly,
+        "direct_response_text": direct_response_text,
+        "shimmed_context_refs": shimmed_context_refs,
     }
     receipt = InjectionReceipt(
         **core_for_hash,

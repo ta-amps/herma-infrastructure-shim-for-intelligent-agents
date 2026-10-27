@@ -1,4 +1,4 @@
-"""SQLite WAL provision/key/receipt store plus Tessera CAS and remote-handshake sync adapters."""
+"""SQLite WAL provision/context/key/receipt store plus Tessera CAS and remote-handshake sync."""
 
 from __future__ import annotations
 
@@ -8,8 +8,10 @@ import secrets
 import sqlite3
 import time
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+from urllib.parse import quote
 
 import httpx
 from tessera.errors import NotFound as TesseraNotFound
@@ -27,6 +29,9 @@ from herma.harness_gate import (
     verify_secret_constant_time,
 )
 from herma.schemas import (
+    ALLOWED_URI_SCHEMES,
+    ContextEntry,
+    ContextEntryKind,
     HarnessKeyInfo,
     HarnessKind,
     HarnessScope,
@@ -47,6 +52,15 @@ CREATE TABLE IF NOT EXISTS provisions (
     source_store TEXT NOT NULL,
     body_json TEXT NOT NULL,
     updated_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS context_entries (
+    entry_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    body_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS harness_keys (
@@ -76,8 +90,62 @@ def sha256_canonical(obj: Any) -> str:
     return hashlib.sha256(canonical_json(obj).encode("utf-8")).hexdigest()
 
 
+def _parse_tessera_context_ref(ref: str) -> tuple[ContextEntryKind, str, str] | None:
+    """Parse refs like 'noun:<store>/<key>' or 'verb:<store>/<key>' into (kind, store, key)."""
+    kind_raw, sep, remainder = ref.strip().partition(":")
+    if not sep or kind_raw not in ("noun", "verb", "detail"):
+        return None
+    store_ns, slash, rec_key = remainder.partition("/")
+    if not slash or not store_ns.strip() or not rec_key.strip():
+        return None
+    return cast(ContextEntryKind, kind_raw), store_ns.strip(), rec_key.strip()
+
+
+def _value_to_context_entry(
+    ref: str,
+    kind: ContextEntryKind,
+    store_ns: str,
+    rec_key: str,
+    raw_val: Any,
+) -> ContextEntry:
+    default_uri = f"tessera://stores/{store_ns}/{rec_key}"
+    if isinstance(raw_val, dict):
+        title = str(raw_val.get("title") or f"{kind.title()} {store_ns}/{rec_key}")[:160]
+        summary = str(
+            raw_val.get("summary")
+            or f"Synced {kind} context from Tessera store {store_ns}/{rec_key}."
+        )[:600]
+        raw_body = raw_val.get("schema_or_body", raw_val)
+        schema_or_body: dict[str, Any] | str = (
+            raw_body if isinstance(raw_body, (dict, str)) else canonical_json(raw_body)
+        )
+        cand_uri = raw_val.get("source_uri")
+        source_uri = (
+            cand_uri
+            if isinstance(cand_uri, str) and cand_uri.strip().startswith(ALLOWED_URI_SCHEMES)
+            else default_uri
+        )
+        updated_at = str(raw_val.get("updated_at") or datetime.now(UTC).isoformat())
+    else:
+        title = f"{kind.title()} {store_ns}/{rec_key}"[:160]
+        summary = f"Synced {kind} context from Tessera store {store_ns}/{rec_key}."[:600]
+        schema_or_body = str(raw_val)
+        source_uri = default_uri
+        updated_at = datetime.now(UTC).isoformat()
+
+    return ContextEntry(
+        entry_id=ref,
+        kind=kind,
+        title=title,
+        summary=summary,
+        schema_or_body=schema_or_body,
+        source_uri=source_uri,
+        updated_at=updated_at,
+    )
+
+
 class ProvisionStore:
-    """Thread/process-safe SQLite WAL store for provisions, harness keys, and receipts."""
+    """Thread/process-safe SQLite WAL store for provisions, context entries, keys, and receipts."""
 
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
@@ -177,6 +245,104 @@ class ProvisionStore:
             content_sha256=str(row["content_sha256"]),
             source_store=str(row["source_store"]),
             updated_at=float(row["updated_at"]),
+        )
+
+    # --- Atomic Noun, Verb & Detail Context Database ---
+
+    def upsert_context_entry(self, entry: ContextEntry) -> ContextEntry:
+        envelope = {
+            "schema_or_body": entry.schema_or_body,
+            "source_uri": entry.source_uri,
+        }
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO context_entries (entry_id, kind, title, summary, body_json, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(entry_id) DO UPDATE SET
+                    kind = excluded.kind,
+                    title = excluded.title,
+                    summary = excluded.summary,
+                    body_json = excluded.body_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    entry.entry_id,
+                    entry.kind,
+                    entry.title,
+                    entry.summary,
+                    canonical_json(envelope),
+                    entry.updated_at,
+                ),
+            )
+            conn.commit()
+        return entry
+
+    def list_context_entries(
+        self,
+        kind: ContextEntryKind | None = None,
+        prefix: str = "",
+    ) -> list[ContextEntry]:
+        with self._connect() as conn:
+            if kind is not None:
+                rows = conn.execute(
+                    "SELECT * FROM context_entries WHERE kind = ? ORDER BY entry_id ASC",
+                    (kind,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM context_entries ORDER BY entry_id ASC"
+                ).fetchall()
+        items = [self._row_to_context_entry(r) for r in rows]
+        if prefix:
+            items = [item for item in items if item.entry_id.startswith(prefix)]
+        return items
+
+    def get_context_entries(self, refs: Sequence[str]) -> list[ContextEntry]:
+        unique_refs: list[str] = []
+        for raw in refs:
+            cleaned = raw.strip()
+            if cleaned and cleaned not in unique_refs:
+                unique_refs.append(cleaned)
+        if not unique_refs:
+            return []
+        placeholders = ",".join("?" for _ in unique_refs)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM context_entries WHERE entry_id IN ({placeholders})",  # noqa: S608
+                tuple(unique_refs),
+            ).fetchall()
+        by_id = {str(r["entry_id"]): self._row_to_context_entry(r) for r in rows}
+        return [by_id[ref] for ref in unique_refs if ref in by_id]
+
+    @staticmethod
+    def _row_to_context_entry(row: sqlite3.Row) -> ContextEntry:
+        raw_body = str(row["body_json"])
+        try:
+            parsed: Any = json.loads(raw_body)
+        except json.JSONDecodeError:
+            parsed = raw_body
+        source_uri: str | None = None
+        if isinstance(parsed, dict) and "schema_or_body" in parsed:
+            inner = parsed["schema_or_body"]
+            schema_or_body: dict[str, Any] | str = (
+                inner if isinstance(inner, (dict, str)) else canonical_json(inner)
+            )
+            raw_uri = parsed.get("source_uri")
+            source_uri = str(raw_uri) if isinstance(raw_uri, str) and raw_uri else None
+        elif isinstance(parsed, (dict, str)):
+            schema_or_body = parsed
+        else:
+            schema_or_body = canonical_json(parsed)
+
+        return ContextEntry(
+            entry_id=str(row["entry_id"]),
+            kind=cast(ContextEntryKind, str(row["kind"])),
+            title=str(row["title"]),
+            summary=str(row["summary"]),
+            schema_or_body=schema_or_body,
+            source_uri=source_uri,
+            updated_at=str(row["updated_at"]),
         )
 
     # --- Scoped Configurable-Harness Keys ---
@@ -294,7 +460,7 @@ class ProvisionStore:
             ).fetchall()
         return [InjectionReceipt.model_validate(json.loads(str(r["body_json"]))) for r in rows]
 
-    # --- Tessera Atomic Noun & Blob Store Sync ---
+    # --- Tessera Atomic Noun, Verb & Blob Store Sync ---
 
     def publish_to_tessera_store(
         self,
@@ -302,7 +468,7 @@ class ProvisionStore:
         *,
         namespace: str = "herma.provisions",
     ) -> list[str]:
-        """Publish all local provisions + an atomic index noun into a Tessera store."""
+        """Publish all local provisions + context entries + index nouns into a Tessera store."""
         published_ids: list[str] = []
         for stored in self.list_provisions():
             prov_dict = stored.provision.model_dump(mode="json")
@@ -330,6 +496,37 @@ class ProvisionStore:
             {"prov_ids": sorted(published_ids)},
             expected_version=idx_exp,
         )
+
+        context_items = self.list_context_entries()
+        if context_items:
+            ctx_ns = f"{namespace}.context"
+            ctx_ids: list[str] = []
+            for entry in context_items:
+                entry_dict = entry.model_dump(mode="json")
+                try:
+                    c_cur = tessera_store.get_record(ctx_ns, entry.entry_id)
+                    c_exp: int | None = c_cur.version
+                except TesseraNotFound:
+                    c_exp = None
+                tessera_store.put_record(
+                    ctx_ns,
+                    entry.entry_id,
+                    entry_dict,
+                    expected_version=c_exp,
+                )
+                ctx_ids.append(entry.entry_id)
+            try:
+                c_idx = tessera_store.get_record(ctx_ns, "index")
+                c_idx_exp: int | None = c_idx.version
+            except TesseraNotFound:
+                c_idx_exp = None
+            tessera_store.put_record(
+                ctx_ns,
+                "index",
+                {"entry_ids": sorted(ctx_ids)},
+                expected_version=c_idx_exp,
+            )
+
         return sorted(published_ids)
 
     def sync_from_tessera_store(
@@ -338,7 +535,19 @@ class ProvisionStore:
         *,
         namespace: str = "herma.provisions",
     ) -> list[StoredProvision]:
-        """Load versioned provisions and resolve tessera://blobs/<sha256> excerpts from Tessera."""
+        """Load versioned provisions, blob excerpts, and noun/verb context_refs from Tessera."""
+        ctx_ns = f"{namespace}.context"
+        try:
+            ctx_idx = tessera_store.get_record(ctx_ns, "index")
+            for entry_id in list(ctx_idx.value.get("entry_ids", [])):
+                try:
+                    c_rec = tessera_store.get_record(ctx_ns, str(entry_id))
+                    self.upsert_context_entry(ContextEntry.model_validate(c_rec.value))
+                except TesseraNotFound:
+                    continue
+        except TesseraNotFound:
+            pass
+
         idx = tessera_store.get_record(namespace, "index")
         prov_ids: list[str] = list(idx.value.get("prov_ids", []))
         synced: list[StoredProvision] = []
@@ -365,6 +574,19 @@ class ProvisionStore:
                     resolved_uris.append(u)
             if resolved_uris != prov.uris:
                 prov = prov.model_copy(update={"uris": resolved_uris})
+
+            for ref in prov.context_refs:
+                parsed_ref = _parse_tessera_context_ref(ref)
+                if parsed_ref is not None:
+                    kind, store_ns, rec_key = parsed_ref
+                    try:
+                        noun_rec = tessera_store.get_record(store_ns, rec_key)
+                        self.upsert_context_entry(
+                            _value_to_context_entry(ref, kind, store_ns, rec_key, noun_rec.value)
+                        )
+                    except TesseraNotFound:
+                        pass
+
             synced.append(
                 self.put_provision(prov, source_store=f"tessera:{namespace}", check_cas=False)
             )
@@ -377,16 +599,35 @@ class ProvisionStore:
         *,
         namespace: str = "herma.provisions",
     ) -> list[StoredProvision]:
-        """Pull provisions and content-addressed blobs over HTTP from a remote Tessera service."""
+        """Pull provisions, blobs, and noun/verb context_refs over HTTP from a Tessera service."""
         root = base_url.rstrip("/")
         headers = {"Authorization": f"Bearer {bearer_token}"}
         synced: list[StoredProvision] = []
         async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
-            idx_resp = await client.get(f"{root}/v1/stores/{namespace}/records/index")
+            ctx_ns = f"{namespace}.context"
+            ctx_idx_resp = await client.get(
+                f"{root}/v1/stores/{quote(ctx_ns, safe='')}/records/index"
+            )
+            if ctx_idx_resp.status_code == 200:
+                ctx_ids: list[str] = list(ctx_idx_resp.json().get("value", {}).get("entry_ids", []))
+                for entry_id in ctx_ids:
+                    c_resp = await client.get(
+                        f"{root}/v1/stores/{quote(ctx_ns, safe='')}/records/{quote(entry_id, safe='')}"
+                    )
+                    if c_resp.status_code == 200:
+                        self.upsert_context_entry(
+                            ContextEntry.model_validate(c_resp.json()["value"])
+                        )
+
+            idx_resp = await client.get(
+                f"{root}/v1/stores/{quote(namespace, safe='')}/records/index"
+            )
             idx_resp.raise_for_status()
             prov_ids: list[str] = list(idx_resp.json()["value"].get("prov_ids", []))
             for prov_id in prov_ids:
-                rec_resp = await client.get(f"{root}/v1/stores/{namespace}/records/{prov_id}")
+                rec_resp = await client.get(
+                    f"{root}/v1/stores/{quote(namespace, safe='')}/records/{quote(prov_id, safe='')}"
+                )
                 rec_resp.raise_for_status()
                 prov = Provision.model_validate(rec_resp.json()["value"])
                 resolved_uris: list[ProvisionURI] = []
@@ -413,6 +654,21 @@ class ProvisionStore:
                         resolved_uris.append(u)
                 if resolved_uris != prov.uris:
                     prov = prov.model_copy(update={"uris": resolved_uris})
+
+                for ref in prov.context_refs:
+                    parsed_ref = _parse_tessera_context_ref(ref)
+                    if parsed_ref is not None:
+                        kind, store_ns, rec_key = parsed_ref
+                        n_resp = await client.get(
+                            f"{root}/v1/stores/{quote(store_ns, safe='')}/records/{quote(rec_key, safe='/')}"
+                        )
+                        if n_resp.status_code == 200:
+                            self.upsert_context_entry(
+                                _value_to_context_entry(
+                                    ref, kind, store_ns, rec_key, n_resp.json().get("value")
+                                )
+                            )
+
                 synced.append(
                     self.put_provision(
                         prov, source_store=f"tessera_http:{namespace}", check_cas=False
@@ -456,6 +712,9 @@ class ProvisionStore:
             prov_resp = await client.get(f"{root}{provisions_path}", headers=headers)
             prov_resp.raise_for_status()
             body = prov_resp.json()
+            if isinstance(body, dict) and isinstance(body.get("context_entries"), list):
+                for raw_entry in body["context_entries"]:
+                    self.upsert_context_entry(ContextEntry.model_validate(raw_entry))
             raw_list = (
                 body["provisions"] if isinstance(body, dict) and "provisions" in body else body
             )

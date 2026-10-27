@@ -1,4 +1,4 @@
--- Persistent Cloudflare D1 schema for Herma programmable AI request middleware (`ta-amps-herma`).
+-- Persistent Cloudflare D1 schema for Herma context-shimming AI middleware (`ta-amps-herma`).
 
 CREATE TABLE IF NOT EXISTS provisions (
   prov_id        TEXT PRIMARY KEY,
@@ -8,6 +8,16 @@ CREATE TABLE IF NOT EXISTS provisions (
   body_json      TEXT    NOT NULL,
   updated_at     REAL    NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS context_entries (
+  entry_id   TEXT PRIMARY KEY,
+  kind       TEXT NOT NULL,
+  title      TEXT NOT NULL,
+  summary    TEXT NOT NULL,
+  body_json  TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_context_kind ON context_entries (kind, entry_id);
 
 CREATE TABLE IF NOT EXISTS harness_keys (
   key_id        TEXT PRIMARY KEY,

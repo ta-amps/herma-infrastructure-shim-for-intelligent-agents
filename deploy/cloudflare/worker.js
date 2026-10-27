@@ -1,23 +1,31 @@
-// Cloudflare Cloud Worker for Herma: 24/7 programmable AI request middleware backed by Cloudflare D1
+// Cloudflare Cloud Worker for Herma: 24/7 context-shimming AI middleware backed by Cloudflare D1
 // (`ta-amps-herma`) + direct Service Binding to `tessera` Cloud (`env.TESSERA`), with optional
 // `STORAGE_MODE = "origin"` reverse-proxy fallback.
 
 import {
+  ALLOWED_CONTEXT_KINDS,
   ALLOWED_HARNESS_KINDS,
+  ALLOWED_URI_SCHEMES,
+  DEFAULT_CONTEXT_ENTRIES,
   DEFAULT_PROVISIONS,
   HERMA_VERSION,
   HermaErr,
   assembleAugmentedRequest,
   authenticateHarness,
+  buildDirectProtocolResponse,
   canonicalJson,
   constantTimeEqual,
   enforceNotConsumerAssistant,
+  ensureContextTable,
   evaluateProvisions,
   extractEnvelope,
+  parseTesseraContextRef,
   renderConnectHtml,
   renderOverviewHtml,
   requireScope,
   sha256Hex,
+  validateContextEntry,
+  validateProvisionPayload,
 } from "./herma_engine.js";
 
 const DEFAULT_ORIGIN = "https://herma-api.fly.dev";
@@ -81,13 +89,20 @@ function withSecurity(response, { noStore = true } = {}) {
   });
 }
 
-function problem(status, code, title, detail) {
+function problem(status, code, title, detail, extraHeaders = {}) {
   return withSecurity(
     new Response(JSON.stringify({ type: "about:blank", title, status, detail, code }), {
       status,
-      headers: { "content-type": "application/problem+json" },
+      headers: { "content-type": "application/problem+json", ...extraHeaders },
     })
   );
+}
+
+function methodNotAllowed(allowedMethods) {
+  const allow = allowedMethods.join(", ");
+  return problem(405, "method_not_allowed", "Method Not Allowed", `Allowed HTTP methods: ${allow}.`, {
+    allow,
+  });
 }
 
 function jsonResp(data, status = 200, extraHeaders = {}) {
@@ -99,23 +114,142 @@ function jsonResp(data, status = 200, extraHeaders = {}) {
   );
 }
 
-async function ensureSeeded(db) {
-  const row = await db.prepare("SELECT COUNT(*) AS n FROM provisions").first();
-  if (Number(row?.n || 0) > 0) return;
-  const now = Date.now() / 1000;
-  const stmts = [];
-  for (const prov of DEFAULT_PROVISIONS) {
-    const bodyJson = canonicalJson(prov);
-    const sha = await sha256Hex(bodyJson);
-    stmts.push(
-      db
-        .prepare(
-          "INSERT OR IGNORE INTO provisions (prov_id, version, content_sha256, source_store, body_json, updated_at) VALUES (?, 1, ?, 'examples', ?, ?)"
-        )
-        .bind(prov.prov_id, sha, bodyJson, now)
-    );
+function rowToContextEntry(row) {
+  let parsed = row.body_json;
+  try {
+    parsed = JSON.parse(String(row.body_json || ""));
+  } catch {
+    // keep raw string
   }
-  if (stmts.length) await db.batch(stmts);
+  let schemaOrBody = "";
+  let sourceUri = null;
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && "schema_or_body" in parsed) {
+    schemaOrBody = parsed.schema_or_body ?? "";
+    sourceUri = typeof parsed.source_uri === "string" && parsed.source_uri ? parsed.source_uri : null;
+  } else {
+    schemaOrBody = parsed ?? "";
+  }
+  return {
+    entry_id: row.entry_id,
+    kind: row.kind,
+    title: row.title,
+    summary: row.summary,
+    schema_or_body: schemaOrBody,
+    source_uri: sourceUri,
+    updated_at: row.updated_at,
+  };
+}
+
+async function ensureSeeded(db) {
+  await ensureContextTable(db);
+  const ctxStmts = DEFAULT_CONTEXT_ENTRIES.map((entry) =>
+    db
+      .prepare(
+        "INSERT OR IGNORE INTO context_entries (entry_id, kind, title, summary, body_json, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+      )
+      .bind(
+        entry.entry_id,
+        entry.kind,
+        entry.title,
+        entry.summary,
+        canonicalJson({ schema_or_body: entry.schema_or_body, source_uri: entry.source_uri }),
+        entry.updated_at
+      )
+  );
+  if (ctxStmts.length) await db.batch(ctxStmts);
+
+  const row = await db.prepare("SELECT COUNT(*) AS n FROM provisions").first();
+  if (Number(row?.n || 0) < DEFAULT_PROVISIONS.length) {
+    const now = Date.now() / 1000;
+    const stmts = [];
+    for (const prov of DEFAULT_PROVISIONS) {
+      const bodyJson = canonicalJson(prov);
+      const sha = await sha256Hex(bodyJson);
+      stmts.push(
+        db
+          .prepare(
+            "INSERT OR IGNORE INTO provisions (prov_id, version, content_sha256, source_store, body_json, updated_at) VALUES (?, 1, ?, 'examples', ?, ?)"
+          )
+          .bind(prov.prov_id, sha, bodyJson, now)
+      );
+    }
+    if (stmts.length) await db.batch(stmts);
+
+    // Upgrade untouched v1 examples seed of PROV-TESSERA-FENCING so context_refs are live immediately:
+    const tf = await db
+      .prepare("SELECT * FROM provisions WHERE prov_id = 'PROV-TESSERA-FENCING'")
+      .first();
+    if (tf && tf.source_store === "examples" && Number(tf.version) === 1) {
+      const curBody = JSON.parse(tf.body_json);
+      if (!curBody.context_refs || !curBody.context_refs.length) {
+        const updatedDef = DEFAULT_PROVISIONS.find((p) => p.prov_id === "PROV-TESSERA-FENCING");
+        if (updatedDef) {
+          const updatedJson = canonicalJson(updatedDef);
+          const updatedSha = await sha256Hex(updatedJson);
+          await db
+            .prepare(
+              "UPDATE provisions SET content_sha256 = ?, body_json = ?, updated_at = ? WHERE prov_id = 'PROV-TESSERA-FENCING' AND source_store = 'examples'"
+            )
+            .bind(updatedSha, updatedJson, now)
+            .run();
+        }
+      }
+    }
+  }
+}
+
+async function upsertContextEntry(db, rawEntry) {
+  await ensureContextTable(db);
+  const entry = validateContextEntry(rawEntry);
+  const bodyJson = canonicalJson({
+    schema_or_body: entry.schema_or_body,
+    source_uri: entry.source_uri,
+  });
+  await db
+    .prepare(
+      "INSERT INTO context_entries (entry_id, kind, title, summary, body_json, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(entry_id) DO UPDATE SET kind = excluded.kind, title = excluded.title, summary = excluded.summary, body_json = excluded.body_json, updated_at = excluded.updated_at"
+    )
+    .bind(entry.entry_id, entry.kind, entry.title, entry.summary, bodyJson, entry.updated_at)
+    .run();
+  return entry;
+}
+
+async function listContextEntries(db, { kind = null, prefix = "" } = {}) {
+  await ensureSeeded(db);
+  let res;
+  if (kind) {
+    if (!ALLOWED_CONTEXT_KINDS.has(kind)) {
+      throw new HermaErr(422, "validation_error", "Invalid Context Filter", "kind must be 'noun', 'verb', or 'detail'.");
+    }
+    res = await db
+      .prepare("SELECT * FROM context_entries WHERE kind = ? ORDER BY entry_id ASC")
+      .bind(kind)
+      .all();
+  } else {
+    res = await db.prepare("SELECT * FROM context_entries ORDER BY entry_id ASC").all();
+  }
+  let items = (res.results || []).map(rowToContextEntry);
+  if (prefix) {
+    items = items.filter((e) => e.entry_id.startsWith(prefix));
+  }
+  return items;
+}
+
+async function getContextEntriesMap(db, refs) {
+  const unique = [...new Set((refs || []).map((r) => String(r || "").trim()).filter(Boolean))];
+  const map = new Map();
+  if (!unique.length) return map;
+  await ensureSeeded(db);
+  const placeholders = unique.map(() => "?").join(",");
+  const res = await db
+    .prepare(`SELECT * FROM context_entries WHERE entry_id IN (${placeholders})`)
+    .bind(...unique)
+    .all();
+  for (const row of res.results || []) {
+    const entry = rowToContextEntry(row);
+    map.set(entry.entry_id, entry);
+  }
+  return map;
 }
 
 async function listProvisions(db, enabledOnly = false) {
@@ -133,7 +267,8 @@ async function listProvisions(db, enabledOnly = false) {
   return items;
 }
 
-async function putProvision(db, prov, { expectedVersion = null, sourceStore = "harness", checkCas = false } = {}) {
+async function putProvision(db, rawProv, { expectedVersion = null, sourceStore = "harness", checkCas = false } = {}) {
+  const prov = validateProvisionPayload(rawProv);
   const cur = await db.prepare("SELECT * FROM provisions WHERE prov_id = ?").bind(prov.prov_id).first();
   const curVer = cur ? Number(cur.version) : null;
   if (checkCas && curVer !== expectedVersion) {
@@ -201,7 +336,13 @@ async function listReceipts(db, limit = 25) {
   return (res.results || []).map((r) => {
     if (r.body_json && r.body_json !== "{}") {
       try {
-        return JSON.parse(r.body_json);
+        const parsed = JSON.parse(r.body_json);
+        return {
+          responded_directly: false,
+          direct_response_text: null,
+          shimmed_context_refs: [],
+          ...parsed,
+        };
       } catch {
         // fall back to columns
       }
@@ -218,6 +359,9 @@ async function listReceipts(db, limit = 25) {
       uris_injected: JSON.parse(r.injected_uris || "[]"),
       injected_chars: 0,
       deduped_skipped: [],
+      responded_directly: false,
+      direct_response_text: null,
+      shimmed_context_refs: [],
       created_at: Number(r.created_at),
     };
   });
@@ -232,7 +376,57 @@ async function tesseraFetch(env, baseUrl, path, bearer) {
   return await fetch(`${cleanBase}${path}`, { method: "GET", headers });
 }
 
+function valueToContextEntry(ref, kind, storeNs, recKey, rawVal) {
+  const defaultUri = `tessera://stores/${storeNs}/${recKey}`;
+  if (rawVal && typeof rawVal === "object" && !Array.isArray(rawVal)) {
+    const candUri = typeof rawVal.source_uri === "string" ? rawVal.source_uri.trim() : "";
+    const sourceUri = ALLOWED_URI_SCHEMES.some((s) => candUri.startsWith(s)) ? candUri : defaultUri;
+    return {
+      entry_id: ref,
+      kind,
+      title: String(rawVal.title || `${kind} ${storeNs}/${recKey}`).slice(0, 160),
+      summary: String(rawVal.summary || `Synced ${kind} context from Tessera store ${storeNs}/${recKey}.`).slice(0, 600),
+      schema_or_body: rawVal.schema_or_body ?? rawVal,
+      source_uri: sourceUri,
+      updated_at: String(rawVal.updated_at || new Date().toISOString()),
+    };
+  }
+  return {
+    entry_id: ref,
+    kind,
+    title: `${kind} ${storeNs}/${recKey}`.slice(0, 160),
+    summary: `Synced ${kind} context from Tessera store ${storeNs}/${recKey}.`.slice(0, 600),
+    schema_or_body: String(rawVal ?? ""),
+    source_uri: defaultUri,
+    updated_at: new Date().toISOString(),
+  };
+}
+
 async function syncFromTesseraCloud(db, env, { base_url, bearer_token, namespace = "herma.provisions" }) {
+  await ensureContextTable(db);
+  const ctxNs = `${namespace}.context`;
+  const ctxIdxResp = await tesseraFetch(
+    env,
+    base_url,
+    `/v1/stores/${encodeURIComponent(ctxNs)}/records/index`,
+    bearer_token
+  );
+  if (ctxIdxResp.ok) {
+    const ctxIdx = await ctxIdxResp.json();
+    for (const eid of ctxIdx?.value?.entry_ids || []) {
+      const cResp = await tesseraFetch(
+        env,
+        base_url,
+        `/v1/stores/${encodeURIComponent(ctxNs)}/records/${encodeURIComponent(eid)}`,
+        bearer_token
+      );
+      if (cResp.ok) {
+        const cData = await cResp.json();
+        if (cData?.value) await upsertContextEntry(db, cData.value);
+      }
+    }
+  }
+
   const listResp = await tesseraFetch(env, base_url, `/v1/stores/${encodeURIComponent(namespace)}/records?limit=200`, bearer_token);
   let records = [];
   if (listResp.ok) {
@@ -281,6 +475,27 @@ async function syncFromTesseraCloud(db, env, { base_url, bearer_token, namespace
       resolvedUris.push(u);
     }
     prov.uris = resolvedUris;
+
+    for (const ref of prov.context_refs || []) {
+      const parsedRef = parseTesseraContextRef(ref);
+      if (parsedRef) {
+        const encodedKey = parsedRef.recKey.split("/").map(encodeURIComponent).join("/");
+        const nResp = await tesseraFetch(
+          env,
+          base_url,
+          `/v1/stores/${encodeURIComponent(parsedRef.storeNs)}/records/${encodedKey}`,
+          bearer_token
+        );
+        if (nResp.ok) {
+          const nData = await nResp.json();
+          await upsertContextEntry(
+            db,
+            valueToContextEntry(ref, parsedRef.kind, parsedRef.storeNs, parsedRef.recKey, nData?.value)
+          );
+        }
+      }
+    }
+
     synced.push(await putProvision(db, prov, { sourceStore: `tessera_cloud:${namespace}`, checkCas: false }));
   }
   return synced;
@@ -323,28 +538,36 @@ export default {
 
     try {
       // 1. Public health & read-only HTML status board
-      if ((path === "/api/health" || path === "/v1/health" || path === "/healthz") && (method === "GET" || method === "HEAD")) {
-        const active = await listProvisions(db, true);
+      if (path === "/api/health" || path === "/v1/health" || path === "/healthz") {
+        if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
+        const [active, ctxEntries] = await Promise.all([listProvisions(db, true), listContextEntries(db)]);
         return jsonResp({
           ok: true,
           surface: "herma",
           version: HERMA_VERSION,
           storage: "cloudflare-d1",
           active_provisions: active.length,
+          context_entries: ctxEntries.length,
           standard_mode_only: true,
           configurable_harnesses_only: true,
         });
       }
-      if ((path === "/" || path === "/console") && (method === "GET" || method === "HEAD")) {
-        const [provs, rcpts] = await Promise.all([listProvisions(db, false), listReceipts(db, 10)]);
+      if (path === "/" || path === "/console") {
+        if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
+        const [provs, rcpts, ctxEntries] = await Promise.all([
+          listProvisions(db, false),
+          listReceipts(db, 10),
+          listContextEntries(db),
+        ]);
         return withSecurity(
-          new Response(renderOverviewHtml(provs, rcpts, publicUrl), {
+          new Response(renderOverviewHtml(provs, rcpts, publicUrl, ctxEntries), {
             status: 200,
             headers: { "content-type": "text/html; charset=utf-8" },
           })
         );
       }
-      if (path === "/connect" && (method === "GET" || method === "HEAD")) {
+      if (path === "/connect") {
+        if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
         return withSecurity(
           new Response(renderConnectHtml(publicUrl), {
             status: 200,
@@ -355,6 +578,7 @@ export default {
 
       // 2. Harness key bootstrap & administration (`/v1/admin/keys`)
       if (path === "/v1/admin/keys") {
+        if (method !== "GET" && method !== "POST") return methodNotAllowed(["GET", "POST"]);
         const bootHdr = request.headers.get("x-bootstrap-secret") || "";
         const bootOk =
           (env.BOOTSTRAP_SECRET && constantTimeEqual(bootHdr, env.BOOTSTRAP_SECRET)) ||
@@ -375,44 +599,43 @@ export default {
           }));
           return jsonResp({ keys });
         }
-        if (method === "POST") {
-          const body = await request.json();
-          const label = String(body.label || "").trim();
-          const harnessKind = String(body.harness_kind || "opencode").trim();
-          const scopes = Array.isArray(body.scopes) && body.scopes.length ? [...new Set(body.scopes)] : ["route"];
-          if (!label || !ALLOWED_HARNESS_KINDS.has(harnessKind)) {
-            throw new HermaErr(400, "invalid_request", "Invalid Key Request", "Valid label and harness_kind required.");
-          }
-          const idBytes = crypto.getRandomValues(new Uint8Array(6));
-          const keyId = Array.from(idBytes, (b) => b.toString(16).padStart(2, "0")).join("");
-          const rawBytes = crypto.getRandomValues(new Uint8Array(24));
-          const rawSec = btoa(String.fromCharCode(...rawBytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-          const fullKey = `hmk_${keyId}.${rawSec}`;
-          const secSha = await sha256Hex(rawSec);
-          const now = Date.now() / 1000;
-          await db
-            .prepare(
-              "INSERT INTO harness_keys (key_id, label, harness_kind, scopes_json, secret_sha256, created_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?, NULL)"
-            )
-            .bind(keyId, label, harnessKind, JSON.stringify(scopes.sort()), secSha, now)
-            .run();
-          return jsonResp(
-            {
-              key: fullKey,
-              key_id: keyId,
-              label,
-              harness_kind: harnessKind,
-              scopes: scopes.sort(),
-              created_at: now,
-              revoked_at: null,
-            },
-            201
-          );
+        const body = await request.json();
+        const label = String(body.label || "").trim();
+        const harnessKind = String(body.harness_kind || "opencode").trim();
+        const scopes = Array.isArray(body.scopes) && body.scopes.length ? [...new Set(body.scopes)] : ["route"];
+        if (!label || !ALLOWED_HARNESS_KINDS.has(harnessKind)) {
+          throw new HermaErr(400, "invalid_request", "Invalid Key Request", "Valid label and harness_kind required.");
         }
+        const idBytes = crypto.getRandomValues(new Uint8Array(6));
+        const keyId = Array.from(idBytes, (b) => b.toString(16).padStart(2, "0")).join("");
+        const rawBytes = crypto.getRandomValues(new Uint8Array(24));
+        const rawSec = btoa(String.fromCharCode(...rawBytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        const fullKey = `hmk_${keyId}.${rawSec}`;
+        const secSha = await sha256Hex(rawSec);
+        const now = Date.now() / 1000;
+        await db
+          .prepare(
+            "INSERT INTO harness_keys (key_id, label, harness_kind, scopes_json, secret_sha256, created_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?, NULL)"
+          )
+          .bind(keyId, label, harnessKind, JSON.stringify(scopes.sort()), secSha, now)
+          .run();
+        return jsonResp(
+          {
+            key: fullKey,
+            key_id: keyId,
+            label,
+            harness_kind: harnessKind,
+            scopes: scopes.sort(),
+            created_at: now,
+            revoked_at: null,
+          },
+          201
+        );
       }
 
       // 3. Authenticated `route` endpoints (`/v1/dry-run`, `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, `/v1/receipts`)
-      if (path === "/v1/dry-run" && method === "POST") {
+      if (path === "/v1/dry-run") {
+        if (method !== "POST") return methodNotAllowed(["POST"]);
         enforceNotConsumerAssistant(request);
         const principal = await authenticateHarness(db, request);
         requireScope(principal, "route", request);
@@ -422,12 +645,24 @@ export default {
         const envelope = extractEnvelope(wireFormat, payload, body.workspace_paths || []);
         const storedList = await listProvisions(db, true);
         const matched = await evaluateProvisions(storedList, envelope.trigger_context, env);
-        const { augmented_payload, receipt } = await assembleAugmentedRequest(principal, envelope, payload, matched);
+        const allRefs = matched.flatMap((m) => m.stored.provision.context_refs || []);
+        const contextMap = await getContextEntriesMap(db, allRefs);
+        const { augmented_payload, receipt } = await assembleAugmentedRequest(
+          principal,
+          envelope,
+          payload,
+          matched,
+          8000,
+          contextMap
+        );
         await recordReceipt(db, receipt);
         return jsonResp({
           augmented_payload,
           matches: matched.map((m) => m.match),
           receipt,
+          responded_directly: receipt.responded_directly,
+          direct_response_text: receipt.direct_response_text,
+          shimmed_context_refs: receipt.shimmed_context_refs,
         });
       }
 
@@ -436,7 +671,8 @@ export default {
         "/v1/responses": "responses",
         "/v1/messages": "messages",
       };
-      if (path in wireMap && method === "POST") {
+      if (path in wireMap) {
+        if (method !== "POST") return methodNotAllowed(["POST"]);
         enforceNotConsumerAssistant(request);
         const principal = await authenticateHarness(db, request);
         requireScope(principal, "route", request);
@@ -445,8 +681,34 @@ export default {
         const envelope = extractEnvelope(wireFormat, payload, []);
         const storedList = await listProvisions(db, true);
         const matched = await evaluateProvisions(storedList, envelope.trigger_context, env);
-        const { augmented_payload, receipt } = await assembleAugmentedRequest(principal, envelope, payload, matched);
+        const allRefs = matched.flatMap((m) => m.stored.provision.context_refs || []);
+        const contextMap = await getContextEntriesMap(db, allRefs);
+        const { augmented_payload, receipt } = await assembleAugmentedRequest(
+          principal,
+          envelope,
+          payload,
+          matched,
+          8000,
+          contextMap
+        );
         await recordReceipt(db, receipt);
+
+        const baseMetaHeaders = {
+          "x-herma-receipt": receipt.receipt_sha256,
+          "x-herma-receipt-sha256": receipt.receipt_sha256,
+          "x-herma-provisions-fired": (receipt.provisions_fired || []).join(","),
+        };
+        if (receipt.shimmed_context_refs?.length) {
+          baseMetaHeaders["x-herma-shimmed-context"] = receipt.shimmed_context_refs.join(",");
+        }
+
+        if (receipt.responded_directly && receipt.direct_response_text != null) {
+          const directBody = buildDirectProtocolResponse(wireFormat, receipt);
+          return jsonResp(directBody, 200, {
+            ...baseMetaHeaders,
+            "x-herma-direct-response": "true",
+          });
+        }
 
         const upstreamBase = (request.headers.get("x-upstream-base-url") || env.UPSTREAM_LLM_URL || "").replace(/\/+$/, "");
         if (!upstreamBase) {
@@ -473,12 +735,12 @@ export default {
           body: JSON.stringify(augmented_payload),
         });
         const outHeaders = new Headers(upResp.headers);
-        outHeaders.set("x-herma-receipt-sha256", receipt.receipt_sha256);
-        outHeaders.set("x-herma-provisions-fired", (receipt.provisions_fired || []).join(","));
+        for (const [k, v] of Object.entries(baseMetaHeaders)) outHeaders.set(k, v);
         return withSecurity(new Response(upResp.body, { status: upResp.status, headers: outHeaders }));
       }
 
-      if (path === "/v1/receipts" && method === "GET") {
+      if (path === "/v1/receipts") {
+        if (method !== "GET") return methodNotAllowed(["GET"]);
         enforceNotConsumerAssistant(request);
         const principal = await authenticateHarness(db, request);
         requireScope(principal, "route", request);
@@ -486,8 +748,41 @@ export default {
         return jsonResp({ receipts: await listReceipts(db, limit) });
       }
 
-      // 4. Authenticated `configure` endpoints (`/v1/provisions*`, `/v1/sync/tessera`, `/v1/sync/remote`)
-      if (path === "/v1/provisions" && method === "GET") {
+      // 4. Authenticated `configure` endpoints (`/v1/context`, `/v1/provisions*`, `/v1/sync/tessera`, `/v1/sync/remote`)
+      if (path === "/v1/context") {
+        if (method !== "GET" && method !== "POST") return methodNotAllowed(["GET", "POST"]);
+        const principal = await authenticateHarness(db, request);
+        requireScope(principal, "configure", request);
+        if (method === "GET") {
+          const kind = (url.searchParams.get("kind") || "").trim() || null;
+          const prefix = url.searchParams.get("prefix") || "";
+          const refsParam = (url.searchParams.get("refs") || "").trim();
+          let items;
+          if (refsParam) {
+            const refList = refsParam.split(",").map((r) => r.trim()).filter(Boolean);
+            const map = await getContextEntriesMap(db, refList);
+            items = refList.map((r) => map.get(r)).filter(Boolean);
+            if (kind) items = items.filter((e) => e.kind === kind);
+            if (prefix) items = items.filter((e) => e.entry_id.startsWith(prefix));
+          } else {
+            items = await listContextEntries(db, { kind, prefix });
+          }
+          return jsonResp({ entries: items, count: items.length });
+        }
+        const body = await request.json();
+        const rawList = Array.isArray(body?.entries) ? body.entries : [body];
+        if (!rawList.length || rawList.length > 200) {
+          throw new HermaErr(422, "validation_error", "Invalid Context Batch", "Provide 1..200 context entries.");
+        }
+        const saved = [];
+        for (const item of rawList) {
+          saved.push(await upsertContextEntry(db, item));
+        }
+        return jsonResp({ entry: saved[0], entries: saved, count: saved.length });
+      }
+
+      if (path === "/v1/provisions") {
+        if (method !== "GET") return methodNotAllowed(["GET"]);
         const principal = await authenticateHarness(db, request);
         requireScope(principal, "configure", request);
         return jsonResp({ provisions: await listProvisions(db, false) });
@@ -495,6 +790,7 @@ export default {
 
       const provMatch = /^\/v1\/provisions\/([^/]+)$/.exec(path);
       if (provMatch) {
+        if (method !== "PUT" && method !== "DELETE") return methodNotAllowed(["PUT", "DELETE"]);
         const provId = decodeURIComponent(provMatch[1]);
         const principal = await authenticateHarness(db, request);
         requireScope(principal, "configure", request);
@@ -513,13 +809,12 @@ export default {
           });
           return jsonResp(saved);
         }
-        if (method === "DELETE") {
-          await db.prepare("DELETE FROM provisions WHERE prov_id = ?").bind(provId).run();
-          return jsonResp({ deleted: provId });
-        }
+        await db.prepare("DELETE FROM provisions WHERE prov_id = ?").bind(provId).run();
+        return jsonResp({ deleted: provId });
       }
 
-      if (path === "/v1/sync/tessera" && method === "POST") {
+      if (path === "/v1/sync/tessera") {
+        if (method !== "POST") return methodNotAllowed(["POST"]);
         const principal = await authenticateHarness(db, request);
         requireScope(principal, "configure", request);
         const body = await request.json();
@@ -527,7 +822,8 @@ export default {
         return jsonResp({ synced: synced.map((s) => s.provision.prov_id), count: synced.length });
       }
 
-      if (path === "/v1/sync/remote" && method === "POST") {
+      if (path === "/v1/sync/remote") {
+        if (method !== "POST") return methodNotAllowed(["POST"]);
         const principal = await authenticateHarness(db, request);
         requireScope(principal, "configure", request);
         const body = await request.json();
@@ -553,6 +849,11 @@ export default {
         const pr = await fetch(`${root}${prPath}`, { method: "GET", headers: hdrs });
         if (!pr.ok) throw new HermaErr(502, "sync_failed", "Remote Sync Failed", `Upstream returned HTTP ${pr.status}.`);
         const pd = await pr.json();
+        if (Array.isArray(pd?.context_entries)) {
+          for (const entry of pd.context_entries) {
+            await upsertContextEntry(db, entry);
+          }
+        }
         const list = Array.isArray(pd) ? pd : pd.provisions || [];
         const synced = [];
         for (const item of list) {

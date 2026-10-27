@@ -1,12 +1,17 @@
 {
   "prov_id": "PROV-TESSERA-FENCING",
   "title": "Tessera Atomic Lease Fencing & Compare-and-Set Storage",
-  "summary": "Injects monotonic fencing-token, idempotent receipt, and CAS version rules whenever swarm queue or shared-state code is touched.",
+  "summary": "Shims monotonic fencing-token, idempotent receipt, CAS version rules, and atomic noun/verb definitions whenever swarm queue or shared-state code is touched.",
   "priority": 300,
   "enabled": true,
+  "action": "shim_context",
+  "context_refs": [
+    "noun:tessera.lease_fence",
+    "verb:tessera.claim"
+  ],
   "inject_position": "system_prefix",
   "dedupe_mode": "once_per_conversation",
-  "max_chars": 2200,
+  "max_chars": 3000,
   "inject_text": "Every shared task is an atomic verb tile (claimed once, finished once, receipted) and every shared state artifact is a compare-and-set noun. Always pass the claim's monotonic fence token on heartbeat/submit/park, pass expected_version on put_record, and never bypass scope grants.",
   "uris": [
     {

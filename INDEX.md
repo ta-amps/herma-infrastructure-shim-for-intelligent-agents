@@ -32,10 +32,10 @@ Every file in this repo with a one-line description taken from the file itself. 
 | File | What it is |
 |---|---|
 | [deploy/bootstrap-hosting.sh](deploy/bootstrap-hosting.sh) | One-time hosting setup for one service on Fly.io behind a Cloudflare Worker: the Fly app and its |
-| [deploy/cloudflare/d1-herma.sql](deploy/cloudflare/d1-herma.sql) | Persistent Cloudflare D1 schema for Herma programmable AI request middleware (ta-amps-herma). |
-| [deploy/cloudflare/herma_engine.js](deploy/cloudflare/herma_engine.js) | Pure 3-tier trigger engine, configurable-harness gate, multi-protocol payload injector, |
-| [deploy/cloudflare/worker.js](deploy/cloudflare/worker.js) | Cloudflare Cloud Worker for Herma: 24/7 programmable AI request middleware backed by Cloudflare D1 |
-| [deploy/cloudflare/wrangler.jsonc](deploy/cloudflare/wrangler.jsonc) | Herma Cloud Worker: 24/7 programmable AI request middleware on Cloudflare Workers + D1 (ta-amps-herma) |
+| [deploy/cloudflare/d1-herma.sql](deploy/cloudflare/d1-herma.sql) | Persistent Cloudflare D1 schema for Herma context-shimming AI middleware (ta-amps-herma). |
+| [deploy/cloudflare/herma_engine.js](deploy/cloudflare/herma_engine.js) | Context-shimming 3-tier trigger engine, configurable-harness gate, atomic noun/verb context |
+| [deploy/cloudflare/worker.js](deploy/cloudflare/worker.js) | Cloudflare Cloud Worker for Herma: 24/7 context-shimming AI middleware backed by Cloudflare D1 |
+| [deploy/cloudflare/wrangler.jsonc](deploy/cloudflare/wrangler.jsonc) | Herma Cloud Worker: 24/7 context-shimming AI middleware on Cloudflare Workers + D1 (ta-amps-herma) |
 | [deploy/fly/Dockerfile](deploy/fly/Dockerfile) |  |
 | [deploy/fly/fly.toml](deploy/fly/fly.toml) |  |
 
@@ -46,34 +46,36 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [docs/architecture.md](docs/architecture.md) | Architecture |
 | [docs/handoff.md](docs/handoff.md) | Handoff & Status |
 | [docs/harnesses.md](docs/harnesses.md) | Connecting Configurable Agentic Coding Harnesses |
-| [docs/setup.md](docs/setup.md) | Setup, Backing Stores & Cloudflare Deployment |
+| [docs/setup.md](docs/setup.md) | Setup, Context Database, Backing Stores & Cloudflare Deployment |
 | [docs/summary.md](docs/summary.md) | Summary |
 
-## examples/ (5)
+## examples/ (7)
 
 | File | What it is |
 |---|---|
+| [examples/provisions/PROV-DIRECT-NOUN-VERB-SCHEMA.json](examples/provisions/PROV-DIRECT-NOUN-VERB-SCHEMA.json) | Direct Canonical Noun & Verb Schema Lookup |
 | [examples/provisions/PROV-EDGE-ORIGIN-LOCKDOWN.json](examples/provisions/PROV-EDGE-ORIGIN-LOCKDOWN.json) | Cloudflare Worker x-edge-auth & Security Header Contract |
 | [examples/provisions/PROV-NGO-HUMAN-BOUNDARY.json](examples/provisions/PROV-NGO-HUMAN-BOUNDARY.json) | NGO Kit Human-Only Crisis & Two-Donor Review Boundary |
 | [examples/provisions/PROV-SHAMASH-NON-ACCUSATORY.json](examples/provisions/PROV-SHAMASH-NON-ACCUSATORY.json) | Non-Accusatory Risk Indicators & Synthetic Bundle Guard |
 | [examples/provisions/PROV-TESSERA-FENCING.json](examples/provisions/PROV-TESSERA-FENCING.json) | Tessera Atomic Lease Fencing & Compare-and-Set Storage |
-| [examples/provisions/README.md](examples/provisions/README.md) | Example Provisions |
+| [examples/provisions/README.md](examples/provisions/README.md) | Example Provisions & Atomic Noun/Verb Context |
+| [examples/provisions/context/CONTEXT-TESSERA-NOUNS-VERBS.json](examples/provisions/context/CONTEXT-TESSERA-NOUNS-VERBS.json) | JSON object: entries |
 
 ## herma/ (16)
 
 | File | What it is |
 |---|---|
-| [herma/__init__.py](herma/__init__.py) | Herma: programmable AI request middleware for configurable agentic coding harnesses. |
+| [herma/__init__.py](herma/__init__.py) | Herma: context-shimming AI middleware for configurable coding harnesses. |
 | [herma/api/__init__.py](herma/api/__init__.py) | FastAPI HTTP service and read-only console pages for Herma. |
 | [herma/api/app.py](herma/api/app.py) | FastAPI application for Herma middleware (:7730). |
 | [herma/api/pages.py](herma/api/pages.py) | Server-rendered read-only HTML status board and harness connection guide. |
-| [herma/cli.py](herma/cli.py) | Command-line interface for Herma: seed, keys, dry-run, 3-tier demo, and serve. |
+| [herma/cli.py](herma/cli.py) | Command-line interface for Herma: seed, keys, context, dry-run, 3-tier demo, and serve. |
 | [herma/errors.py](herma/errors.py) | Typed errors mapped deterministically to RFC 9457 problem+json HTTP responses. |
 | [herma/harness_gate.py](herma/harness_gate.py) | Configurable-harness access gate: blocks generic consumer chat assistants from configuring or routing. |
-| [herma/injector.py](herma/injector.py) | Extracts signals from OpenAI/Meta/Anthropic payloads and injects matched provisions + URIs. |
-| [herma/proxy.py](herma/proxy.py) | Core interception & upstream LLM forwarding engine (supports JSON and SSE streaming). |
-| [herma/schemas.py](herma/schemas.py) | Strict Pydantic schemas for provisions, 3-tier triggers, harness keys, and injection receipts. |
-| [herma/store.py](herma/store.py) | SQLite WAL provision/key/receipt store plus Tessera CAS and remote-handshake sync adapters. |
+| [herma/injector.py](herma/injector.py) | Extracts signals from OpenAI/Meta/Anthropic payloads and shims rules, URIs, and noun/verb context. |
+| [herma/proxy.py](herma/proxy.py) | Context-shimming interception, direct-response short-circuiting, and upstream LLM forwarding. |
+| [herma/schemas.py](herma/schemas.py) | Strict Pydantic schemas for provisions, context entries, 3-tier triggers, keys, and receipts. |
+| [herma/store.py](herma/store.py) | SQLite WAL provision/context/key/receipt store plus Tessera CAS and remote-handshake sync. |
 | [herma/triggers/__init__.py](herma/triggers/__init__.py) | Three-tier trigger evaluation: keyword (~0 ms), semantic (~1-5 ms), and micromodel. |
 | [herma/triggers/engine.py](herma/triggers/engine.py) | Orchestrates Tier-1 (keyword), Tier-2 (semantic), and Tier-3 (micromodel) triggers. |
 | [herma/triggers/keyword.py](herma/triggers/keyword.py) | Tier-1 deterministic trigger (~0 ms): keywords, bounded regexes, path globs, and tool names. |
@@ -88,10 +90,11 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/check_architecture.py](scripts/check_architecture.py) | Check that architecture.json still describes this repo truthfully. |
 | [scripts/check_public.py](scripts/check_public.py) | Fail if a file headed for a public repo holds a secret or a private name. |
 
-## tests/ (3)
+## tests/ (4)
 
 | File | What it is |
 |---|---|
 | [tests/test_api_and_proxy.py](tests/test_api_and_proxy.py) | Tests for multi-protocol payload augmentation, deduplication, edge lockdown, and HTTP endpoints. |
 | [tests/test_harness_gate_and_store.py](tests/test_harness_gate_and_store.py) | Tests for configurable-harness access gate, CAS store, Tessera sync, and remote handshake sync. |
+| [tests/test_herma.py](tests/test_herma.py) | Tests for atomic noun/verb context database, contextrefs shimming, and direct responses. |
 | [tests/test_triggers.py](tests/test_triggers.py) | Tests for Tier-1 (keyword/regex/path/tool), Tier-2 (semantic), and Tier-3 (micromodel) triggers. |

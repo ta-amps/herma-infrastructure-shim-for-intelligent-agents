@@ -1,7 +1,8 @@
-"""Core interception & upstream LLM forwarding engine (supports JSON and SSE streaming)."""
+"""Context-shimming interception, direct-response short-circuiting, and upstream LLM forwarding."""
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
@@ -26,11 +27,90 @@ DEFAULT_UPSTREAMS: dict[str, str] = {
 
 @dataclass(frozen=True)
 class InterceptionOutcome:
-    """Result of evaluating triggers and augmenting an outbound request."""
+    """Result of evaluating triggers, shimming noun/verb context, or answering directly."""
 
     augmented_payload: dict[str, Any]
     matches: list[TriggerMatch]
     receipt: InjectionReceipt
+
+
+def build_direct_protocol_response(
+    wire_format: WireFormat,
+    receipt: InjectionReceipt,
+) -> dict[str, Any]:
+    """Build a protocol-faithful JSON completion when action == 'respond_directly'."""
+    rendered_direct_response = receipt.direct_response_text or ""
+    created_ts = int(receipt.created_at)
+
+    if wire_format == "responses":
+        return {
+            "id": f"resp_{receipt.receipt_id}",
+            "object": "response",
+            "created_at": created_ts,
+            "status": "completed",
+            "model": receipt.model,
+            "output_text": rendered_direct_response,
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": rendered_direct_response,
+                        }
+                    ],
+                }
+            ],
+            "usage": {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+            },
+        }
+
+    if wire_format == "messages":
+        return {
+            "id": f"msg_{receipt.receipt_id}",
+            "type": "message",
+            "role": "assistant",
+            "model": receipt.model,
+            "content": [
+                {
+                    "type": "text",
+                    "text": rendered_direct_response,
+                }
+            ],
+            "stop_reason": "end_turn",
+            "stop_sequence": None,
+            "usage": {
+                "input_tokens": 0,
+                "output_tokens": 0,
+            },
+        }
+
+    return {
+        "id": f"chatcmpl-{receipt.receipt_id}",
+        "object": "chat.completion",
+        "created": created_ts,
+        "model": receipt.model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": rendered_direct_response,
+                },
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        },
+    }
 
 
 def _resolve_upstream_url(wire_format: WireFormat, headers: Mapping[str, str]) -> str:
@@ -94,7 +174,7 @@ def _resolve_upstream_headers(
 
 
 class HermaMiddleware:
-    """Evaluates provisions, injects matched text + URIs, logs receipts, and proxies upstream."""
+    """Evaluates rules, shims noun/verb/URI context or responds directly, and proxies upstream."""
 
     def __init__(self, store: ProvisionStore, *, max_total_chars: int = 8000) -> None:
         self.store = store
@@ -111,12 +191,19 @@ class HermaMiddleware:
         envelope = extract_envelope(wire_format, payload, extra_paths=workspace_paths)
         active = self.store.list_provisions(enabled_only=True)
         matched_pairs = await evaluate_provisions(active, envelope.trigger_context)
+        all_refs = [ref for stored, _ in matched_pairs for ref in stored.provision.context_refs]
+        context_map = (
+            {entry.entry_id: entry for entry in self.store.get_context_entries(all_refs)}
+            if all_refs
+            else {}
+        )
         augmented, receipt = assemble_augmented_request(
             principal=principal,
             envelope=envelope,
             payload=payload,
             matches=matched_pairs,
             max_total_chars=self.max_total_chars,
+            context_entries=context_map,
         )
         self.store.record_receipt(receipt)
         return InterceptionOutcome(
@@ -132,12 +219,25 @@ class HermaMiddleware:
         outcome: InterceptionOutcome,
         incoming_headers: Mapping[str, str],
     ) -> tuple[int, dict[str, str], bytes | AsyncIterator[bytes]]:
-        target_url = _resolve_upstream_url(wire_format, incoming_headers)
-        up_headers = _resolve_upstream_headers(wire_format, incoming_headers)
-        meta_headers = {
+        meta_headers: dict[str, str] = {
             "x-herma-receipt": outcome.receipt.receipt_sha256,
+            "x-herma-receipt-sha256": outcome.receipt.receipt_sha256,
             "x-herma-provisions-fired": ",".join(outcome.receipt.provisions_fired),
         }
+        if outcome.receipt.shimmed_context_refs:
+            meta_headers["x-herma-shimmed-context"] = ",".join(outcome.receipt.shimmed_context_refs)
+
+        if outcome.receipt.responded_directly and outcome.receipt.direct_response_text is not None:
+            direct_body = build_direct_protocol_response(wire_format, outcome.receipt)
+            resp_headers = {
+                "content-type": "application/json",
+                "x-herma-direct-response": "true",
+                **meta_headers,
+            }
+            return 200, resp_headers, json.dumps(direct_body, ensure_ascii=False).encode("utf-8")
+
+        target_url = _resolve_upstream_url(wire_format, incoming_headers)
+        up_headers = _resolve_upstream_headers(wire_format, incoming_headers)
 
         is_stream = bool(outcome.augmented_payload.get("stream"))
         if not is_stream:

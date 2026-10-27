@@ -19,7 +19,13 @@ from herma.api.pages import render_connect_page, render_overview_page
 from herma.errors import HermaError
 from herma.harness_gate import enforce_not_consumer_assistant, require_scope
 from herma.proxy import HermaMiddleware
-from herma.schemas import DryRunRequest, Provision
+from herma.schemas import (
+    ContextEntry,
+    ContextEntryKind,
+    DryRunRequest,
+    DryRunResponse,
+    Provision,
+)
 from herma.store import ProvisionStore
 
 EDGE_SECRET_ENV = "HERMA_EDGE_SECRET"  # noqa: S105 - env variable name, not a secret
@@ -44,6 +50,12 @@ class RemoteSyncRequest(BaseModel):
     surface_id: str = "herma"
     handshake_path: str = "/v1/handshake"
     provisions_path: str = "/v1/provisions"
+
+
+class ContextBatchUpsert(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    entries: list[ContextEntry] = Field(min_length=1, max_length=200)
 
 
 def _db_path() -> Path:
@@ -75,6 +87,19 @@ def seed_examples_if_present(store: ProvisionStore) -> int:
         if prov.prov_id not in existing:
             store.put_provision(prov, source_store="examples", check_cas=False)
             count += 1
+
+    context_dir = examples_dir / "context"
+    if context_dir.is_dir():
+        existing_entries = {e.entry_id for e in store.list_context_entries()}
+        for ctx_path in sorted(context_dir.glob("*.json")):
+            raw = json.loads(ctx_path.read_text(encoding="utf-8"))
+            raw_items = raw["entries"] if isinstance(raw, dict) and "entries" in raw else raw
+            if isinstance(raw_items, list):
+                for item in raw_items:
+                    entry = ContextEntry.model_validate(item)
+                    if entry.entry_id not in existing_entries:
+                        store.upsert_context_entry(entry)
+                        existing_entries.add(entry.entry_id)
     return count
 
 
@@ -113,11 +138,13 @@ def create_app() -> FastAPI:
     def health() -> dict[str, Any]:
         store = get_store()
         provisions = store.list_provisions(enabled_only=True)
+        context_entries = store.list_context_entries()
         return {
             "ok": True,
             "surface": "herma",
             "version": __version__,
             "active_provisions": len(provisions),
+            "context_entries": len(context_entries),
             "standard_mode_only": True,
             "configurable_harnesses_only": True,
         }
@@ -132,6 +159,7 @@ def create_app() -> FastAPI:
             store.list_provisions(),
             store.list_receipts(limit=10),
             _public_url(req),
+            store.list_context_entries(),
         )
         return HTMLResponse(body)
 
@@ -154,11 +182,15 @@ def create_app() -> FastAPI:
             payload=body.payload,
             workspace_paths=body.workspace_paths,
         )
-        return {
-            "augmented_payload": outcome.augmented_payload,
-            "matches": [m.model_dump(mode="json") for m in outcome.matches],
-            "receipt": outcome.receipt.model_dump(mode="json"),
-        }
+        resp = DryRunResponse(
+            augmented_payload=outcome.augmented_payload,
+            matches=outcome.matches,
+            receipt=outcome.receipt,
+            responded_directly=outcome.receipt.responded_directly,
+            direct_response_text=outcome.receipt.direct_response_text,
+            shimmed_context_refs=outcome.receipt.shimmed_context_refs,
+        )
+        return resp.model_dump(mode="json")
 
     async def _proxy_wire(req: Request, wire_format: Any) -> Response:
         enforce_not_consumer_assistant(req.headers)
@@ -201,6 +233,43 @@ def create_app() -> FastAPI:
         return {"receipts": [r.model_dump(mode="json") for r in store.list_receipts(limit=limit)]}
 
     # --- Authenticated 'configure' endpoints (strictly configurable coding harnesses) ---
+
+    @application.get("/v1/context")
+    def list_context_api(
+        req: Request,
+        kind: ContextEntryKind | None = None,
+        prefix: str = "",
+        refs: str = "",
+    ) -> dict[str, Any]:
+        store = get_store()
+        principal = store.authenticate_headers(req.headers)
+        require_scope(principal, "configure", req.headers)
+        if refs.strip():
+            ref_list = [r.strip() for r in refs.split(",") if r.strip()]
+            items = store.get_context_entries(ref_list)
+            if kind is not None:
+                items = [e for e in items if e.kind == kind]
+            if prefix:
+                items = [e for e in items if e.entry_id.startswith(prefix)]
+        else:
+            items = store.list_context_entries(kind=kind, prefix=prefix)
+        return {"entries": [e.model_dump(mode="json") for e in items], "count": len(items)}
+
+    @application.post("/v1/context")
+    def upsert_context_api(
+        body: ContextEntry | ContextBatchUpsert,
+        req: Request,
+    ) -> dict[str, Any]:
+        store = get_store()
+        principal = store.authenticate_headers(req.headers)
+        require_scope(principal, "configure", req.headers)
+        raw_entries = body.entries if isinstance(body, ContextBatchUpsert) else [body]
+        saved = [store.upsert_context_entry(entry).model_dump(mode="json") for entry in raw_entries]
+        return {
+            "entry": saved[0],
+            "entries": saved,
+            "count": len(saved),
+        }
 
     @application.get("/v1/provisions")
     def list_provisions_api(req: Request) -> dict[str, Any]:

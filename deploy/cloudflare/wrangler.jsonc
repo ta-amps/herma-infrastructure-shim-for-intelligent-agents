@@ -1,4 +1,4 @@
-// Herma Cloud Worker: 24/7 programmable AI request middleware on Cloudflare Workers + D1 (`ta-amps-herma`)
+// Herma Cloud Worker: 24/7 context-shimming AI middleware on Cloudflare Workers + D1 (`ta-amps-herma`)
 // with direct Service Binding to `tessera` Cloud (`env.TESSERA`) and optional `STORAGE_MODE=origin` fallback.
 // Deploy: npx wrangler@4.149.0 deploy --config deploy/cloudflare/wrangler.jsonc
 // Secret: npx wrangler@4.149.0 secret put BOOTSTRAP_SECRET --config deploy/cloudflare/wrangler.jsonc

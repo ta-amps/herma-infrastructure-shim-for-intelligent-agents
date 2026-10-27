@@ -1,8 +1,9 @@
-"""Strict Pydantic schemas for provisions, 3-tier triggers, harness keys, and injection receipts."""
+"""Strict Pydantic schemas for provisions, context entries, 3-tier triggers, keys, and receipts."""
 
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -20,6 +21,8 @@ HarnessKind = Literal[
 HarnessScope = Literal["route", "configure"]
 TriggerTier = Literal["keyword", "semantic", "micromodel"]
 WireFormat = Literal["chat_completions", "responses", "messages", "dry_run"]
+ProvisionAction = Literal["shim_context", "respond_directly"]
+ContextEntryKind = Literal["noun", "verb", "detail"]
 
 
 class ProvisionURI(BaseModel):
@@ -39,6 +42,41 @@ class ProvisionURI(BaseModel):
         if not trimmed.startswith(ALLOWED_URI_SCHEMES):
             allowed = ", ".join(ALLOWED_URI_SCHEMES)
             raise ValueError(f"URI {trimmed!r} must start with one of: {allowed}")
+        return trimmed
+
+
+class ContextEntry(BaseModel):
+    """Atomic noun, verb, or detail entry stored in Herma's user-configured context database."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    entry_id: str = Field(min_length=2, max_length=160)
+    kind: ContextEntryKind
+    title: str = Field(min_length=2, max_length=160)
+    summary: str = Field(min_length=4, max_length=600)
+    schema_or_body: dict[str, Any] | str = ""
+    source_uri: str | None = None
+    updated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+
+    @field_validator("entry_id")
+    @classmethod
+    def _validate_entry_id(cls, value: str) -> str:
+        trimmed = value.strip()
+        if len(trimmed) < 2:
+            raise ValueError("entry_id must contain at least 2 non-whitespace characters.")
+        return trimmed
+
+    @field_validator("source_uri")
+    @classmethod
+    def _validate_source_uri(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        trimmed = value.strip()
+        if not trimmed:
+            return None
+        if not trimmed.startswith(ALLOWED_URI_SCHEMES):
+            allowed = ", ".join(ALLOWED_URI_SCHEMES)
+            raise ValueError(f"source_uri {trimmed!r} must start with one of: {allowed}")
         return trimmed
 
 
@@ -119,7 +157,7 @@ class TriggerSpec(BaseModel):
 
 
 class Provision(BaseModel):
-    """Versioned rule/provision record injected into outbound coding-harness LLM calls."""
+    """Versioned rule/provision record that shims context or responds directly before LLM execution."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -128,15 +166,43 @@ class Provision(BaseModel):
     summary: str = Field(min_length=6, max_length=400)
     priority: int = Field(default=100, ge=1, le=1000)
     enabled: bool = True
+    action: ProvisionAction = "shim_context"
+    direct_response: str | None = Field(default=None, max_length=12000)
+    context_refs: list[str] = Field(default_factory=list)
     inject_position: Literal["system_prefix", "system_suffix", "developer_context"] = (
         "system_suffix"
     )
     dedupe_mode: Literal["once_per_conversation", "every_turn"] = "once_per_conversation"
     max_chars: int = Field(default=2400, ge=120, le=16000)
-    inject_text: str = Field(min_length=10, max_length=12000)
+    inject_text: str = Field(default="", max_length=12000)
     uris: list[ProvisionURI] = Field(default_factory=list)
     metadata_tags: dict[str, str] = Field(default_factory=dict)
     triggers: TriggerSpec
+
+    @field_validator("context_refs")
+    @classmethod
+    def _validate_context_refs(cls, refs: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for raw in refs:
+            ref = raw.strip()
+            if len(ref) < 2 or len(ref) > 160:
+                raise ValueError("Each context_refs entry must be between 2 and 160 characters.")
+            if ref not in cleaned:
+                cleaned.append(ref)
+        return cleaned
+
+    @model_validator(mode="after")
+    def _validate_action_fields(self) -> Provision:
+        if self.action == "respond_directly":
+            if self.direct_response is None or not self.direct_response.strip():
+                raise ValueError(
+                    "Provision with action='respond_directly' requires a non-empty direct_response."
+                )
+        elif len(self.inject_text.strip()) < 10:
+            raise ValueError(
+                "Provision with action='shim_context' requires inject_text of at least 10 characters."
+            )
+        return self
 
 
 class StoredProvision(BaseModel):
@@ -178,7 +244,7 @@ class HarnessKeyInfo(BaseModel):
 
 
 class InjectionReceipt(BaseModel):
-    """Cryptographic audit receipt for a single evaluated/augmented LLM request."""
+    """Cryptographic audit receipt for a single shimmed or directly answered LLM request."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -193,6 +259,9 @@ class InjectionReceipt(BaseModel):
     uris_injected: list[str]
     injected_chars: int
     deduped_skipped: list[str]
+    responded_directly: bool = False
+    direct_response_text: str | None = None
+    shimmed_context_refs: list[str] = Field(default_factory=list)
     created_at: float
 
 
@@ -204,3 +273,16 @@ class DryRunRequest(BaseModel):
     wire_format: Literal["chat_completions", "responses", "messages"] = "chat_completions"
     payload: dict[str, Any]
     workspace_paths: list[str] = Field(default_factory=list)
+
+
+class DryRunResponse(BaseModel):
+    """Structured dry-run result showing augmented payload, matches, shimmed refs, and direct response."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    augmented_payload: dict[str, Any]
+    matches: list[TriggerMatch]
+    receipt: InjectionReceipt
+    responded_directly: bool = False
+    direct_response_text: str | None = None
+    shimmed_context_refs: list[str] = Field(default_factory=list)

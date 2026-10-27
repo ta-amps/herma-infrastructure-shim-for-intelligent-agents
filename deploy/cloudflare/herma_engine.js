@@ -1,5 +1,5 @@
-// Pure 3-tier trigger engine, configurable-harness gate, multi-protocol payload injector,
-// and HTML status console for Herma Cloud on Cloudflare Workers + D1 (`ta-amps-herma`).
+// Context-shimming 3-tier trigger engine, configurable-harness gate, atomic noun/verb context
+// database helpers, direct-response formatter, and HTML console for Herma Cloud on Cloudflare Workers + D1.
 
 export const HERMA_VERSION = "0.1.0";
 
@@ -11,6 +11,9 @@ export const ALLOWED_HARNESS_KINDS = new Set([
   "swarm-worker",
   "custom-harness",
 ]);
+
+export const ALLOWED_URI_SCHEMES = ["https://", "tessera://", "mcp://", "urn:"];
+export const ALLOWED_CONTEXT_KINDS = new Set(["noun", "verb", "detail"]);
 
 const BLOCKED_CONSUMER_SURFACES = [
   "muse-personal-assistant",
@@ -38,16 +41,92 @@ const CONCEPT_GROUPS = [
   ["concept:edge_security", ["cloudflare", "worker", "origin", "proxy", "secret", "header", "csp", "hsts", "token", "auth", "credential", "leak"]],
 ];
 
+export const DEFAULT_CONTEXT_ENTRIES = [
+  {
+    entry_id: "noun:tessera.lease_fence",
+    kind: "noun",
+    title: "Tessera Monotonic Lease Fence",
+    summary: "Compare-and-set task lease token incremented on every claim to fence out stale workers.",
+    schema_or_body: {
+      fields: {
+        task_id: "string",
+        fence: "integer >= 1",
+        lease_expires_at: "float",
+      },
+      invariant: "submit/heartbeat/park reject fence < current_fence",
+    },
+    source_uri: "https://tessera.ta-amps.workers.dev/llms.txt",
+    updated_at: "2026-10-27T00:00:00+00:00",
+  },
+  {
+    entry_id: "verb:tessera.claim",
+    kind: "verb",
+    title: "Tessera Atomic Claim Verb",
+    summary: "Atomically leases the next highest-priority ready task in a queue and mints a fresh fence token.",
+    schema_or_body: {
+      endpoint: "POST /v1/queues/{queue}/claim",
+      inputs: ["worker_id", "lease_seconds"],
+      returns: ["task_id", "fence", "payload"],
+    },
+    source_uri: "mcp://tessera/tools/claim",
+    updated_at: "2026-10-27T00:00:00+00:00",
+  },
+  {
+    entry_id: "detail:herma.shim_budget",
+    kind: "detail",
+    title: "Herma Bounded Context Shim Budget",
+    summary: "Caps per-provision and total shimmed context characters while deduplicating prior conversation turns.",
+    schema_or_body: {
+      default_max_chars: 2400,
+      default_max_total_chars: 8000,
+      dedupe_modes: ["once_per_conversation", "every_turn"],
+    },
+    source_uri: "urn:ta-amps:spec:herma-context-shim-v1",
+    updated_at: "2026-10-27T00:00:00+00:00",
+  },
+];
+
 export const DEFAULT_PROVISIONS = [
+  {
+    prov_id: "PROV-DIRECT-NOUN-VERB-SCHEMA",
+    title: "Direct Canonical Noun & Verb Schema Lookup",
+    summary: "Responds directly with canonical atomic noun/verb schema definitions from Herma's context database without calling an upstream LLM.",
+    priority: 350,
+    enabled: true,
+    action: "respond_directly",
+    direct_response: "Canonical Herma + Tessera Noun/Verb Contract: shared state artifacts are compare-and-set NOUNs guarded by expected_version, and work items are leased VERB tiles (enqueue -> claim -> heartbeat -> submit/park) guarded by a monotonic fence token.",
+    context_refs: ["noun:tessera.lease_fence", "verb:tessera.claim"],
+    inject_position: "system_prefix",
+    dedupe_mode: "every_turn",
+    max_chars: 3000,
+    inject_text: "Return the canonical noun/verb schema contract directly without invoking an upstream LLM.",
+    uris: [
+      {
+        uri: "https://tessera.ta-amps.workers.dev/llms.txt",
+        label: "Tessera Noun & Verb Protocol Summary",
+        kind: "schema",
+        inline_excerpt: "Atomic compare-and-set nouns and fenced queue verbs.",
+      },
+    ],
+    metadata_tags: { domain: "context-database", mode: "direct-response" },
+    triggers: {
+      mode: "any",
+      keyword: {
+        any_keywords: ["canonical noun/verb schema", "herma direct schema", "/herma-schema"],
+      },
+    },
+  },
   {
     prov_id: "PROV-TESSERA-FENCING",
     title: "Tessera Atomic Lease Fencing & Compare-and-Set Storage",
-    summary: "Injects monotonic fencing-token, idempotent receipt, and CAS version rules whenever swarm queue or shared-state code is touched.",
+    summary: "Shims monotonic fencing-token, idempotent receipt, CAS version rules, and atomic noun/verb definitions whenever swarm queue or shared-state code is touched.",
     priority: 300,
     enabled: true,
+    action: "shim_context",
+    context_refs: ["noun:tessera.lease_fence", "verb:tessera.claim"],
     inject_position: "system_prefix",
     dedupe_mode: "once_per_conversation",
-    max_chars: 2200,
+    max_chars: 3000,
     inject_text: "Every shared task is an atomic verb tile (claimed once, finished once, receipted) and every shared state artifact is a compare-and-set noun. Always pass the claim's monotonic fence token on heartbeat/submit/park, pass expected_version on put_record, and never bypass scope grants.",
     uris: [
       {
@@ -87,6 +166,7 @@ export const DEFAULT_PROVISIONS = [
     summary: "Ensures fraud/harm analysis stays strictly non-accusatory, verifies SYNTHETIC markers, and routes T3/T4 decisions to human reviewers.",
     priority: 280,
     enabled: true,
+    action: "shim_context",
     inject_position: "system_suffix",
     dedupe_mode: "once_per_conversation",
     max_chars: 2000,
@@ -122,6 +202,7 @@ export const DEFAULT_PROVISIONS = [
     summary: "Triggered via Tier-3 micromodel classifier whenever an agent designs nonprofit/helpline workflows, enforcing human-only boundaries and drafter != reviewer.",
     priority: 260,
     enabled: true,
+    action: "shim_context",
     inject_position: "system_suffix",
     dedupe_mode: "once_per_conversation",
     max_chars: 2000,
@@ -151,6 +232,7 @@ export const DEFAULT_PROVISIONS = [
     summary: "Injects constant-time x-edge-auth origin verification, cookie stripping, and strict HSTS/CSP rules when editing deployment or Worker edge code.",
     priority: 240,
     enabled: true,
+    action: "shim_context",
     inject_position: "developer_context",
     dedupe_mode: "once_per_conversation",
     max_chars: 1800,
@@ -226,6 +308,118 @@ export function constantTimeEqual(a, b) {
   let diff = 0;
   for (let i = 0; i < ba.byteLength; i++) diff |= ba[i] ^ bb[i];
   return diff === 0;
+}
+
+export async function ensureContextTable(db) {
+  await db
+    .prepare(
+      "CREATE TABLE IF NOT EXISTS context_entries (entry_id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL, summary TEXT NOT NULL, body_json TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    )
+    .run();
+}
+
+export function validateContextEntry(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new HermaErr(422, "validation_error", "Invalid ContextEntry", "Expected JSON object.");
+  }
+  const entryId = String(raw.entry_id || "").trim();
+  const kind = String(raw.kind || "").trim();
+  const title = String(raw.title || "").trim();
+  const summary = String(raw.summary || "").trim();
+  if (entryId.length < 2 || entryId.length > 160) {
+    throw new HermaErr(422, "validation_error", "Invalid ContextEntry", "entry_id must be 2..160 chars.");
+  }
+  if (!ALLOWED_CONTEXT_KINDS.has(kind)) {
+    throw new HermaErr(422, "validation_error", "Invalid ContextEntry", "kind must be 'noun', 'verb', or 'detail'.");
+  }
+  if (title.length < 2 || title.length > 160) {
+    throw new HermaErr(422, "validation_error", "Invalid ContextEntry", "title must be 2..160 chars.");
+  }
+  if (summary.length < 4 || summary.length > 600) {
+    throw new HermaErr(422, "validation_error", "Invalid ContextEntry", "summary must be 4..600 chars.");
+  }
+  let sourceUri = raw.source_uri == null ? null : String(raw.source_uri).trim() || null;
+  if (sourceUri && !ALLOWED_URI_SCHEMES.some((s) => sourceUri.startsWith(s))) {
+    throw new HermaErr(
+      422,
+      "validation_error",
+      "Invalid ContextEntry",
+      `source_uri '${sourceUri}' must start with one of: ${ALLOWED_URI_SCHEMES.join(", ")}`
+    );
+  }
+  const schemaOrBody =
+    raw.schema_or_body === undefined || raw.schema_or_body === null
+      ? ""
+      : typeof raw.schema_or_body === "object" || typeof raw.schema_or_body === "string"
+        ? raw.schema_or_body
+        : String(raw.schema_or_body);
+  const updatedAt = String(raw.updated_at || "").trim() || new Date().toISOString();
+  return {
+    entry_id: entryId,
+    kind,
+    title,
+    summary,
+    schema_or_body: schemaOrBody,
+    source_uri: sourceUri,
+    updated_at: updatedAt,
+  };
+}
+
+export function validateProvisionPayload(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new HermaErr(422, "validation_error", "Invalid Provision", "Expected JSON object.");
+  }
+  const action = raw.action || "shim_context";
+  if (action !== "shim_context" && action !== "respond_directly") {
+    throw new HermaErr(422, "validation_error", "Invalid Provision", "action must be 'shim_context' or 'respond_directly'.");
+  }
+  if (action === "respond_directly") {
+    if (!String(raw.direct_response || "").trim()) {
+      throw new HermaErr(
+        422,
+        "validation_error",
+        "Invalid Provision",
+        "Provision with action='respond_directly' requires a non-empty direct_response."
+      );
+    }
+  } else if (String(raw.inject_text || "").trim().length < 10) {
+    throw new HermaErr(
+      422,
+      "validation_error",
+      "Invalid Provision",
+      "Provision with action='shim_context' requires inject_text of at least 10 characters."
+    );
+  }
+  const refs = [];
+  for (const r of raw.context_refs || []) {
+    const cleaned = String(r || "").trim();
+    if (cleaned.length < 2 || cleaned.length > 160) {
+      throw new HermaErr(422, "validation_error", "Invalid Provision", "context_refs items must be 2..160 chars.");
+    }
+    if (!refs.includes(cleaned)) refs.push(cleaned);
+  }
+  return {
+    ...raw,
+    action,
+    direct_response: raw.direct_response ?? null,
+    context_refs: refs,
+    inject_text: raw.inject_text ?? "",
+  };
+}
+
+export function parseTesseraContextRef(ref) {
+  const trimmed = String(ref || "").trim();
+  const colon = trimmed.indexOf(":");
+  if (colon <= 0) return null;
+  const kind = trimmed.slice(0, colon);
+  if (!ALLOWED_CONTEXT_KINDS.has(kind)) return null;
+  const remainder = trimmed.slice(colon + 1);
+  const slash = remainder.indexOf("/");
+  if (slash <= 0) return null;
+  const storeNs = remainder.slice(0, slash).trim();
+  const recKey = remainder.slice(slash + 1).trim();
+  if (!storeNs || !recKey) return null;
+  return { kind, storeNs, recKey };
 }
 
 export function enforceNotConsumerAssistant(request) {
@@ -337,7 +531,7 @@ export function requireScope(principal, requiredScope, request) {
         403,
         "harness_required",
         "Configurable Coding Harness Required",
-        "Configuring provisions requires an explicit X-Herma-Harness header from a configurable coding harness."
+        "Configuring provisions or context entries requires an explicit X-Herma-Harness header from a configurable coding harness."
       );
     }
     if (declared !== principal.harness_kind) {
@@ -583,8 +777,10 @@ export async function evaluateProvisions(storedList, ctx, env) {
         match: {
           prov_id: prov.prov_id,
           version: stored.version,
+          priority: prov.priority ?? 100,
           matched_tiers: matchedTiers,
           reasons,
+          score: semanticScore ?? mmConfidence ?? 1.0,
           semantic_score: semanticScore,
           micromodel_confidence: mmConfidence,
         },
@@ -677,14 +873,54 @@ export function extractEnvelope(wireFormat, payload, extraPaths = []) {
   };
 }
 
-function renderProvisionBlock(stored) {
-  const prov = stored.provision;
-  const lines = [`[HERMA PROVISION: ${prov.prov_id}@v${stored.version} | ${prov.title}]`, String(prov.inject_text || "").trim()];
+export function renderContextEntriesBlock(refs, contextMap) {
+  if (!Array.isArray(refs) || !refs.length || !contextMap) {
+    return { block: "", shimmedRefs: [], uris: [] };
+  }
+  const lines = [];
+  const shimmedRefs = [];
   const uris = [];
+  for (const ref of refs) {
+    const entry = contextMap instanceof Map ? contextMap.get(ref) : contextMap[ref];
+    if (!entry) continue;
+    if (!shimmedRefs.includes(entry.entry_id)) shimmedRefs.push(entry.entry_id);
+    let bodyExcerpt = "";
+    if (entry.schema_or_body && typeof entry.schema_or_body === "object" && Object.keys(entry.schema_or_body).length > 0) {
+      bodyExcerpt = canonicalJson(entry.schema_or_body);
+    } else if (typeof entry.schema_or_body === "string" && entry.schema_or_body.trim()) {
+      bodyExcerpt = entry.schema_or_body.trim();
+    }
+    if (bodyExcerpt.length > 320) bodyExcerpt = bodyExcerpt.slice(0, 319).trimEnd() + "…";
+    let line = `- [${String(entry.kind || "detail").toUpperCase()}] ${entry.entry_id} (${entry.title}): ${String(entry.summary || "").trim()}`;
+    if (bodyExcerpt) line += ` — ${bodyExcerpt}`;
+    if (entry.source_uri) {
+      line += ` [URI: ${entry.source_uri}]`;
+      if (!uris.includes(entry.source_uri)) uris.push(entry.source_uri);
+    }
+    lines.push(line);
+  }
+  if (!lines.length) return { block: "", shimmedRefs: [], uris: [] };
+  return {
+    block: ["[NOUN/VERB CONTEXT]", ...lines, "[/NOUN/VERB CONTEXT]"].join("\n"),
+    shimmedRefs,
+    uris,
+  };
+}
+
+function renderProvisionBlock(stored, contextMap = null) {
+  const prov = stored.provision;
+  const lines = [`[HERMA PROVISION: ${prov.prov_id}@v${stored.version} | ${prov.title}]`];
+  if (String(prov.inject_text || "").trim()) {
+    lines.push(String(prov.inject_text).trim());
+  }
+  const { block: ctxBlock, shimmedRefs, uris: ctxUris } = renderContextEntriesBlock(prov.context_refs || [], contextMap);
+  if (ctxBlock) lines.push(ctxBlock);
+
+  const uris = [...ctxUris];
   if (Array.isArray(prov.uris) && prov.uris.length) {
     lines.push("Authoritative References & URIs:");
     for (const u of prov.uris) {
-      uris.push(u.uri);
+      if (!uris.includes(u.uri)) uris.push(u.uri);
       let line = `- [${u.label}](${u.uri}) (${u.kind || "doc"})`;
       if (u.inline_excerpt) line += `: ${String(u.inline_excerpt).trim()}`;
       lines.push(line);
@@ -696,10 +932,67 @@ function renderProvisionBlock(stored) {
   if (rendered.length > maxChars) {
     rendered = rendered.slice(0, maxChars - 36).trimEnd() + `\n[/HERMA PROVISION: ${prov.prov_id}]`;
   }
-  return { rendered, uris };
+  return { rendered, uris, shimmedRefs };
 }
 
-export async function assembleAugmentedRequest(principal, envelope, payload, matches, maxTotalChars = 8000) {
+export function buildDirectProtocolResponse(wireFormat, receipt) {
+  const rendered = receipt.direct_response_text || "";
+  const createdTs = Math.floor(Number(receipt.created_at || Date.now() / 1000));
+  if (wireFormat === "responses") {
+    return {
+      id: `resp_${receipt.receipt_id}`,
+      object: "response",
+      created_at: createdTs,
+      status: "completed",
+      model: receipt.model,
+      output_text: rendered,
+      output: [
+        {
+          type: "message",
+          role: "assistant",
+          status: "completed",
+          content: [{ type: "output_text", text: rendered }],
+        },
+      ],
+      usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+    };
+  }
+  if (wireFormat === "messages") {
+    return {
+      id: `msg_${receipt.receipt_id}`,
+      type: "message",
+      role: "assistant",
+      model: receipt.model,
+      content: [{ type: "text", text: rendered }],
+      stop_reason: "end_turn",
+      stop_sequence: null,
+      usage: { input_tokens: 0, output_tokens: 0 },
+    };
+  }
+  return {
+    id: `chatcmpl-${receipt.receipt_id}`,
+    object: "chat.completion",
+    created: createdTs,
+    model: receipt.model,
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content: rendered },
+        finish_reason: "stop",
+      },
+    ],
+    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+  };
+}
+
+export async function assembleAugmentedRequest(
+  principal,
+  envelope,
+  payload,
+  matches,
+  maxTotalChars = 8000,
+  contextMap = null
+) {
   const prefixBlocks = [];
   const suffixBlocks = [];
   const devBlocks = [];
@@ -707,6 +1000,9 @@ export async function assembleAugmentedRequest(principal, envelope, payload, mat
   const dedupedSkipped = [];
   const tiersSeen = [];
   const urisInjected = [];
+  const shimmedContextRefs = [];
+  let respondedDirectly = false;
+  let directResponseText = null;
   let charsUsed = 0;
 
   for (const { stored, match } of matches) {
@@ -715,12 +1011,34 @@ export async function assembleAugmentedRequest(principal, envelope, payload, mat
       dedupedSkipped.push(prov.prov_id);
       continue;
     }
-    const { rendered, uris } = renderProvisionBlock(stored);
+
+    if (prov.action === "respond_directly" && String(prov.direct_response || "").trim()) {
+      if (!respondedDirectly) {
+        respondedDirectly = true;
+        const baseDirect = String(prov.direct_response).trim();
+        const { block: ctxBlock, shimmedRefs: cRefs, uris: cUris } = renderContextEntriesBlock(prov.context_refs || [], contextMap);
+        let renderedDirect = ctxBlock ? `${baseDirect}\n\n${ctxBlock}` : baseDirect;
+        const maxChars = prov.max_chars || 2400;
+        if (renderedDirect.length > maxChars) renderedDirect = renderedDirect.slice(0, maxChars).trimEnd();
+        directResponseText = renderedDirect;
+        charsUsed += renderedDirect.length;
+        firedIds.push(`${prov.prov_id}@v${stored.version}`);
+        for (const t of match.matched_tiers) if (!tiersSeen.includes(t)) tiersSeen.push(t);
+        for (const r of cRefs) if (!shimmedContextRefs.includes(r)) shimmedContextRefs.push(r);
+        for (const u of [...cUris, ...((prov.uris || []).map((x) => x.uri))]) {
+          if (u && !urisInjected.includes(u)) urisInjected.push(u);
+        }
+      }
+      continue;
+    }
+
+    const { rendered, uris, shimmedRefs } = renderProvisionBlock(stored, contextMap);
     if (charsUsed + rendered.length > maxTotalChars) continue;
     charsUsed += rendered.length;
     firedIds.push(`${prov.prov_id}@v${stored.version}`);
     for (const t of match.matched_tiers) if (!tiersSeen.includes(t)) tiersSeen.push(t);
     for (const u of uris) if (!urisInjected.includes(u)) urisInjected.push(u);
+    for (const r of shimmedRefs) if (!shimmedContextRefs.includes(r)) shimmedContextRefs.push(r);
     if (prov.inject_position === "system_prefix") prefixBlocks.push(rendered);
     else if (prov.inject_position === "developer_context") devBlocks.push(rendered);
     else suffixBlocks.push(rendered);
@@ -770,6 +1088,9 @@ export async function assembleAugmentedRequest(principal, envelope, payload, mat
     uris_injected: urisInjected,
     injected_chars: charsUsed,
     deduped_skipped: dedupedSkipped,
+    responded_directly: respondedDirectly,
+    direct_response_text: directResponseText,
+    shimmed_context_refs: shimmedContextRefs,
   };
   const receiptSha = await sha256Hex(canonicalJson(core));
   return {
@@ -783,42 +1104,53 @@ const STYLE = `:root{color-scheme:light dark;--bg:#0c1017;--card:#131a24;--borde
 *{box-sizing:border-box}body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg);line-height:1.55}
 main{max-width:1040px;margin:0 auto;padding:2.8rem 1.4rem 3.5rem}nav{display:flex;gap:1rem;margin-bottom:1.6rem;font-size:.92rem}
 nav a{color:var(--accent);text-decoration:none;font-weight:600}.pill{display:inline-block;padding:.2rem .6rem;border-radius:999px;background:var(--pill);color:var(--accent);font-size:.76rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
-h1{margin:.6rem 0 .5rem;font-size:clamp(1.7rem,3vw,2.35rem)}.lead{color:var(--muted);max-width:780px;margin:0 0 1.8rem}
+h1{margin:.6rem 0 .5rem;font-size:clamp(1.7rem,3vw,2.35rem)}.lead{color:var(--muted);max-width:820px;margin:0 0 1.8rem}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:1rem;margin-bottom:1.8rem}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.2rem}.card h2,.card h3{margin:.2rem 0 .5rem;font-size:1.08rem}
 pre,code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.86rem}pre{background:var(--pill);border:1px solid var(--border);border-radius:8px;padding:.9rem;overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-size:.9rem;background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden}
 th,td{text-align:left;padding:.65rem .85rem;border-bottom:1px solid var(--border);vertical-align:top}th{color:var(--muted);font-weight:600}`;
 
-export function renderOverviewHtml(provisions, receipts, publicUrl) {
+export function renderOverviewHtml(provisions, receipts, publicUrl, contextEntries = []) {
   const pRows = provisions
     .map((sp) => {
       const p = sp.provision;
       const tiers = ["keyword", "semantic", "micromodel"].filter((k) => p.triggers?.[k]);
-      return `<tr><td><code>${esc(p.prov_id)}</code> (v${sp.version})</td><td>${esc(p.title)}</td><td><code>${esc(tiers.join(", "))}</code> (${esc(p.triggers?.mode || "any")})</td><td>${(p.uris || []).length} URI(s) · prio ${p.priority}</td><td><code>${esc(sp.source_store)}</code></td></tr>`;
+      const action = p.action || "shim_context";
+      const refsNote = (p.context_refs || []).length ? ` · ${p.context_refs.length} ref(s)` : "";
+      return `<tr><td><code>${esc(p.prov_id)}</code> (v${sp.version})</td><td>${esc(p.title)}<br/><small><code>${esc(action)}</code>${esc(refsNote)}</small></td><td><code>${esc(tiers.join(", "))}</code> (${esc(p.triggers?.mode || "any")})</td><td>${(p.uris || []).length} URI(s) · prio ${p.priority}</td><td><code>${esc(sp.source_store)}</code></td></tr>`;
     })
+    .join("");
+  const cRows = (contextEntries || [])
+    .slice(0, 25)
+    .map(
+      (e) =>
+        `<tr><td><code>${esc(e.entry_id)}</code></td><td><code>${esc(e.kind)}</code></td><td>${esc(e.title)}</td><td>${esc(e.summary)}</td><td>${e.source_uri ? `<code>${esc(e.source_uri)}</code>` : "—"}</td></tr>`
+    )
     .join("");
   const rRows = receipts
     .slice(0, 10)
-    .map(
-      (r) =>
-        `<tr><td><code>${esc(String(r.receipt_sha256 || "").slice(0, 16))}…</code></td><td><code>${esc(r.harness_kind)}</code></td><td><code>${esc(r.wire_format)}</code> · <code>${esc(r.model)}</code></td><td><code>${esc((r.provisions_fired || []).join(", ") || "none")}</code></td><td>${r.injected_chars ?? 0} chars</td></tr>`
-    )
+    .map((r) => {
+      const modeTag = r.responded_directly ? "direct" : "shim";
+      return `<tr><td><code>${esc(String(r.receipt_sha256 || "").slice(0, 16))}…</code></td><td><code>${esc(r.harness_kind)}</code></td><td><code>${esc(r.wire_format)}</code> · <code>${esc(r.model)}</code></td><td><code>${esc((r.provisions_fired || []).join(", ") || "none")}</code> (${modeTag})</td><td>${r.injected_chars ?? 0} chars</td></tr>`;
+    })
     .join("");
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Herma v${HERMA_VERSION} — Cloud AI Request Middleware</title><style>${STYLE}</style></head><body><main>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Herma v${HERMA_VERSION} — Context-Shimming AI Middleware</title><style>${STYLE}</style></head><body><main>
 <nav><a href="/">Overview</a><a href="/connect">Connect Harness</a><a href="/api/health">Health JSON</a><a href="https://tessera.ta-amps.workers.dev/board">Tessera Cloud</a><a href="https://github.com/ta-amps/herma">GitHub</a></nav>
 <span class="pill">Herma v${HERMA_VERSION} · 24/7 Cloudflare D1 + Tessera Cloud</span>
-<h1>Programmable AI Request Middleware for Agentic Harnesses</h1>
-<p class="lead">Herma sits inline between configurable coding harnesses (<code>muse-code</code>, <code>opencode</code>, <code>claude-code</code>, <code>codex</code>, <code>swarm-worker</code>) and upstream LLM endpoints. It evaluates <strong>keyword</strong>, <strong>semantic</strong>, and <strong>micromodel</strong> triggers, injects versioned provisions and URIs synced from persistent <code>Tessera</code> Cloud stores and buckets, and refuses generic consumer chat assistants and contributor-tier models.</p>
+<h1>Context-Shimming AI Middleware for Configurable Coding Harnesses</h1>
+<p class="lead"><strong>Herma:</strong> context-shimming AI middleware for configurable coding harnesses — intercepts requests via <strong>keyword</strong>, <strong>semantic</strong>, or <strong>micromodel</strong> rules to <strong>respond directly</strong> or shim atomic <strong>noun, verb, and URI context</strong> from a user-configured database before LLM execution. Generic consumer assistants and contributor-tier models remain deterministically refused.</p>
 <section class="grid">
-<div class="card"><span class="pill">Tier 1 · ~0 ms</span><h3>Keyword, Regex, Path &amp; Tool</h3><p>Deterministic matching on prompt terms, bounded regexes, file path globs, and declared tool names.</p></div>
-<div class="card"><span class="pill">Tier 2 · ~1-5 ms</span><h3>Semantic Similarity</h3><p>Concept-cluster + subword cosine matching catches paraphrased engineering intent.</p></div>
-<div class="card"><span class="pill">Tier 3 · Router</span><h3>Micromodel Classifier</h3><p>Lightweight intent router disambiguates nuanced workflows with offline fallback.</p></div>
+<div class="card"><span class="pill">Tier 1–3 Rules</span><h3>Keyword, Semantic &amp; Micromodel</h3><p>Evaluates prompt terms, file path globs, tool names, semantic similarity, and micromodel intent routing without bloating static system prompts.</p></div>
+<div class="card"><span class="pill">shim_context</span><h3>Atomic Noun, Verb &amp; URI Shims</h3><p>Shims matched <code>noun:*</code>, <code>verb:*</code>, and <code>detail:*</code> context entries from D1 (<code>context_entries</code>) or <code>Tessera</code> Cloud stores into a bounded <code>[NOUN/VERB CONTEXT]</code> block.</p></div>
+<div class="card"><span class="pill">respond_directly</span><h3>Zero-Token Direct Responses</h3><p>Short-circuits upstream calls when a rule can answer directly across OpenAI, Responses, and Anthropic protocols while recording a SHA-256 <code>InjectionReceipt</code>.</p></div>
 </section>
 <h2>Active Cloud Provisions (${provisions.length})</h2>
-<table><thead><tr><th>ID</th><th>Title</th><th>Triggers</th><th>URIs &amp; Priority</th><th>Store</th></tr></thead><tbody>${pRows || "<tr><td colspan='5'>No provisions seeded yet.</td></tr>"}</tbody></table>
+<table><thead><tr><th>ID</th><th>Title &amp; Action</th><th>Triggers</th><th>URIs &amp; Priority</th><th>Store</th></tr></thead><tbody>${pRows || "<tr><td colspan='5'>No provisions seeded yet.</td></tr>"}</tbody></table>
+<h2 style="margin-top:2rem;">Atomic Noun, Verb &amp; Detail Context Database (${(contextEntries || []).length})</h2>
+<table><thead><tr><th>Entry ID</th><th>Kind</th><th>Title</th><th>Summary</th><th>Source URI</th></tr></thead><tbody>${cRows || "<tr><td colspan='5'>No noun/verb/detail entries configured yet (<code>POST /v1/context</code>).</td></tr>"}</tbody></table>
 <h2 style="margin-top:2rem;">Recent Persistent Injection Receipts (${receipts.length})</h2>
-<table><thead><tr><th>SHA-256</th><th>Harness</th><th>Wire / Model</th><th>Provisions Fired</th><th>Injected</th></tr></thead><tbody>${rRows || "<tr><td colspan='5'>No intercepted requests recorded yet.</td></tr>"}</tbody></table>
+<table><thead><tr><th>SHA-256</th><th>Harness</th><th>Wire / Model</th><th>Provisions Fired</th><th>Chars</th></tr></thead><tbody>${rRows || "<tr><td colspan='5'>No intercepted requests recorded yet.</td></tr>"}</tbody></table>
 <p style="margin-top:1.5rem;color:var(--muted);font-size:.88rem;">Endpoint: <code>${esc(publicUrl)}</code> · Backed by Cloudflare D1 (<code>ta-amps-herma</code>) · Standard mode only (<code>-contributor</code> refused).</p>
 </main></body></html>`;
 }
@@ -830,12 +1162,17 @@ export function renderConnectHtml(publicUrl) {
 <span class="pill">Configurable Harnesses Only</span>
 <h1>Connect Muse Code, OpenCode, Claude Code, or Codex</h1>
 <p class="lead">Only fully configurable agentic coding harnesses that control custom base URLs, headers, and scoped <code>hmk_</code> credentials can route through or configure Herma. Generic consumer chat clients (such as Muse Personal Assistant) are deterministically refused with <code>HTTP 403 harness_required</code>.</p>
-<div class="card" style="margin-bottom:1.2rem;"><h3>1. Dry-Run 3-Tier Interception</h3><pre>curl -fsS -X POST ${base}/v1/dry-run \\
+<div class="card" style="margin-bottom:1.2rem;"><h3>1. Populate Atomic Noun / Verb Context Entries</h3><pre>curl -fsS -X POST ${base}/v1/context \\
   -H "Content-Type: application/json" \\
   -H "X-Herma-Key: hmk_&lt;id&gt;.&lt;secret&gt;" \\
   -H "X-Herma-Harness: opencode" \\
-  -d '{"wire_format":"chat_completions","payload":{"model":"muse-spark-open","messages":[{"role":"user","content":"Persist versioned files in a cloud bucket with put_object"}]}}'</pre></div>
-<div class="card"><h3>2. Sync Provisions from Tessera Cloud</h3><pre>curl -fsS -X POST ${base}/v1/sync/tessera \\
+  -d '{"entry_id":"noun:tessera.lease_fence","kind":"noun","title":"Monotonic Lease Fence","summary":"Fences out stale workers on submit/heartbeat."}'</pre></div>
+<div class="card" style="margin-bottom:1.2rem;"><h3>2. Dry-Run 3-Tier Context Shimming or Direct Response</h3><pre>curl -fsS -X POST ${base}/v1/dry-run \\
+  -H "Content-Type: application/json" \\
+  -H "X-Herma-Key: hmk_&lt;id&gt;.&lt;secret&gt;" \\
+  -H "X-Herma-Harness: opencode" \\
+  -d '{"wire_format":"chat_completions","payload":{"model":"muse-spark-open","messages":[{"role":"user","content":"Show the canonical noun/verb schema"}]}}'</pre></div>
+<div class="card"><h3>3. Sync Provisions &amp; Noun/Verb Context from Tessera Cloud</h3><pre>curl -fsS -X POST ${base}/v1/sync/tessera \\
   -H "Content-Type: application/json" \\
   -H "X-Herma-Key: hmk_&lt;id&gt;.&lt;secret&gt;" \\
   -H "X-Herma-Harness: muse-code" \\
