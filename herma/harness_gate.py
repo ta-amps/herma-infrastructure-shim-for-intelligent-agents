@@ -1,0 +1,123 @@
+"""Configurable-harness access gate: blocks generic consumer chat assistants from configuring or routing."""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import get_args
+
+from herma.errors import ContributorTierRefusedError, HarnessRequiredError, HarnessScopeError
+from herma.schemas import HarnessKind, HarnessScope
+
+ALLOWED_HARNESS_KINDS: frozenset[str] = frozenset(get_args(HarnessKind))
+BLOCKED_CONSUMER_SURFACES: tuple[str, ...] = (
+    "muse-personal-assistant",
+    "muse personal assistant",
+    "meta-ai-consumer",
+    "meta.ai/",
+    "messenger-assistant",
+    "whatsapp-assistant",
+    "instagram-assistant",
+    "generic-chat-ui",
+)
+KEY_PREFIX = "hmk_"
+
+
+@dataclass(frozen=True)
+class HarnessPrincipal:
+    """Verified caller identity bound to a configurable coding harness."""
+
+    key_id: str
+    label: str
+    harness_kind: HarnessKind
+    scopes: frozenset[HarnessScope]
+
+
+def hash_secret(raw_secret: str) -> str:
+    return hashlib.sha256(raw_secret.encode("utf-8")).hexdigest()
+
+
+def parse_bearer_or_header(headers: Mapping[str, str]) -> tuple[str, str]:
+    """Extract (key_id, raw_secret) from X-Herma-Key or Authorization: Bearer hmk_<id>.<secret>."""
+    lower = {k.lower(): v for k, v in headers.items()}
+    raw = lower.get("x-herma-key", "").strip()
+    if not raw:
+        auth = lower.get("authorization", "").strip()
+        if auth.lower().startswith("bearer "):
+            candidate = auth[7:].strip()
+            if candidate.startswith(KEY_PREFIX):
+                raw = candidate
+    if not raw.startswith(KEY_PREFIX) or "." not in raw:
+        raise HarnessRequiredError(
+            "Missing valid Herma harness key (hmk_<id>.<secret>). Only configurable agentic coding "
+            "harnesses may route through or configure Herma."
+        )
+    body = raw[len(KEY_PREFIX) :]
+    key_id, sep, secret = body.partition(".")
+    if not sep or not key_id or len(secret) < 8:
+        raise HarnessRequiredError("Malformed Herma harness key.")
+    return key_id, secret
+
+
+def enforce_not_consumer_assistant(headers: Mapping[str, str]) -> str | None:
+    """Refuse browser navigation/cookie auth and generic consumer chat surfaces."""
+    lower = {k.lower(): v for k, v in headers.items()}
+    if lower.get("sec-fetch-mode", "").strip().lower() == "navigate":
+        raise HarnessRequiredError(
+            "Browser navigation requests cannot invoke Herma middleware endpoints."
+        )
+    if "cookie" in lower and not lower.get("x-edge-auth"):
+        raise HarnessRequiredError(
+            "Cookie-bearing browser sessions are refused; use a stateless coding harness credential."
+        )
+    ua = lower.get("user-agent", "").lower()
+    declared = lower.get("x-herma-harness", "").strip().lower()
+    combined = f"{ua} {declared}"
+    for marker in BLOCKED_CONSUMER_SURFACES:
+        if marker in combined:
+            raise HarnessRequiredError(
+                f"Consumer assistant surface ({marker!r}) cannot access or configure Herma; "
+                "use a fully configurable agentic coding harness (for example muse-code, opencode, "
+                "claude-code, or codex)."
+            )
+    if declared and declared not in ALLOWED_HARNESS_KINDS:
+        allowed = ", ".join(sorted(ALLOWED_HARNESS_KINDS))
+        raise HarnessRequiredError(
+            f"Unsupported X-Herma-Harness {declared!r}; expected one of: {allowed}."
+        )
+    return declared or None
+
+
+def verify_secret_constant_time(expected_sha256: str, supplied_secret: str) -> bool:
+    actual = hash_secret(supplied_secret)
+    return hmac.compare_digest(expected_sha256.encode("ascii"), actual.encode("ascii"))
+
+
+def require_scope(
+    principal: HarnessPrincipal,
+    required: HarnessScope,
+    headers: Mapping[str, str],
+) -> None:
+    """Enforce scope; 'configure' additionally requires explicit X-Herma-Harness attestation."""
+    declared = enforce_not_consumer_assistant(headers)
+    if required not in principal.scopes:
+        raise HarnessScopeError(f"Harness key {principal.key_id!r} lacks {required!r} scope.")
+    if required == "configure":
+        if not declared:
+            raise HarnessRequiredError(
+                "Configuring provisions requires an explicit X-Herma-Harness header from a "
+                "configurable coding harness (muse-code, opencode, claude-code, codex, swarm-worker, "
+                "or custom-harness)."
+            )
+        if declared != principal.harness_kind:
+            raise HarnessRequiredError(
+                f"X-Herma-Harness {declared!r} does not match key harness binding {principal.harness_kind!r}."
+            )
+
+
+def refuse_contributor_model(model: str) -> None:
+    """Enforce Standard-mode-only upstream LLM execution."""
+    if "-contributor" in model.strip().lower():
+        raise ContributorTierRefusedError(model)

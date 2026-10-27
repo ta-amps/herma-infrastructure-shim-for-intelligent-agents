@@ -1,0 +1,334 @@
+{
+  "$schema": "https://github.com/ta-amps/hackathon-context/blob/main/agents/schemas/architecture.schema.json",
+  "schema_version": 1,
+  "name": "herma",
+  "summary": "Herma: programmable AI request middleware for configurable coding harnesses — intercepts outbound LLM calls via keyword, semantic, and micromodel triggers to inject versioned rules, provisions, and URIs before model execution. Provisions load from SQLite, Tessera (herma.provisions CAS records and tessera://blobs/<sha256> excerpts), or remote handshake servers; generic consumer chat assistants and contributor-tier models are deterministically refused.",
+  "status": {
+    "as_of": "2026-10-26",
+    "stage": "prototype",
+    "notes": "Schemas, configurable-harness gate, 3-tier trigger engine (keyword, semantic, micromodel), SQLite/Tessera/remote-handshake provision store, multi-protocol injector (/v1/chat/completions, /v1/responses, /v1/messages, /v1/dry-run), FastAPI service with edge lockdown, CLI, and Cloudflare Worker edge built and verified."
+  },
+  "docs": {
+    "summary": "docs/summary.md",
+    "architecture": "docs/architecture.md",
+    "harnesses": "docs/harnesses.md",
+    "setup": "docs/setup.md",
+    "handoff": "docs/handoff.md"
+  },
+  "read_order": [
+    "README.md",
+    "docs/summary.md",
+    "docs/architecture.md",
+    "docs/harnesses.md",
+    "docs/setup.md",
+    "examples/provisions/README.md",
+    "docs/handoff.md",
+    "AGENTS.md"
+  ],
+  "commands": {
+    "setup": "make setup",
+    "check": "make check",
+    "test": "make test",
+    "demo": "make demo",
+    "serve": "make serve",
+    "architecture": "make architecture",
+    "index": "make index"
+  },
+  "components": [
+    {
+      "id": "errors",
+      "title": "RFC 9457 error hierarchy",
+      "path": "herma/errors.py",
+      "kind": "library",
+      "domain": "neutral",
+      "role": "Maps typed middleware, scope, harness, and contributor-tier refusals to deterministic HTTP statuses"
+    },
+    {
+      "id": "schemas",
+      "title": "Provision, trigger, key, and receipt schemas",
+      "path": "herma/schemas.py",
+      "kind": "library",
+      "domain": "neutral",
+      "role": "Strict Pydantic models for provisions, URIs, 3-tier triggers, harness keys, and SHA-256 injection receipts",
+      "tests": [
+        "tests/test_triggers.py"
+      ]
+    },
+    {
+      "id": "harness_gate",
+      "title": "Configurable-harness access gate",
+      "path": "herma/harness_gate.py",
+      "kind": "library",
+      "domain": "neutral",
+      "role": "Verifies constant-time hmk_ secrets, enforces route/configure scopes, refuses generic consumer chat surfaces, and blocks -contributor models",
+      "depends_on": [
+        "errors",
+        "schemas"
+      ],
+      "tests": [
+        "tests/test_harness_gate_and_store.py"
+      ]
+    },
+    {
+      "id": "triggers",
+      "title": "Three-tier trigger engine",
+      "path": [
+        "herma/triggers/__init__.py",
+        "herma/triggers/keyword.py",
+        "herma/triggers/semantic.py",
+        "herma/triggers/micromodel.py",
+        "herma/triggers/engine.py"
+      ],
+      "kind": "library",
+      "domain": "neutral",
+      "role": "Evaluates Tier-1 keyword/regex/path/tool, Tier-2 semantic cosine, and Tier-3 micromodel classifier triggers with short-circuiting",
+      "depends_on": [
+        "errors",
+        "schemas",
+        "harness_gate"
+      ],
+      "tests": [
+        "tests/test_triggers.py"
+      ]
+    },
+    {
+      "id": "store",
+      "title": "Provision store and backing-store sync adapters",
+      "path": "herma/store.py",
+      "kind": "library",
+      "domain": "neutral",
+      "role": "SQLite WAL store with compare-and-set updates, SHA-256 hashed harness keys, receipts, Tessera CAS/blob sync, and remote handshake sync",
+      "depends_on": [
+        "errors",
+        "schemas",
+        "harness_gate"
+      ],
+      "tests": [
+        "tests/test_harness_gate_and_store.py"
+      ]
+    },
+    {
+      "id": "injector",
+      "title": "Multi-protocol context assembler and receipt builder",
+      "path": "herma/injector.py",
+      "kind": "library",
+      "domain": "neutral",
+      "role": "Extracts prompt/path/tool signals across chat_completions, responses, and messages, injects provisions + URIs within budget, deduplicates prior turns, and mints SHA-256 receipts",
+      "depends_on": [
+        "harness_gate",
+        "schemas",
+        "store",
+        "triggers"
+      ],
+      "tests": [
+        "tests/test_api_and_proxy.py"
+      ]
+    },
+    {
+      "id": "proxy",
+      "title": "Interception and upstream forwarding engine",
+      "path": "herma/proxy.py",
+      "kind": "library",
+      "domain": "neutral",
+      "role": "Evaluates active provisions and forwards augmented payloads (JSON or SSE stream) to allowlisted upstream LLM endpoints",
+      "depends_on": [
+        "errors",
+        "harness_gate",
+        "injector",
+        "schemas",
+        "store",
+        "triggers"
+      ],
+      "tests": [
+        "tests/test_api_and_proxy.py"
+      ]
+    },
+    {
+      "id": "api",
+      "title": "FastAPI HTTP service and read-only console",
+      "path": [
+        "herma/api/__init__.py",
+        "herma/api/pages.py",
+        "herma/api/app.py"
+      ],
+      "kind": "service",
+      "domain": "neutral",
+      "role": "Serves proxy and provision-sync endpoints behind HERMA_EDGE_SECRET lockdown plus read-only HTML overview/connect pages",
+      "depends_on": [
+        "errors",
+        "harness_gate",
+        "proxy",
+        "schemas",
+        "store"
+      ],
+      "tests": [
+        "tests/test_api_and_proxy.py"
+      ]
+    },
+    {
+      "id": "cli",
+      "title": "Command-line interface and end-to-end demo",
+      "path": "herma/cli.py",
+      "kind": "cli",
+      "domain": "neutral",
+      "role": "Provides seed, keys, dry-run, 3-tier Tessera-synced demo, and serve commands",
+      "depends_on": [
+        "api",
+        "errors",
+        "harness_gate",
+        "proxy",
+        "schemas",
+        "store"
+      ]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "H01",
+      "statement": "Generic consumer chat assistants, browser navigation requests, and cookie-authenticated calls are deterministically refused",
+      "enforced_by": "harness_gate",
+      "checked_by": [
+        "tests/test_harness_gate_and_store.py::test_consumer_assistant_and_browser_navigation_refused",
+        "tests/test_api_and_proxy.py::test_http_edge_lockdown_and_dry_run_across_wire_formats"
+      ]
+    },
+    {
+      "id": "H02",
+      "statement": "Provision management and remote sync require both configure scope and explicit matching X-Herma-Harness attestation",
+      "enforced_by": "harness_gate",
+      "checked_by": [
+        "tests/test_harness_gate_and_store.py::test_consumer_assistant_and_browser_navigation_refused",
+        "tests/test_harness_gate_and_store.py::test_route_only_key_cannot_configure"
+      ]
+    },
+    {
+      "id": "H03",
+      "statement": "Contributor-tier models (-contributor) are refused across outbound LLM payloads and micromodel trigger classifiers",
+      "enforced_by": "harness_gate",
+      "checked_by": [
+        "tests/test_triggers.py::test_tier3_micromodel_classifier_and_contributor_refusal",
+        "tests/test_api_and_proxy.py::test_http_edge_lockdown_and_dry_run_across_wire_formats"
+      ]
+    },
+    {
+      "id": "H04",
+      "statement": "Tier-1 keyword, bounded regex, path-glob, and tool-name triggers match deterministically without network calls",
+      "enforced_by": "triggers",
+      "checked_by": [
+        "tests/test_triggers.py::test_tier1_keyword_regex_path_and_tool_triggers"
+      ]
+    },
+    {
+      "id": "H05",
+      "statement": "Tier-2 semantic triggers match paraphrased intent without literal keyword overlap",
+      "enforced_by": "triggers",
+      "checked_by": [
+        "tests/test_triggers.py::test_tier2_semantic_paraphrase_without_literal_id"
+      ]
+    },
+    {
+      "id": "H06",
+      "statement": "Tier-1 or Tier-2 hits short-circuit Tier-3 micromodel calls when trigger mode is any",
+      "enforced_by": "triggers",
+      "checked_by": [
+        "tests/test_triggers.py::test_engine_short_circuits_micromodel_when_keyword_matches"
+      ]
+    },
+    {
+      "id": "H07",
+      "statement": "Compare-and-set versions prevent silent provision overwrites, Tessera blob URIs resolve deterministically, and remote handshakes clamp max_chars",
+      "enforced_by": "store",
+      "checked_by": [
+        "tests/test_harness_gate_and_store.py::test_cas_conflict_and_tessera_blob_sync",
+        "tests/test_harness_gate_and_store.py::test_remote_handshake_clamps_max_chars"
+      ]
+    },
+    {
+      "id": "H08",
+      "statement": "Multi-turn conversations deduplicate once_per_conversation provisions and HERMA_EDGE_SECRET blocks direct origin traffic lacking x-edge-auth",
+      "enforced_by": "api",
+      "checked_by": [
+        "tests/test_api_and_proxy.py::test_http_edge_lockdown_and_dry_run_across_wire_formats"
+      ]
+    }
+  ],
+  "import_rules": [
+    {
+      "id": "ring0-pure-contracts",
+      "package": "herma",
+      "package_root": "herma",
+      "files": [
+        "herma/errors.py",
+        "herma/schemas.py",
+        "herma/harness_gate.py"
+      ],
+      "must_not_import": [
+        "herma.store",
+        "herma.triggers",
+        "herma.injector",
+        "herma.proxy",
+        "herma.api",
+        "herma.cli",
+        "fastapi",
+        "starlette",
+        "httpx",
+        "sqlite3",
+        "tessera"
+      ],
+      "why": "Ring 0 holds pure schemas, error contracts, and stateless harness access gates with zero I/O"
+    },
+    {
+      "id": "ring1-core-never-imports-doors",
+      "package": "herma",
+      "package_root": "herma",
+      "files": [
+        "herma/triggers",
+        "herma/store.py",
+        "herma/injector.py",
+        "herma/proxy.py"
+      ],
+      "must_not_import": [
+        "herma.api",
+        "herma.cli",
+        "fastapi",
+        "starlette"
+      ],
+      "why": "Core trigger, store, and injection engines never depend on FastAPI or CLI entry points"
+    },
+    {
+      "id": "package-never-imports-dev-roots",
+      "package": "herma",
+      "package_root": "herma",
+      "files": [
+        "herma"
+      ],
+      "must_not_import": [
+        "tests",
+        "scripts",
+        "deploy"
+      ],
+      "why": "Runtime package code never imports test, build, or deployment folders"
+    }
+  ],
+  "claims": [
+    {
+      "id": "HC1",
+      "claim": "Herma evaluates keyword, semantic, and micromodel triggers to inject versioned provisions and URIs across chat_completions, responses, and messages while refusing generic consumer assistants",
+      "status": "built",
+      "evidence": [
+        "tests/test_triggers.py::test_tier1_keyword_regex_path_and_tool_triggers",
+        "tests/test_triggers.py::test_tier2_semantic_paraphrase_without_literal_id",
+        "tests/test_api_and_proxy.py::test_http_edge_lockdown_and_dry_run_across_wire_formats"
+      ]
+    },
+    {
+      "id": "HC2",
+      "claim": "Herma loads and syncs versioned provisions from both Tessera CAS/blob stores and remote handshake provision servers",
+      "status": "built",
+      "evidence": [
+        "tests/test_harness_gate_and_store.py::test_cas_conflict_and_tessera_blob_sync",
+        "tests/test_harness_gate_and_store.py::test_remote_handshake_clamps_max_chars"
+      ]
+    }
+  ]
+}

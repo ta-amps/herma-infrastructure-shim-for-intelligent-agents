@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: herma
+      - uses: actions/checkout@v4
+        with:
+          repository: ta-amps/tessera
+          path: tessera
+          token: ${{ secrets.TESSERA_READ_TOKEN || github.token }}
+      - uses: astral-sh/setup-uv@v6
+      - name: Install
+        working-directory: herma
+        run: uv sync --all-groups
+      - name: Lint, types, tests, leak scan, index and architecture checks
+        working-directory: herma
+        run: make check
+      - name: Three-tier trigger and Tessera provision sync demo
+        working-directory: herma
+        run: make demo

@@ -1,0 +1,15 @@
+// Herma edge on Cloudflare Workers: reverse proxy in front of the Herma middleware service.
+// Deploy: npx wrangler@4.149.0 deploy --config deploy/cloudflare/wrangler.jsonc
+// Secret: npx wrangler@4.149.0 secret put EDGE_SECRET --config deploy/cloudflare/wrangler.jsonc
+{
+  "name": "herma",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-01",
+  // "routes": [{ "pattern": "herma.<your-domain>", "custom_domain": true }],
+  "vars": {
+    "ORIGIN": "https://herma-api.fly.dev"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

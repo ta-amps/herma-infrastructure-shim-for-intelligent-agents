@@ -1,0 +1,32 @@
+{
+  "prov_id": "PROV-NGO-HUMAN-BOUNDARY",
+  "title": "NGO Kit Human-Only Crisis & Two-Donor Review Boundary",
+  "summary": "Triggered via Tier-3 micromodel classifier whenever an agent designs nonprofit/helpline workflows, enforcing human-only boundaries and drafter != reviewer.",
+  "priority": 260,
+  "enabled": true,
+  "inject_position": "system_suffix",
+  "dedupe_mode": "once_per_conversation",
+  "max_chars": 2000,
+  "inject_text": "When building nonprofit, shelter, or helpline workflows: survivor interviews, crisis safety planning, eligibility determinations on real individuals, and external outbound sends must remain strictly human_only. Every agentic deliverable requires SYNTHETIC fixtures and independent verification (drafter != reviewer).",
+  "uris": [
+    {
+      "uri": "https://eranos.ta-amps.workers.dev",
+      "label": "Eranos Verified NGO Kit Catalog",
+      "kind": "doc",
+      "inline_excerpt": "Two-step eq01 -> eq02 -> eq03 volunteer pipeline with deterministic autonomy checks."
+    }
+  ],
+  "metadata_tags": {
+    "domain": "ngo-kits",
+    "surface": "eranos"
+  },
+  "triggers": {
+    "mode": "any",
+    "micromodel": {
+      "intent_question": "Is the user asking to design, automate, or modify a nonprofit, NGO, shelter, crisis helpline, or humanitarian intake workflow?",
+      "positive_labels": ["apply", "yes", "true"],
+      "min_confidence": 0.6,
+      "fallback_keywords": ["shelter", "helpline", "hotline", "crisis", "nonprofit", "ngo", "intake"]
+    }
+  }
+}

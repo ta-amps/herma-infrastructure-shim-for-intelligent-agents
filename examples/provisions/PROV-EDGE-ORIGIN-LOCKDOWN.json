@@ -1,0 +1,29 @@
+{
+  "prov_id": "PROV-EDGE-ORIGIN-LOCKDOWN",
+  "title": "Cloudflare Worker x-edge-auth & Security Header Contract",
+  "summary": "Injects constant-time x-edge-auth origin verification, cookie stripping, and strict HSTS/CSP rules when editing deployment or Worker edge code.",
+  "priority": 240,
+  "enabled": true,
+  "inject_position": "developer_context",
+  "dedupe_mode": "once_per_conversation",
+  "max_chars": 1800,
+  "inject_text": "Every public Worker edge must strip incoming cookies and hop-by-hop headers, attach x-edge-auth from EDGE_SECRET, set strict-transport-security and content-security-policy, never cache non-GET writes, and verify x-edge-auth at the origin with hmac.compare_digest.",
+  "uris": [
+    {
+      "uri": "urn:ta-amps:spec:edge-origin-lockdown-v1",
+      "label": "Edge-to-Origin Shared Secret Specification",
+      "kind": "schema",
+      "inline_excerpt": "Origin returns RFC 9457 403 problem+json whenever x-edge-auth is absent or mismatched."
+    }
+  ],
+  "metadata_tags": {
+    "domain": "edge-security"
+  },
+  "triggers": {
+    "mode": "any",
+    "keyword": {
+      "any_keywords": ["x-edge-auth", "EDGE_SECRET", "wrangler.jsonc"],
+      "path_globs": ["deploy/cloudflare/*", "*worker.js"]
+    }
+  }
+}
