@@ -1,3 +1,4 @@
+import { agentFetch } from "./agent_access.js";
 // Cloudflare Cloud Worker for Herma: 24/7 caller-isolated context-shimming AI middleware backed by
 // Cloudflare D1 (`ta-amps-herma`) + direct Service Binding to `tessera` Cloud (`env.TESSERA`),
 // with optional `STORAGE_MODE = "origin"` reverse-proxy fallback.
@@ -6,6 +7,8 @@ import {
   ALLOWED_CONTEXT_KINDS,
   ALLOWED_ENTITY_KINDS,
   ALLOWED_HARNESS_KINDS,
+  reserveRouteRequest,
+  resolveUpstream,
   ALLOWED_OUTCOMES,
   ALLOWED_URI_SCHEMES,
   DEFAULT_CONTEXT_ENTRIES,
@@ -1140,7 +1143,7 @@ async function syncFromTesseraCloud(
         ) {
           continue;
         }
-        const cleanedCtx = stripGovernanceEnvelopeForContext(cVal);
+        const cleanedCtx = stripGovernanceEnvelopeForContext(cVal, cData);
         if (!isAdmin && (await hasBuiltinContextEntry(db, String(cleanedCtx.entry_id || eid)))) {
           continue;
         }
@@ -1203,14 +1206,8 @@ async function syncFromTesseraCloud(
     const resolvedUris = [];
     for (const u of prov.uris || []) {
       if (u.uri?.startsWith("tessera://blobs/") && !u.inline_excerpt) {
-        const sha = validateBlobSha256(u.uri.slice("tessera://blobs/".length));
-        const bResp = await tesseraFetch(env, base_url, `/v1/blobs/${sha}`, bearer_token);
-        if (!bResp.ok) {
-          throw new HermaErr(502, "sync_failed", "Tessera Blob Fetch Failed", `Blob ${sha} returned HTTP ${bResp.status}.`);
-        }
-        const buf = await bResp.arrayBuffer();
-        const verifiedExcerpt = await verifyBlobBytes(sha, buf);
-        resolvedUris.push({ ...u, inline_excerpt: verifiedExcerpt });
+        validateBlobSha256(u.uri.slice("tessera://blobs/".length));
+        resolvedUris.push(u);
         continue;
       }
       if (u.uri?.startsWith("tessera://buckets/") && !u.inline_excerpt) {
@@ -1275,7 +1272,7 @@ async function syncFromTesseraCloud(
           }
           await upsertContextEntry(
             db,
-            valueToContextEntry(ref, parsedRef.kind, parsedRef.storeNs, parsedRef.recKey, nData?.value),
+            {...valueToContextEntry(ref, parsedRef.kind, parsedRef.storeNs, parsedRef.recKey, nData?.value), governance: stripGovernanceEnvelopeForContext(nData?.value, nData).governance},
             { callerScope, isAdmin }
           );
         }
@@ -1444,7 +1441,7 @@ async function proxyOrigin(request, env) {
   }
 }
 
-export default {
+const application = {
   async fetch(request, env) {
     if ((env.STORAGE_MODE || "cloud") === "origin") {
       return proxyOrigin(request, env);
@@ -1708,11 +1705,14 @@ export default {
         const storedList = rawStored.filter((sp) =>
           provisionPassesLens(sp, { harnessKind: principal.harness_kind, cohort })
         );
-        const matched = await evaluateProvisions(storedList, envelope.trigger_context, env);
+        const matched = await evaluateProvisions(storedList, envelope.trigger_context, env, {offlineOnly: true});
         const allRefs = matched.flatMap((m) => m.stored.provision.context_refs || []);
         const contextMap = await getContextEntriesMapForCaller(db, allRefs, principal.caller_scope, {
           includeBuiltin: true,
         });
+        for (const [id, entry] of Object.entries(contextMap)) {
+          if (entry.governance && !passesGovernanceLens({governance: entry.governance}, {harnessKind: principal.harness_kind, cohort})) delete contextMap[id];
+        }
         const entities = extractEntities(
           envelope.trigger_context.text,
           envelope.trigger_context.file_paths
@@ -1767,6 +1767,7 @@ export default {
         const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env) });
         requireScope(principal, "route", request);
         const payload = await request.json();
+        await reserveRouteRequest(db, principal.caller_scope);
         const wireFormat = wireMap[path];
         const projectTag = parseProjectTag(request);
         const cohort = parseCohortHeader(request);
@@ -1783,6 +1784,9 @@ export default {
         const contextMap = await getContextEntriesMapForCaller(db, allRefs, principal.caller_scope, {
           includeBuiltin: true,
         });
+        for (const [id, entry] of Object.entries(contextMap)) {
+          if (entry.governance && !passesGovernanceLens({governance: entry.governance}, {harnessKind: principal.harness_kind, cohort})) delete contextMap[id];
+        }
         const entities = extractEntities(
           envelope.trigger_context.text,
           envelope.trigger_context.file_paths
@@ -1826,35 +1830,10 @@ export default {
           });
         }
 
-        const rawUpstreamBase = (
-          request.headers.get("x-upstream-base-url") ||
-          request.headers.get("x-herma-upstream-url") ||
-          env.UPSTREAM_LLM_URL ||
-          ""
-        ).replace(/\/+$/, "");
-        if (!rawUpstreamBase) {
-          throw new HermaErr(
-            502,
-            "missing_upstream",
-            "Missing Upstream LLM Endpoint",
-            "Set UPSTREAM_LLM_URL or X-Upstream-Base-Url, or call POST /v1/dry-run to inspect augmented payloads."
-          );
-        }
-        const upstreamBase =
-          path.startsWith("/v1/") && rawUpstreamBase.endsWith("/v1")
-            ? rawUpstreamBase.slice(0, -3)
-            : rawUpstreamBase;
-        const targetUpstreamUrl = rawUpstreamBase.endsWith(path)
-          ? rawUpstreamBase
-          : `${upstreamBase}${path}`;
-        const upHeaders = { "content-type": "application/json" };
-        const rawAuthHeader = request.headers.get("authorization") || "";
-        const bearerTok = rawAuthHeader.replace(/^Bearer\s+/i, "").trim();
-        const upKey =
-          request.headers.get("x-upstream-api-key") ||
-          (!bearerTok.startsWith("hmk_") && bearerTok ? bearerTok : "") ||
-          env.UPSTREAM_LLM_API_KEY ||
-          "";
+        const resolvedUpstream = resolveUpstream(request, env, path);
+        const targetUpstreamUrl = resolvedUpstream.url;
+        const upKey = resolvedUpstream.key;
+        const upHeaders = {"content-type": "application/json"};
         if (upKey) {
           if (wireFormat === "messages") {
             upHeaders["x-api-key"] = upKey;
@@ -1864,6 +1843,7 @@ export default {
           }
         }
         const upResp = await fetch(targetUpstreamUrl, {
+          redirect: "manual",
           method: "POST",
           headers: upHeaders,
           body: JSON.stringify(augmented_payload),
@@ -2154,9 +2134,13 @@ export default {
       return problem(404, "not_found", "Not Found", `No route matches ${method} ${path}.`);
     } catch (err) {
       if (err instanceof HermaErr) {
-        return problem(err.status, err.code, err.title, err.detail);
+        const response = problem(err.status, err.code, err.title, err.detail);
+        if (err.status === 429) response.headers.set("Retry-After", "3600");
+        return response;
       }
       return problem(500, "internal_error", "Internal Server Error", String(err?.message || err));
     }
   },
 };
+
+export default { fetch(request, env) { return agentFetch(request, env, (req, bindings) => application.fetch(req, bindings)); } };

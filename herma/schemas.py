@@ -19,6 +19,7 @@ HarnessKind = Literal[
     "codex",
     "swarm-worker",
     "custom-harness",
+    "personal-assistant",
 ]
 HarnessScope = Literal["route", "configure"]
 TriggerTier = Literal["keyword", "semantic", "micromodel"]
@@ -33,6 +34,24 @@ EntityKind = Literal[
     "error_signature",
 ]
 OutcomeKind = Literal["accepted", "retry_error", "overridden"]
+CallerProfileId = Literal[
+    "coding_harness",
+    "chat_assistant",
+    "swarm_worker",
+    "ngo_caseworker",
+    "steward_reviewer",
+    "benchmark_auditor",
+    "incident_responder",
+    "public_researcher",
+]
+RankingStrategy = Literal[
+    "empirical_bayes",
+    "borda_consensus",
+    "ucb1_explore",
+    "wilson_lower_bound",
+    "pareto_efficiency",
+    "urgency_priority",
+]
 
 
 class ProvisionURI(BaseModel):
@@ -60,6 +79,7 @@ class ContextEntry(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    governance: dict[str, Any] | None = None
     entry_id: str = Field(min_length=2, max_length=160)
     kind: ContextEntryKind
     title: str = Field(min_length=2, max_length=160)
@@ -276,7 +296,12 @@ class InjectionReceipt(BaseModel):
     direct_response_text: str | None = None
     shimmed_context_refs: list[str] = Field(default_factory=list)
     entities_tracked: int = 0
+    caller_profile: CallerProfileId = "coding_harness"
+    ranking_strategy: RankingStrategy = "empirical_bayes"
     created_at: float
+
+
+ShimReceipt = InjectionReceipt
 
 
 class ExtractedEntity(BaseModel):
@@ -368,6 +393,7 @@ class DryRunRequest(BaseModel):
     wire_format: Literal["chat_completions", "responses", "messages"] = "chat_completions"
     payload: dict[str, Any]
     workspace_paths: list[str] = Field(default_factory=list)
+    caller_profile: CallerProfileId | None = None
 
 
 class DryRunResponse(BaseModel):
@@ -395,6 +421,7 @@ class HandshakeRequest(BaseModel):
     surface_id: str | None = Field(default=None, pattern=SURFACE_ID_PATTERN)
     surface_version: str = Field(default="0.1.0", max_length=64)
     requested_max_chars: int = Field(default=4000, ge=0, le=10_000_000)
+    caller_profile: CallerProfileId | None = None
 
 
 class HandshakeResponse(BaseModel):
@@ -407,9 +434,60 @@ class HandshakeResponse(BaseModel):
     backend_version: str
     surface_id: str
     harness_kind: HarnessKind
+    caller_profile: CallerProfileId = "coding_harness"
+    ranking_strategy: RankingStrategy = "empirical_bayes"
+    profile_max_chars: int = 6000
     clamped_max_chars: int
     active_provisions: int
     context_entries: int
     transactional_db_exempt_from_middleware: bool = True
     capabilities: list[str] = Field(default_factory=list)
     handshake_id: str
+
+
+class ProfileCompareRequest(BaseModel):
+    """Zero-LLM side-by-side comparison request across caller profile shimming lenses."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str = Field(min_length=1, max_length=16_000)
+    profiles: list[CallerProfileId] = Field(default_factory=list, max_length=8)
+    wire_format: Literal["chat_completions", "responses", "messages"] = "chat_completions"
+    model: str = Field(default="muse-spark-open", max_length=120)
+    workspace_paths: list[str] = Field(default_factory=list, max_length=32)
+
+
+class ProfileShimDiff(BaseModel):
+    """Deterministic shim result for a single CallerProfile lens."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    caller_profile: CallerProfileId
+    ranking_strategy: RankingStrategy
+    max_chars: int
+    suppress_code_dumps: bool
+    profile_guidance_header: str
+    injected_chars: int
+    selected_provisions: list[str] = Field(default_factory=list)
+    provisions_fired: list[str] = Field(default_factory=list)
+    selected_context_refs: list[str] = Field(default_factory=list)
+    uris_injected: list[str] = Field(default_factory=list)
+    responded_directly: bool = False
+    direct_response_text: str | None = None
+    shimmed_preview: str = ""
+    receipt_sha256: str
+
+
+class ProfileCompareResponse(BaseModel):
+    """Side-by-side deterministic shim comparison across CallerProfile lenses (0 LLM calls)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool = True
+    persisted: bool = False
+    upstream_llm_calls: int = 0
+    scope_evaluated: str = SYSTEM_BUILTIN_SCOPE
+    prompt: str
+    wire_format: Literal["chat_completions", "responses", "messages"] = "chat_completions"
+    comparisons: list[ProfileShimDiff]
+    by_profile: dict[str, ProfileShimDiff] = Field(default_factory=dict)

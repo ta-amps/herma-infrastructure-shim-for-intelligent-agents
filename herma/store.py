@@ -91,6 +91,8 @@ SCHEMA_SQL = """
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
+CREATE TABLE IF NOT EXISTS route_quotas (caller_scope TEXT NOT NULL, hour INTEGER NOT NULL, used INTEGER NOT NULL, PRIMARY KEY (caller_scope, hour));
+
 CREATE TABLE IF NOT EXISTS provisions (
     caller_scope TEXT NOT NULL DEFAULT 'system_builtin',
     prov_id TEXT NOT NULL,
@@ -209,6 +211,28 @@ def _split_csv_or_list(raw: Any) -> list[str]:
     return []
 
 
+def _canonical_governance(
+    raw_item: Any, extra_envelope: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
+    """Read only transport governance when present; record payload cannot override its ACL."""
+    source = extra_envelope if extra_envelope is not None else raw_item
+    if not isinstance(source, Mapping):
+        return {}
+    gov = source.get("governance", source)
+    if not isinstance(gov, Mapping):
+        return {}
+    fields = (
+        "namespace",
+        "producer_surface",
+        "visibility_scope",
+        "allowed_surfaces",
+        "target_cohorts",
+        "tags",
+        "owner_key_id",
+    )
+    return {key: gov[key] for key in fields if key in gov}
+
+
 def passes_governance_lens(
     raw_item: Any,
     *,
@@ -216,155 +240,69 @@ def passes_governance_lens(
     harness_kind: str | None = None,
     cohort: str = "",
     extra_envelope: Mapping[str, Any] | None = None,
+    trusted_local: bool = False,
 ) -> bool:
-    """Enforce Herma's Layer-1 Governance Lens on Tessera items and active provisions."""
-    merged: dict[str, Any] = {}
-    if isinstance(extra_envelope, Mapping):
-        merged.update(extra_envelope)
-    if isinstance(raw_item, Mapping):
-        merged.update(raw_item)
-
-    gov_raw = merged.get("governance")
-    gov: Mapping[str, Any] = gov_raw if isinstance(gov_raw, Mapping) else {}
-    meta_raw = merged.get("metadata_tags")
-    meta: Mapping[str, Any] = meta_raw if isinstance(meta_raw, Mapping) else {}
-
-    tags: set[str] = set()
-    for src in (merged.get("tags"), gov.get("tags"), meta.get("tags")):
-        for item in _split_csv_or_list(src):
-            tags.add(item.lower())
-
-    for status_candidate in (
-        merged.get("status"),
-        gov.get("status"),
-        meta.get("status"),
-        meta.get("governance_status"),
-    ):
-        if isinstance(status_candidate, str) and status_candidate.strip():
-            low = status_candidate.strip().lower()
-            if low.startswith("status:"):
-                tags.add(low)
-            elif low in KNOWN_STATUS_VALUES:
-                tags.add(f"status:{low}")
-
-    # 1. Hard quarantine refusal:
-    if (
-        "status:quarantined" in tags
-        or merged.get("quarantined") is True
-        or gov.get("quarantined") is True
-        or str(meta.get("quarantined", "")).strip().lower() == "true"
-    ):
-        return False
-
-    # 2. Verification requirement for status tags and cross-surface producers:
-    has_status_tag = any(t.startswith("status:") for t in tags)
-    if has_status_tag and "status:verified" not in tags:
-        return False
-
-    # 3. Surface visibility allowance for surface:herma:
-    vis = (
-        str(
-            merged.get("visibility_scope")
-            or gov.get("visibility_scope")
-            or meta.get("visibility_scope")
-            or ""
+    """Fail closed for fabric imports; stored caller-owned rules are trusted separately."""
+    _ = namespace
+    raw = raw_item if isinstance(raw_item, Mapping) else {}
+    meta = raw.get("metadata_tags", {})
+    meta = meta if isinstance(meta, Mapping) else {}
+    gov = _canonical_governance(raw, extra_envelope)
+    if not trusted_local:
+        required = (
+            "namespace",
+            "producer_surface",
+            "visibility_scope",
+            "allowed_surfaces",
+            "target_cohorts",
+            "tags",
         )
-        .strip()
-        .lower()
-    )
-    allowed_surfaces = {
-        (s.lower() if s.lower().startswith("surface:") or s == "*" else f"surface:{s.lower()}")
-        for s in (
-            *_split_csv_or_list(merged.get("allowed_surfaces")),
-            *_split_csv_or_list(gov.get("allowed_surfaces")),
-            *_split_csv_or_list(meta.get("allowed_surfaces")),
-        )
-    }
-    raw_prod = (
-        str(
-            merged.get("producer_surface")
-            or gov.get("producer_surface")
-            or meta.get("producer_surface")
-            or ""
-        )
-        .strip()
-        .lower()
-    )
-    norm_prod = (
-        ""
-        if not raw_prod
-        else (raw_prod if raw_prod.startswith("surface:") else f"surface:{raw_prod}")
-    )
-
-    # Cross-surface third-party producers must carry explicit status:verified:
-    if (
-        norm_prod
-        and norm_prod not in ("surface:herma", "surface:tessera")
-        and "status:verified" not in tags
-    ):
-        return False
-
-    if vis:
-        if vis == "public_commons":
-            pass
-        elif vis in ("private", "surface_only"):
-            if norm_prod != "surface:herma":
-                return False
-        elif vis == "allowlist_surfaces":
-            if (
-                norm_prod != "surface:herma"
-                and "surface:herma" not in allowed_surfaces
-                and "*" not in allowed_surfaces
-            ):
-                return False
-        else:
+        if any(key not in gov for key in required):
             return False
-    elif (
-        allowed_surfaces
-        and norm_prod != "surface:herma"
-        and "surface:herma" not in allowed_surfaces
-        and "*" not in allowed_surfaces
-    ):
+        if not isinstance(gov["namespace"], str) or not gov["namespace"].strip():
+            return False
+        if gov["producer_surface"] not in {
+            "surface:tessera",
+            "surface:shamash",
+            "surface:eranos",
+            "surface:herma",
+            "surface:kothar",
+            "surface:kinema",
+        }:
+            return False
+        if any(
+            not isinstance(gov[key], list) or any(not isinstance(x, str) for x in gov[key])
+            for key in ("allowed_surfaces", "target_cohorts", "tags")
+        ):
+            return False
+        if "status:verified" not in gov["tags"] or "status:quarantined" in gov["tags"]:
+            return False
+        if gov["visibility_scope"] == "allowlist_surfaces":
+            if "surface:herma" not in gov["allowed_surfaces"]:
+                return False
+        elif gov["visibility_scope"] != "public_commons":
+            return False
+        # Never reinterpret private or malformed legacy fields as public authority.
+        if any(key in raw and raw[key] != gov.get(key) for key in required):
+            return False
+    tags = set(_split_csv_or_list(gov.get("tags"))) | set(_split_csv_or_list(meta.get("tags")))
+    tags.update(_split_csv_or_list(meta.get("status")))
+    if "status:quarantined" in tags or raw.get("quarantined") is True:
         return False
-
-    # 4. Cohort / harness targeting check:
-    cohort_targets: set[str] = set()
+    if any(t.startswith("status:") and t != "status:verified" for t in tags):
+        return False
+    targets = set(_split_csv_or_list(gov.get("target_cohorts")))
     for key in ("cohort", "cohorts", "target_cohort", "target_cohorts", "allowed_cohorts"):
-        for val in (merged.get(key), gov.get(key), meta.get(key)):
-            for token in _split_csv_or_list(val):
-                low = token.lower()
-                cohort_targets.add(low)
-    for key in ("allowed_harnesses", "target_harness"):
-        for val in (merged.get(key), gov.get(key), meta.get(key)):
-            for token in _split_csv_or_list(val):
-                low = token.lower()
-                cohort_targets.add(
-                    low if low.startswith("harness:") or low == "all" else f"harness:{low}"
-                )
-    for t in tags:
-        if t.startswith(("cohort:", "harness:")):
-            cohort_targets.add(t)
-
-    if cohort_targets and harness_kind is not None:
-        if cohort_targets & {"all", "*", "cohort:all", "harness:all"}:
-            return True
-        hk = harness_kind.strip().lower()
-        caller_tokens: set[str] = {hk, f"harness:{hk}"}
-        for raw_c in _split_csv_or_list(cohort):
-            low_c = raw_c.lower()
-            caller_tokens.add(low_c)
-            if low_c.startswith("cohort:"):
-                caller_tokens.add(low_c.removeprefix("cohort:"))
-            else:
-                caller_tokens.add(f"cohort:{low_c}")
-        expanded_targets: set[str] = set()
-        for tgt in cohort_targets:
-            expanded_targets.add(tgt)
-            if tgt.startswith("cohort:"):
-                expanded_targets.add(tgt.removeprefix("cohort:"))
-        if expanded_targets.isdisjoint(caller_tokens):
+        targets.update(_split_csv_or_list(meta.get(key)))
+    if not trusted_local and not targets:
+        return False
+    if targets and "all" not in targets:
+        caller = set(_split_csv_or_list(cohort))
+        caller.update(f"cohort:{item}" for item in list(caller) if ":" not in item)
+        if harness_kind:
+            caller.add(f"harness:{harness_kind}")
+        if not caller.intersection(targets):
             return False
-
     return True
 
 
@@ -372,52 +310,22 @@ def _strip_governance_envelope_for_provision(
     raw_val: dict[str, Any],
     extra_envelope: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Preserve governance/cohort cues into metadata_tags while keeping Provision extra='forbid' clean."""
+    """Keep verified transport governance intact for every subsequent injection."""
     cleaned = {k: v for k, v in raw_val.items() if k not in GOV_ENVELOPE_KEYS}
     meta = dict(cleaned.get("metadata_tags") or {})
-    gov_raw = raw_val.get("governance")
-    gov: Mapping[str, Any] = gov_raw if isinstance(gov_raw, Mapping) else {}
-    env_map: Mapping[str, Any] = extra_envelope if isinstance(extra_envelope, Mapping) else {}
-
-    collected_cohorts: list[str] = []
-    for key in ("cohort", "cohorts", "target_cohort", "target_cohorts", "allowed_cohorts"):
-        for src in (raw_val.get(key), gov.get(key), env_map.get(key)):
-            collected_cohorts.extend(_split_csv_or_list(src))
-    for tag in (
-        *_split_csv_or_list(raw_val.get("tags")),
-        *_split_csv_or_list(gov.get("tags")),
-        *_split_csv_or_list(env_map.get("tags")),
-    ):
-        low = tag.lower()
-        if low.startswith(("cohort:", "harness:")):
-            collected_cohorts.append(low)
-        elif low.startswith("status:") and "status" not in meta:
-            meta["status"] = low
-    non_all_cohorts = [c for c in dict.fromkeys(collected_cohorts) if c.lower() != "all"]
-    if non_all_cohorts and "cohort" not in meta:
-        meta["cohort"] = ",".join(non_all_cohorts)
-    for key in ("visibility_scope", "producer_surface"):
-        val = raw_val.get(key) or gov.get(key) or env_map.get(key)
-        if isinstance(val, str) and val.strip() and key not in meta:
-            if key == "producer_surface" and val.strip().lower() == "surface:tessera":
-                continue
-            if key == "visibility_scope" and val.strip().lower() == "public_commons":
-                continue
-            meta[key] = val.strip()
-    allowed_surfs = _split_csv_or_list(
-        raw_val.get("allowed_surfaces")
-        or gov.get("allowed_surfaces")
-        or env_map.get("allowed_surfaces")
+    meta["fabric_governance"] = json.dumps(
+        _canonical_governance(raw_val, extra_envelope), sort_keys=True
     )
-    if allowed_surfs and "allowed_surfaces" not in meta:
-        meta["allowed_surfaces"] = ",".join(allowed_surfs)
-    if meta:
-        cleaned["metadata_tags"] = meta
+    cleaned["metadata_tags"] = meta
     return cleaned
 
 
-def _strip_governance_envelope_for_context(raw_val: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in raw_val.items() if k not in GOV_ENVELOPE_KEYS}
+def _strip_governance_envelope_for_context(
+    raw_val: dict[str, Any], extra_envelope: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
+    result = {k: v for k, v in raw_val.items() if k not in GOV_ENVELOPE_KEYS}
+    result["governance"] = _canonical_governance(raw_val, extra_envelope)
+    return result
 
 
 def provision_passes_lens(
@@ -426,11 +334,24 @@ def provision_passes_lens(
     harness_kind: str,
     cohort: str = "",
 ) -> bool:
+    trusted = stored.source_store in {
+        "local",
+        "system_builtin",
+        "examples",
+    } or stored.source_store.startswith("harness:")
+    if trusted:
+        raw: dict[str, Any] = {"metadata_tags": stored.provision.metadata_tags}
+    else:
+        try:
+            raw = {
+                "governance": json.loads(
+                    stored.provision.metadata_tags.get("fabric_governance", "{}")
+                )
+            }
+        except (TypeError, ValueError):
+            return False
     return passes_governance_lens(
-        {"metadata_tags": stored.provision.metadata_tags},
-        namespace="herma.provisions",
-        harness_kind=harness_kind,
-        cohort=cohort,
+        raw, harness_kind=harness_kind, cohort=cohort, trusted_local=trusted
     )
 
 
@@ -502,6 +423,24 @@ class ProvisionStore:
         conn = sqlite3.connect(str(self.db_path), timeout=15.0)
         conn.row_factory = sqlite3.Row
         return conn
+
+    def reserve_route_request(self, caller_scope: str, limit: int = 60) -> None:
+        """Atomic per-key request budget; no provider call can race past the cap."""
+        hour = int(time.time()) // 3600
+        with self._connect() as conn:
+            row = conn.execute(
+                "INSERT INTO route_quotas (caller_scope, hour, used) VALUES (?, ?, 1) "
+                "ON CONFLICT(caller_scope, hour) DO UPDATE SET used = used + 1 WHERE used < ? RETURNING used",
+                (caller_scope, hour, limit),
+            ).fetchone()
+            conn.execute("DELETE FROM route_quotas WHERE hour < ?", (hour - 24,))
+        if row is None:
+            raise HermaError(
+                429,
+                "route_quota_exceeded",
+                "Route Quota Exceeded",
+                "60 routed requests per key per hour. Retry next hour.",
+            )
 
     @staticmethod
     def _migrate_if_needed(conn: sqlite3.Connection) -> None:
@@ -1773,7 +1712,7 @@ class ProvisionStore:
                     ):
                         continue
                     raw_c = (
-                        _strip_governance_envelope_for_context(c_rec.value)
+                        _strip_governance_envelope_for_context(c_rec.value, c_env)
                         if isinstance(c_rec.value, dict)
                         else c_rec.value
                     )
@@ -1822,9 +1761,8 @@ class ProvisionStore:
             for u in prov.uris:
                 if u.uri.startswith("tessera://blobs/") and not u.inline_excerpt:
                     blob_sha = validate_blob_sha256(u.uri.removeprefix("tessera://blobs/"))
-                    raw_bytes = tessera_store.get_blob(blob_sha)
-                    excerpt = verify_blob_bytes(blob_sha, raw_bytes)
-                    resolved_uris.append(u.model_copy(update={"inline_excerpt": excerpt}))
+                    _ = blob_sha
+                    resolved_uris.append(u)
                 elif u.uri.startswith("tessera://buckets/") and not u.inline_excerpt:
                     rest = u.uri.removeprefix("tessera://buckets/").strip()
                     bucket_name, sep, obj_key = rest.partition("/")
@@ -1881,7 +1819,11 @@ class ProvisionStore:
                         if not is_admin and self.has_builtin_context_entry(ref):
                             continue
                         self.upsert_context_entry(
-                            _value_to_context_entry(ref, kind, store_ns, rec_key, noun_rec.value),
+                            _value_to_context_entry(
+                                ref, kind, store_ns, rec_key, noun_rec.value
+                            ).model_copy(
+                                update={"governance": _canonical_governance(noun_rec.value, n_env)}
+                            ),
                             caller_scope=caller_scope,
                             is_admin=is_admin,
                         )
@@ -1937,7 +1879,7 @@ class ProvisionStore:
                         ):
                             continue
                         raw_c = (
-                            _strip_governance_envelope_for_context(c_val)
+                            _strip_governance_envelope_for_context(c_val, c_json)
                             if isinstance(c_val, dict)
                             else c_val
                         )
@@ -1985,10 +1927,8 @@ class ProvisionStore:
                 for u in prov.uris:
                     if u.uri.startswith("tessera://blobs/") and not u.inline_excerpt:
                         blob_sha = validate_blob_sha256(u.uri.removeprefix("tessera://blobs/"))
-                        b_resp = await client.get(f"{root}/v1/blobs/{blob_sha}")
-                        b_resp.raise_for_status()
-                        excerpt = verify_blob_bytes(blob_sha, b_resp.content)
-                        resolved_uris.append(u.model_copy(update={"inline_excerpt": excerpt}))
+                        _ = blob_sha
+                        resolved_uris.append(u)
                     elif u.uri.startswith("tessera://buckets/") and not u.inline_excerpt:
                         rest = u.uri.removeprefix("tessera://buckets/").strip()
                         bucket_name, sep, obj_key = rest.partition("/")
@@ -2044,7 +1984,11 @@ class ProvisionStore:
                             if not is_admin and self.has_builtin_context_entry(ref):
                                 continue
                             self.upsert_context_entry(
-                                _value_to_context_entry(ref, kind, store_ns, rec_key, n_val),
+                                _value_to_context_entry(
+                                    ref, kind, store_ns, rec_key, n_val
+                                ).model_copy(
+                                    update={"governance": _canonical_governance(n_val, n_json)}
+                                ),
                                 caller_scope=caller_scope,
                                 is_admin=is_admin,
                             )
@@ -2100,7 +2044,11 @@ class ProvisionStore:
             body = prov_resp.json()
             if isinstance(body, dict) and isinstance(body.get("context_entries"), list):
                 for raw_entry in body["context_entries"]:
-                    entry = ContextEntry.model_validate(raw_entry)
+                    if not passes_governance_lens(raw_entry):
+                        continue
+                    entry = ContextEntry.model_validate(
+                        _strip_governance_envelope_for_context(raw_entry)
+                    )
                     if not is_admin and self.has_builtin_context_entry(entry.entry_id):
                         continue
                     self.upsert_context_entry(
@@ -2118,7 +2066,11 @@ class ProvisionStore:
                     if isinstance(item, dict) and isinstance(item.get("provision"), dict)
                     else item
                 )
-                prov = Provision.model_validate(raw_prov)
+                if not passes_governance_lens(raw_prov, extra_envelope=item):
+                    continue
+                prov = Provision.model_validate(
+                    _strip_governance_envelope_for_provision(raw_prov, item)
+                )
                 if not is_admin and self.has_builtin_provision(prov.prov_id):
                     continue
                 if prov.max_chars > clamped_max_chars:

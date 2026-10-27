@@ -1,0 +1,107 @@
+"""Bounded, stateless browser-agent transport; bearer authorization stays in each route."""
+
+from __future__ import annotations
+
+import re
+import uuid
+
+from starlette.datastructures import Headers, MutableHeaders
+from starlette.responses import JSONResponse, Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+MAX_REQUEST_BYTES = 262144
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, HEAD, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, If-Match, X-Request-Id, X-Agent-Label, X-Herma-Key, X-Herma-Harness, X-Herma-Project, X-Herma-Cohort, X-Upstream-Api-Key, X-Upstream-Base-Url, X-Herma-Upstream-Url, X-Surface-Id",
+    "Access-Control-Expose-Headers": "ETag, Retry-After, X-Request-Id",
+    "Access-Control-Max-Age": "600",
+}
+
+
+class AgentAccessMiddleware:
+    """Apply a finite input budget and CORS without cookie authentication."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = Headers(scope=scope)
+        raw_id = headers.get("x-request-id", "")
+        request_id = (
+            raw_id if re.fullmatch(r"[A-Za-z0-9_.:-]{1,100}", raw_id) else str(uuid.uuid4())
+        )
+
+        async def send_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                response_headers = MutableHeaders(scope=message)
+                for key, value in CORS_HEADERS.items():
+                    response_headers[key] = value
+                response_headers["X-Request-Id"] = request_id
+            await send(message)
+
+        if scope["method"] == "OPTIONS" and scope["path"].startswith(("/mcp", "/api/", "/v1/")):
+            await Response(status_code=204)(scope, receive, send_headers)
+            return
+        if scope["method"] in {"POST", "PUT", "PATCH"}:
+            chunks: list[bytes] = []
+            size = 0
+            while True:
+                message = await receive()
+                if message["type"] == "http.disconnect":
+                    return
+                chunk = message.get("body", b"")
+                size += len(chunk)
+                if size > MAX_REQUEST_BYTES:
+                    await JSONResponse(
+                        {"code": "request_too_large", "max_bytes": MAX_REQUEST_BYTES},
+                        status_code=413,
+                    )(scope, receive, send_headers)
+                    return
+                chunks.append(chunk)
+                if not message.get("more_body", False):
+                    break
+            body = b"".join(chunks)
+            consumed = False
+
+            async def replay() -> Message:
+                nonlocal consumed
+                if consumed:
+                    return await receive()
+                consumed = True
+                return {"type": "http.request", "body": body, "more_body": False}
+
+            await self.app(scope, replay, send_headers)
+            return
+        await self.app(scope, receive, send_headers)
+
+
+ACCESS_INFO: dict[str, object] = {
+    "surface": "herma",
+    "public_access": {
+        "authentication_required": False,
+        "mcp": "/mcp",
+        "persistence": False,
+        "mode": "deterministic_preview",
+    },
+    "tessera_access": {
+        "connect_url": "https://tessera.ta-amps.workers.dev/connect",
+        "discovery_url": "https://tessera.ta-amps.workers.dev/connect.json",
+        "anonymous_session_endpoint": "https://tessera.ta-amps.workers.dev/v1/session/anonymous",
+        "anonymous_namespace": "demo.<principal>",
+        "key_prefix": "tsk_",
+        "session_prefix": "tan_",
+        "persistence": "Use your own Tessera principal to save returned artifacts; this surface never borrows a server credential for public writes.",
+    },
+    "http_limits": {"request_bytes": 262144, "cors": "bearer-only; wildcard origin; no cookies"},
+    "authenticated_access": {
+        "credential": "hmk_",
+        "scopes": ["route", "configure"],
+        "clients": ["coding_harness", "personal-assistant", "custom-harness"],
+        "route_requests_per_key_hour": 60,
+        "provider_credentials": "Server keys are bound to the configured provider origin; alternate providers require an allowlisted host and a caller-owned key.",
+    },
+}

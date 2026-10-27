@@ -35,23 +35,26 @@ Static system prompts bloat every turn when stuffed with every rule, schema, and
 
 ## Configurable Coding Harnesses & Caller Isolation
 
-Herma is intentionally restricted to **fully configurable agentic coding harnesses** where the developer controls custom base URLs, headers, and scoped `hmk_<id>.<secret>` credentials:
+Herma accepts coding harnesses and personal assistants that can send explicit scoped credentials to configurable endpoints:
 - Supported harnesses: `muse-code`, `opencode`, `claude-code`, `codex`, `swarm-worker`, `custom-harness`.
 - Multi-caller non-poisoning: starter guardrails live in protected `system_builtin` (`403 builtin_protected` for non-admins), while custom rules, context entries, receipts, entity memory, and outcomes are strictly partitioned by `caller_scope = key:<key_id>`.
-- Closed consumer chat clients (such as a generic **Muse Personal Assistant** chat session, browser navigation requests, or cookie sessions) cannot configure rules/context or route through Herma (`HTTP 403 harness_required`).
+- Personal assistants may use the same scoped `hmk_` keys. Browser navigation and cookie authentication remain refused; model routing and configuration require explicit credentials.
 - Contributor-tier models (`contributor` and `*-contributor`) are deterministically refused (`HTTP 403 contributor_tier_refused`).
 - AI-agent discovery & preview: serves `POST /api/preview` (`persisted: false`), `POST /mcp` (stateless JSON-RPC 2.0), `/.well-known/agent-card.json`, `/llms.txt`, `/llms-full.txt`, `/robots.txt`, and `/healthz`.
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/ta-amps/tessera.git
 git clone https://github.com/ta-amps/herma.git
 cd herma
 make setup
 make check
 make demo
 ```
+
+Herma installs independently. `pyproject.toml` pins Tessera to an immutable public
+Git commit, and `uv.lock` records the resolved dependency. Python 3.12+, Git and
+uv are required; no sibling checkout is needed.
 
 ## Sibling Ecosystem (`ta-amps`)
 
@@ -70,6 +73,8 @@ make demo
 - [docs/handoff.md](docs/handoff.md) -- current status and roadmap
 - [examples/provisions/README.md](examples/provisions/README.md) -- authored example provisions & atomic noun/verb context entries
 
+External coding harnesses and personal assistants: [anonymous previews and tracked Tessera access](docs/access-modes.md), or `GET /connect.json`.
+
 ========================================================================
 FILE: docs/summary.md
 URL: https://github.com/ta-amps/herma/blob/main/docs/summary.md
@@ -81,7 +86,7 @@ URL: https://github.com/ta-amps/herma/blob/main/docs/summary.md
 
 Before an outbound coding-harness request reaches `/v1/chat/completions`, `/v1/responses`, or `/v1/messages`, Herma:
 
-1. Verifies the caller holds a scoped `hmk_` credential bound to a configurable coding harness (`muse-code`, `opencode`, `claude-code`, `codex`, `swarm-worker`, or `custom-harness`), isolates custom state under `caller_scope = key:<key_id>` while protecting `system_builtin` rules, and refuses closed consumer assistants (`Muse-Personal-Assistant`) and `contributor` / `*-contributor` models (`HTTP 403`).
+1. Verifies the caller holds a scoped `hmk_` credential bound to a configurable coding harness (`muse-code`, `opencode`, `claude-code`, `codex`, `swarm-worker`, or `custom-harness`), isolates custom state under `caller_scope = key:<key_id>` while protecting `system_builtin` rules, and accepts personal assistants with the same scoped credentials. It refuses `contributor` / `*-contributor` models (`HTTP 403`).
 2. Evaluates `system_builtin` + caller-scoped **provisions** filtered by the Layer-1 Governance Lens across **keyword/regex/path/tool** (`~0 ms`), **semantic** (`~1-5 ms`), and **micromodel** triggers, short-circuiting Tier 3 whenever an earlier tier already matched in `any` mode.
 3. **Shims context (`action: "shim_context"`)**: Injects matched rule details, SHA-256 verified URIs, and bounded `[NOUN/VERB CONTEXT]` entries resolved from Herma's caller-isolated context database (`context_entries` via `POST /v1/context`, governed Tessera noun/verb stores, or remote handshake servers), deduplicating prior turns (`once_per_conversation`).
 4. **Responds directly (`action: "respond_directly"`) & learns deterministically**: Short-circuits upstream LLM execution with zero upstream token spend when a rule answers deterministically, tracks top-of-mind entities (`GET /v1/memory`) and retry-error outcomes (`POST /v1/outcomes`), and synthesizes reviewable `candidate_provisions` (`GET /v1/insights`) without mutating active rules.
@@ -110,7 +115,7 @@ flowchart LR
 
 - `herma/errors.py` -- RFC 9457 `problem+json` error hierarchy (`403 harness_required`, `403 admin_required`, `403 builtin_protected`, `403 contributor_tier_refused`, `409 version_conflict`).
 - `herma/schemas.py` -- strict Pydantic v2 models for `Provision` (`shim_context` / `respond_directly` + `context_refs`), `ContextEntry` (`noun` / `verb` / `detail` + `version`), `WorkingEntity`, `RuleOutcomeRecord`, `InsightsResponse`, `DryRunResponse`, and `InjectionReceipt`.
-- `herma/harness_gate.py` -- constant-time `hmk_` verification, `caller_scope = key:<key_id>`, consumer-surface refusal, `configure` harness attestation, and `contributor` / `*-contributor` refusal.
+- `herma/harness_gate.py` -- constant-time `hmk_` verification, `caller_scope = key:<key_id>`, credentialed personal-assistant access, `configure` harness attestation, and `contributor` / `*-contributor` refusal.
 - `herma/triggers/` -- `keyword.py`, `semantic.py`, `micromodel.py`, and `engine.py`.
 - `herma/memory.py` -- zero-LLM deterministic entity extraction (`file_path`, `code_symbol`, `tessera_uri`, `statute_card_id`, `error_signature`) and reviewable `candidate_provisions` synthesis.
 - `herma/store.py` -- caller-partitioned SQLite WAL store (`provisions`, `context_entries`, `harness_keys`, `injection_receipts`, `working_entities`, `rule_outcomes`), single-statement atomic SQL CAS, Layer-1 Governance Lens + SHA-256 blob verification, Tessera store sync, and remote handshake sync.
@@ -123,8 +128,8 @@ flowchart LR
 
 | Id | Always true | Checked by |
 |---|---|---|
-| H01 | Generic consumer chat assistants, browser navigation requests, and cookie-authenticated calls are deterministically refused | `test_consumer_assistant_and_browser_navigation_refused`, `test_http_edge_lockdown_and_dry_run_across_wire_formats` |
-| H02 | Provision management and remote sync require both configure scope and explicit matching X-Herma-Harness attestation | `test_consumer_assistant_and_browser_navigation_refused`, `test_route_only_key_cannot_configure` |
+| H01 | Personal assistants with scoped keys are accepted; browser navigation and cookie authentication are refused | `test_personal_assistant_credentials_and_browser_navigation`, `test_http_edge_lockdown_and_dry_run_across_wire_formats` |
+| H02 | Provision management and remote sync require both configure scope and explicit matching X-Herma-Harness attestation | `test_personal_assistant_credentials_and_browser_navigation`, `test_route_only_key_cannot_configure` |
 | H03 | Contributor-tier models (contributor and -contributor) are refused across outbound LLM payloads and micromodel trigger classifiers before offline fallback | `test_tier3_micromodel_classifier_and_contributor_refusal`, `test_http_edge_lockdown_and_dry_run_across_wire_formats`, `test_governance_lens_blob_sha256_integrity_and_contributor_offline_refusal` |
 | H04 | Tier-1 keyword, bounded regex, path-glob, and tool-name triggers match deterministically without network calls | `test_tier1_keyword_regex_path_and_tool_triggers` |
 | H05 | Tier-2 semantic triggers match paraphrased intent without literal keyword overlap | `test_tier2_semantic_paraphrase_without_literal_id` |
@@ -145,7 +150,7 @@ URL: https://github.com/ta-amps/herma/blob/main/docs/harnesses.md
 
 # Connecting Configurable Agentic Coding Harnesses
 
-Herma accepts requests **only** from configurable agentic coding harnesses that support custom provider endpoints, custom headers, and scoped `hmk_` credentials. Matched requests either receive shimmed rule, URI, and `[NOUN/VERB CONTEXT]` entries from Herma's database or receive a zero-token direct response (`action: "respond_directly"`).
+Herma accepts model routing and configuration from coding harnesses and personal assistants with scoped `hmk_` credentials. Public deterministic previews require no key. Matched requests either receive shimmed rule, URI, and `[NOUN/VERB CONTEXT]` entries from Herma's database or receive a zero-token direct response (`action: "respond_directly"`).
 
 ## 1. Issue a Key
 
@@ -172,7 +177,7 @@ Set `ANTHROPIC_BASE_URL=https://herma.ta-amps.workers.dev` and pass `X-Herma-Key
 
 ## Why Generic Consumer Assistants Cannot Access Herma
 
-Locked consumer chat apps (such as a generic **Muse Personal Assistant** session on web/mobile) cannot set custom proxy base URLs, cannot attach `X-Herma-Key` / `X-Herma-Harness` headers, and are explicitly blocked by `herma/harness_gate.py` (`HTTP 403 harness_required`).
+Personal assistants that support tool or MCP connections can use the open preview. Private routing and configuration require `X-Herma-Key` and a matching `X-Herma-Harness` declaration; client names and user-agent strings are not authorization.
 
 ========================================================================
 FILE: docs/setup.md
@@ -184,6 +189,11 @@ URL: https://github.com/ta-amps/herma/blob/main/docs/setup.md
 > Herma: context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic noun, verb, and URI context from a user-configured database before LLM execution.
 
 ## Local Development
+
+Clone this repository alone. Tessera is installed from the immutable commit
+`ecca97deb88b82e627df66c98400b3a302e2bdb0` through a standard PEP 508 Git dependency.
+`uv.lock` records the resolution; no local sibling checkout is required.
+The installer needs Python 3.12+, Git, uv and network access to the public repository.
 
 ```bash
 make setup
@@ -260,7 +270,7 @@ URL: https://github.com/ta-amps/herma/blob/main/AGENTS.md
 
 > Herma: context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic noun, verb, and URI context from a user-configured database before LLM execution.
 
-1. **Configurable Harnesses & Caller Isolation Only**: Never weaken `herma/harness_gate.py` or `caller_scope` isolation. Provision and context-database management (`configure` scope), request interception (`route` scope), and working-entity memory require scoped `hmk_` credentials, isolate state per `caller_scope = key:<key_id>`, protect `system_builtin` entries (`403 builtin_protected`), require admin secrets on `/v1/admin/keys` (`403 admin_required`), and reject generic consumer chat surfaces (such as Muse Personal Assistant), browser navigation, and cookie auth.
+1. **Configurable Harnesses & Caller Isolation Only**: Never weaken `herma/harness_gate.py` or `caller_scope` isolation. Provision and context-database management (`configure` scope), request interception (`route` scope), and working-entity memory require scoped `hmk_` credentials, isolate state per `caller_scope = key:<key_id>`, protect `system_builtin` entries (`403 builtin_protected`), require admin secrets on `/v1/admin/keys` (`403 admin_required`), and accept personal assistants with the same scoped credentials while rejecting browser navigation and cookie auth.
 2. **Standard Mode Only**: Refuse every `contributor` and `*-contributor` model ID in both outbound proxy payloads and micromodel classifier configs (`ContributorTierRefusedError`).
 3. **Domain-Neutral Core & HTTP Discipline**: Keep `herma/` domain-neutral. Specific project provisions and atomic `noun`/`verb`/`detail` context entries belong in `examples/provisions/`, SQLite/D1 `context_entries` (`POST /v1/context`), Tessera stores (`herma.provisions`), or remote handshake stores. Writes stay strictly `POST`/`PUT`/`DELETE` (`GET` on write-only endpoints returns `405`).
 4. **Public Repo Hygiene**: Run `make check` (`ruff`, `mypy --strict`, `pytest`, `check_public.py`, `build_index.py --check`, `check_architecture.py`) before every commit. Never include secrets, tokens, em-dashes, or private names.

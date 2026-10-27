@@ -12,6 +12,13 @@ from typing import Any
 
 from herma.harness_gate import HarnessPrincipal, refuse_contributor_model
 from herma.memory import extract_entities
+from herma.profiles import (
+    CALLER_PROFILES,
+    DEFAULT_CALLER_PROFILE_ID,
+    CallerProfile,
+    rank_context_entries_for_profile,
+    rank_provisions_for_profile,
+)
 from herma.schemas import (
     ContextEntry,
     ExtractedEntity,
@@ -37,6 +44,7 @@ class ExtractedEnvelope:
     trigger_context: TriggerContext
     existing_provision_ids: frozenset[str]
     extracted_entities: list[ExtractedEntity] = field(default_factory=list)
+    has_profile_lens: bool = False
 
 
 def _flatten_content(content: Any) -> str:
@@ -141,27 +149,51 @@ def extract_envelope(
         ),
         existing_provision_ids=existing_ids,
         extracted_entities=entities,
+        has_profile_lens="[CALLER PROFILE LENS:" in full_history_text,
     )
 
 
 def render_context_entries_block(
     refs: Sequence[str],
     context_entries: Mapping[str, ContextEntry] | None,
+    *,
+    profile: CallerProfile | None = None,
+    profile_explicit: bool = False,
+    max_context_chars: int | None = None,
 ) -> tuple[str, list[str], list[str]]:
     """Format matched atomic noun/verb/detail database entries into a bounded context block."""
     if not refs or not context_entries:
         return "", [], []
 
+    unique_entries: list[ContextEntry] = []
+    seen_ids: set[str] = set()
+    for ref in refs:
+        entry = context_entries.get(ref)
+        if entry is None or entry.entry_id in seen_ids:
+            continue
+        seen_ids.add(entry.entry_id)
+        unique_entries.append(entry)
+
+    if not unique_entries:
+        return "", [], []
+
+    ordered_entries = (
+        rank_context_entries_for_profile(unique_entries, profile)
+        if (profile is not None and profile_explicit)
+        else unique_entries
+    )
+    suppress_code = bool(profile is not None and profile_explicit and profile.suppress_code_dumps)
+
     lines: list[str] = []
     shimmed_refs: list[str] = []
     entry_uris: list[str] = []
-    for ref in refs:
-        entry = context_entries.get(ref)
-        if entry is None:
-            continue
-        if entry.entry_id not in shimmed_refs:
-            shimmed_refs.append(entry.entry_id)
-        if isinstance(entry.schema_or_body, dict) and entry.schema_or_body:
+    wrapper_overhead = len("[NOUN/VERB CONTEXT]\n\n[/NOUN/VERB CONTEXT]")
+    used_line_chars = 0
+
+    for entry in ordered_entries:
+        if suppress_code:
+            body_excerpt = ""
+        elif isinstance(entry.schema_or_body, dict) and entry.schema_or_body:
             body_excerpt = canonical_json(entry.schema_or_body)
         elif isinstance(entry.schema_or_body, str) and entry.schema_or_body.strip():
             body_excerpt = entry.schema_or_body.strip()
@@ -175,9 +207,22 @@ def render_context_entries_block(
             line += f" -- {body_excerpt}"
         if entry.source_uri:
             line += f" [URI: {entry.source_uri}]"
-            if entry.source_uri not in entry_uris:
-                entry_uris.append(entry.source_uri)
+
+        if max_context_chars is not None:
+            sep_len = 1 if lines else 0
+            projected = wrapper_overhead + used_line_chars + sep_len + len(line)
+            if projected > max_context_chars:
+                avail = max_context_chars - wrapper_overhead - used_line_chars - sep_len
+                if not lines and avail >= 64:
+                    line = line[: avail - 3].rstrip() + "..."
+                else:
+                    continue
+            used_line_chars += sep_len + len(line)
+
         lines.append(line)
+        shimmed_refs.append(entry.entry_id)
+        if entry.source_uri and entry.source_uri not in entry_uris:
+            entry_uris.append(entry.source_uri)
 
     if not lines:
         return "", [], []
@@ -191,36 +236,69 @@ def render_context_entries_block(
 def render_provision_block(
     stored: StoredProvision,
     context_entries: Mapping[str, ContextEntry] | None = None,
+    *,
+    profile: CallerProfile | None = None,
+    profile_explicit: bool = False,
+    max_block_chars: int | None = None,
 ) -> tuple[str, list[str], list[str]]:
     """Render a deterministic, bounded provision + atomic noun/verb context + URI block."""
     prov = stored.provision
+    effective_max = (
+        min(prov.max_chars, max_block_chars) if max_block_chars is not None else prov.max_chars
+    )
     header = f"[HERMA PROVISION: {prov.prov_id}@v{stored.version} | {prov.title}]"
+    footer = f"[/HERMA PROVISION: {prov.prov_id}]"
     lines = [header]
     if prov.inject_text.strip():
-        lines.append(prov.inject_text.strip())
+        inject_txt = prov.inject_text.strip()
+        if profile_explicit and len(inject_txt) > max(120, effective_max // 2):
+            cap_txt = max(120, effective_max - 220)
+            if len(inject_txt) > cap_txt:
+                inject_txt = inject_txt[: cap_txt - 3].rstrip() + "..."
+        lines.append(inject_txt)
+
+    uri_lines: list[str] = []
+    prov_uris: list[str] = []
+    if prov.uris:
+        uri_lines.append("Authoritative References & URIs:")
+        for u in prov.uris:
+            if u.uri not in prov_uris:
+                prov_uris.append(u.uri)
+            u_line = f"- [{u.label}]({u.uri}) ({u.kind})"
+            if u.inline_excerpt and not (
+                profile is not None and profile_explicit and profile.suppress_code_dumps
+            ):
+                u_line += f": {u.inline_excerpt.strip()}"
+            uri_lines.append(u_line)
+
+    ctx_budget: int | None = None
+    if profile_explicit or max_block_chars is not None:
+        fixed_chars = (
+            sum(len(x) + 1 for x in lines) + sum(len(x) + 1 for x in uri_lines) + len(footer)
+        )
+        ctx_budget = max(0, effective_max - fixed_chars)
 
     ctx_block, shimmed_refs, ctx_uris = render_context_entries_block(
-        prov.context_refs, context_entries
+        prov.context_refs,
+        context_entries,
+        profile=profile,
+        profile_explicit=profile_explicit,
+        max_context_chars=ctx_budget,
     )
     if ctx_block:
         lines.append(ctx_block)
 
     injected_uris: list[str] = list(ctx_uris)
-    if prov.uris:
-        lines.append("Authoritative References & URIs:")
-        for u in prov.uris:
-            if u.uri not in injected_uris:
-                injected_uris.append(u.uri)
-            line = f"- [{u.label}]({u.uri}) ({u.kind})"
-            if u.inline_excerpt:
-                line += f": {u.inline_excerpt.strip()}"
-            lines.append(line)
-    lines.append(f"[/HERMA PROVISION: {prov.prov_id}]")
+    for u_str in prov_uris:
+        if u_str not in injected_uris:
+            injected_uris.append(u_str)
+    if uri_lines:
+        lines.extend(uri_lines)
+    lines.append(footer)
     rendered = "\n".join(lines)
-    if len(rendered) > prov.max_chars:
-        rendered = (
-            rendered[: prov.max_chars - 36].rstrip() + f"\n[/HERMA PROVISION: {prov.prov_id}]"
-        )
+    if len(rendered) > effective_max:
+        cut = max(0, effective_max - (len(footer) + 2))
+        rendered = rendered[:cut].rstrip() + f"\n{footer}"
     return rendered, injected_uris, shimmed_refs
 
 
@@ -275,6 +353,28 @@ def _apply_block_to_payload(
     return mutated
 
 
+def extract_shimmed_preview(
+    wire_format: WireFormat,
+    augmented_payload: dict[str, Any],
+    receipt: InjectionReceipt,
+) -> str:
+    """Extract the shimmed system/instructions text or direct response for side-by-side diffs."""
+    if receipt.responded_directly and receipt.direct_response_text is not None:
+        return receipt.direct_response_text
+    if wire_format == "responses" or (
+        "input" in augmented_payload and "messages" not in augmented_payload
+    ):
+        return str(augmented_payload.get("instructions") or "")
+    if wire_format == "messages" and "system" in augmented_payload:
+        return _flatten_content(augmented_payload.get("system"))
+    msgs = augmented_payload.get("messages")
+    if isinstance(msgs, list):
+        for m in msgs:
+            if isinstance(m, dict) and m.get("role") == "system":
+                return _flatten_content(m.get("content"))
+    return ""
+
+
 def assemble_augmented_request(
     *,
     principal: HarnessPrincipal,
@@ -284,8 +384,18 @@ def assemble_augmented_request(
     max_total_chars: int = 8000,
     context_entries: Mapping[str, ContextEntry] | None = None,
     project_tag: str = "default",
+    caller_profile: CallerProfile | None = None,
+    profile_explicit: bool = False,
 ) -> tuple[dict[str, Any], InjectionReceipt]:
     """Shim matched rules + noun/verb context or prepare a direct response, and mint SHA-256 receipt."""
+    active_profile = caller_profile or CALLER_PROFILES[DEFAULT_CALLER_PROFILE_ID]
+    effective_total_chars = (
+        min(max_total_chars, active_profile.max_chars) if profile_explicit else max_total_chars
+    )
+    ordered_matches = (
+        rank_provisions_for_profile(matches, active_profile) if profile_explicit else list(matches)
+    )
+
     prefix_blocks: list[str] = []
     suffix_blocks: list[str] = []
     dev_blocks: list[str] = []
@@ -299,7 +409,11 @@ def assemble_augmented_request(
     direct_response_text: str | None = None
     chars_used = 0
 
-    for stored, match in matches:
+    want_lens_header = bool(profile_explicit and not envelope.has_profile_lens)
+    lens_header = active_profile.profile_guidance_header if want_lens_header else ""
+    lens_reserved = len(lens_header) if want_lens_header else 0
+
+    for stored, match in ordered_matches:
         prov = stored.provision
         if (
             prov.dedupe_mode == "once_per_conversation"
@@ -312,12 +426,23 @@ def assemble_augmented_request(
             if not responded_directly:
                 responded_directly = True
                 base_direct = prov.direct_response.strip()
-                ctx_block, c_refs, c_uris = render_context_entries_block(
-                    prov.context_refs, context_entries
+                direct_cap = (
+                    min(prov.max_chars, effective_total_chars)
+                    if profile_explicit
+                    else prov.max_chars
                 )
-                rendered_direct = f"{base_direct}\n\n{ctx_block}" if ctx_block else base_direct
-                if len(rendered_direct) > prov.max_chars:
-                    rendered_direct = rendered_direct[: prov.max_chars].rstrip()
+                prefix_part = f"{lens_header}\n\n{base_direct}" if lens_header else base_direct
+                ctx_cap = max(0, direct_cap - len(prefix_part) - 2) if profile_explicit else None
+                ctx_block, c_refs, c_uris = render_context_entries_block(
+                    prov.context_refs,
+                    context_entries,
+                    profile=active_profile,
+                    profile_explicit=profile_explicit,
+                    max_context_chars=ctx_cap,
+                )
+                rendered_direct = f"{prefix_part}\n\n{ctx_block}" if ctx_block else prefix_part
+                if len(rendered_direct) > direct_cap:
+                    rendered_direct = rendered_direct[:direct_cap].rstrip()
                 direct_response_text = rendered_direct
                 chars_used += len(rendered_direct)
                 fired_ids.append(f"{prov.prov_id}@v{stored.version}")
@@ -332,8 +457,18 @@ def assemble_augmented_request(
                         uris_injected.append(u_str)
             continue
 
-        block, block_uris, block_refs = render_provision_block(stored, context_entries)
-        if chars_used + len(block) > max_total_chars:
+        remaining_for_blocks = effective_total_chars - chars_used - lens_reserved
+        if profile_explicit and remaining_for_blocks < 160:
+            continue
+
+        block, block_uris, block_refs = render_provision_block(
+            stored,
+            context_entries,
+            profile=active_profile,
+            profile_explicit=profile_explicit,
+            max_block_chars=remaining_for_blocks if profile_explicit else None,
+        )
+        if chars_used + lens_reserved + len(block) > effective_total_chars:
             continue
 
         chars_used += len(block)
@@ -354,6 +489,14 @@ def assemble_augmented_request(
             dev_blocks.append(block)
         else:
             suffix_blocks.append(block)
+
+    if (
+        want_lens_header
+        and not responded_directly
+        and chars_used + len(lens_header) <= effective_total_chars
+    ):
+        prefix_blocks.insert(0, lens_header)
+        chars_used += len(lens_header)
 
     augmented = _apply_block_to_payload(
         envelope.wire_format,
@@ -382,6 +525,8 @@ def assemble_augmented_request(
         "direct_response_text": direct_response_text,
         "shimmed_context_refs": shimmed_context_refs,
         "entities_tracked": entities_count,
+        "caller_profile": active_profile.profile_id,
+        "ranking_strategy": active_profile.strategy,
     }
     receipt = InjectionReceipt(
         **core_for_hash,

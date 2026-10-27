@@ -12,6 +12,7 @@ export const ALLOWED_HARNESS_KINDS = new Set([
   "codex",
   "swarm-worker",
   "custom-harness",
+  "personal-assistant",
 ]);
 
 export const ALLOWED_URI_SCHEMES = ["https://", "tessera://", "mcp://", "urn:"];
@@ -55,16 +56,7 @@ const KNOWN_STATUS_VALUES = new Set([
   "draft",
 ]);
 
-const BLOCKED_CONSUMER_SURFACES = [
-  "muse-personal-assistant",
-  "muse personal assistant",
-  "meta-ai-consumer",
-  "meta.ai/",
-  "messenger-assistant",
-  "whatsapp-assistant",
-  "instagram-assistant",
-  "generic-chat-ui",
-];
+
 
 const STOPWORDS = new Set([
   "the", "and", "for", "with", "that", "this", "from", "into", "when", "what", "how",
@@ -623,6 +615,7 @@ export async function ensureSchema(db) {
   }
 
   await db.batch([
+    db.prepare("CREATE TABLE IF NOT EXISTS route_quotas (caller_scope TEXT NOT NULL, hour INTEGER NOT NULL, used INTEGER NOT NULL, PRIMARY KEY (caller_scope, hour))"),
     db.prepare(
       "CREATE TABLE IF NOT EXISTS provisions (caller_scope TEXT NOT NULL DEFAULT 'system_builtin', prov_id TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, content_sha256 TEXT NOT NULL, source_store TEXT NOT NULL, body_json TEXT NOT NULL, updated_at REAL NOT NULL, PRIMARY KEY (caller_scope, prov_id))"
     ),
@@ -693,201 +686,68 @@ function splitCsvOrList(raw) {
   return [];
 }
 
-export function passesGovernanceLens(
-  rawItem,
-  { namespace = "herma.provisions", harnessKind = null, cohort = "", extraEnvelope = null } = {}
-) {
-  const merged = {};
-  if (extraEnvelope && typeof extraEnvelope === "object" && !Array.isArray(extraEnvelope)) {
-    Object.assign(merged, extraEnvelope);
-  }
-  if (rawItem && typeof rawItem === "object" && !Array.isArray(rawItem)) {
-    Object.assign(merged, rawItem);
-  }
-  const gov = merged.governance && typeof merged.governance === "object" ? merged.governance : {};
-  const meta = merged.metadata_tags && typeof merged.metadata_tags === "object" ? merged.metadata_tags : {};
+function canonicalGovernance(raw, extraEnvelope = null) {
+  const source = extraEnvelope ?? raw;
+  if (!source || typeof source !== "object" || Array.isArray(source)) return {};
+  const gov = source.governance ?? source;
+  if (!gov || typeof gov !== "object" || Array.isArray(gov)) return {};
+  return Object.fromEntries(["namespace", "producer_surface", "visibility_scope", "allowed_surfaces", "target_cohorts", "tags", "owner_key_id"].filter(k => k in gov).map(k => [k, gov[k]]));
+}
 
-  const tags = new Set();
-  for (const src of [merged.tags, gov.tags, meta.tags]) {
-    for (const item of splitCsvOrList(src)) tags.add(item.toLowerCase());
+export function passesGovernanceLens(rawItem, {harnessKind = null, cohort = "", extraEnvelope = null, trustedLocal = false} = {}) {
+  const raw = rawItem && typeof rawItem === "object" ? rawItem : {};
+  const meta = raw.metadata_tags || {};
+  const gov = canonicalGovernance(raw, extraEnvelope);
+  const required = ["namespace", "producer_surface", "visibility_scope", "allowed_surfaces", "target_cohorts", "tags"];
+  if (!trustedLocal) {
+    if (required.some(k => !(k in gov))) return false;
+    if (typeof gov.namespace !== "string" || !gov.namespace.trim()) return false;
+    if (!["surface:tessera", "surface:shamash", "surface:eranos", "surface:herma", "surface:kothar", "surface:kinema"].includes(gov.producer_surface)) return false;
+    if (["allowed_surfaces", "target_cohorts", "tags"].some(k => !Array.isArray(gov[k]) || gov[k].some(v => typeof v !== "string"))) return false;
+    if (!gov.tags.includes("status:verified") || gov.tags.includes("status:quarantined")) return false;
+    if (gov.visibility_scope === "allowlist_surfaces") {
+      if (!gov.allowed_surfaces.includes("surface:herma")) return false;
+    } else if (gov.visibility_scope !== "public_commons") return false;
+    if (required.some(k => k in raw && JSON.stringify(raw[k]) !== JSON.stringify(gov[k]))) return false;
   }
-  for (const sc of [merged.status, gov.status, meta.status, meta.governance_status]) {
-    if (typeof sc === "string" && sc.trim()) {
-      const low = sc.trim().toLowerCase();
-      if (low.startsWith("status:")) tags.add(low);
-      else if (KNOWN_STATUS_VALUES.has(low)) tags.add(`status:${low}`);
-    }
+  const tags = new Set([...splitCsvOrList(gov.tags), ...splitCsvOrList(meta.tags), ...splitCsvOrList(meta.status)]);
+  if (raw.quarantined === true || [...tags].some(t => t.startsWith("status:") && t !== "status:verified")) return false;
+  const targets = new Set(splitCsvOrList(gov.target_cohorts));
+  for (const k of ["cohort", "cohorts", "target_cohort", "target_cohorts", "allowed_cohorts"]) for (const t of splitCsvOrList(meta[k])) targets.add(t);
+  if (!trustedLocal && !targets.size) return false;
+  if (targets.size && !targets.has("all")) {
+    const caller = new Set(splitCsvOrList(cohort));
+    for (const item of [...caller]) if (!item.includes(":")) caller.add(`cohort:${item}`);
+    if (harnessKind) caller.add(`harness:${harnessKind}`);
+    if (![...caller].some(t => targets.has(t))) return false;
   }
-
-  // 1. Hard quarantine refusal:
-  if (
-    tags.has("status:quarantined") ||
-    merged.quarantined === true ||
-    gov.quarantined === true ||
-    String(meta.quarantined || "").trim().toLowerCase() === "true"
-  ) {
-    return false;
-  }
-
-  // 2. Verification requirement for status tags and cross-surface producers:
-  const hasStatusTag = [...tags].some((t) => t.startsWith("status:"));
-  if (hasStatusTag && !tags.has("status:verified")) {
-    return false;
-  }
-
-  // 3. Surface visibility allowance for surface:herma:
-  const vis = String(merged.visibility_scope || gov.visibility_scope || meta.visibility_scope || "")
-    .trim()
-    .toLowerCase();
-  const allowedSurfaces = new Set(
-    [
-      ...splitCsvOrList(merged.allowed_surfaces),
-      ...splitCsvOrList(gov.allowed_surfaces),
-      ...splitCsvOrList(meta.allowed_surfaces),
-    ].map((s) => {
-      const low = s.toLowerCase();
-      return low.startsWith("surface:") || low === "*" ? low : `surface:${low}`;
-    })
-  );
-  const rawProd = String(merged.producer_surface || gov.producer_surface || meta.producer_surface || "")
-    .trim()
-    .toLowerCase();
-  const normProd = !rawProd ? "" : rawProd.startsWith("surface:") ? rawProd : `surface:${rawProd}`;
-
-  if (normProd && normProd !== "surface:herma" && normProd !== "surface:tessera" && !tags.has("status:verified")) {
-    return false;
-  }
-  if (vis) {
-    if (vis === "public_commons") {
-      // allowed
-    } else if (vis === "private" || vis === "surface_only") {
-      if (normProd !== "surface:herma") return false;
-    } else if (vis === "allowlist_surfaces") {
-      if (normProd !== "surface:herma" && !allowedSurfaces.has("surface:herma") && !allowedSurfaces.has("*")) {
-        return false;
-      }
-    } else {
-      return false;
-    }
-  } else if (
-    allowedSurfaces.size > 0 &&
-    normProd !== "surface:herma" &&
-    !allowedSurfaces.has("surface:herma") &&
-    !allowedSurfaces.has("*")
-  ) {
-    return false;
-  }
-
-  // 4. Cohort / harness targeting check:
-  const cohortTargets = new Set();
-  for (const key of ["cohort", "cohorts", "target_cohort", "target_cohorts", "allowed_cohorts"]) {
-    for (const val of [merged[key], gov[key], meta[key]]) {
-      for (const token of splitCsvOrList(val)) cohortTargets.add(token.toLowerCase());
-    }
-  }
-  for (const key of ["allowed_harnesses", "target_harness"]) {
-    for (const val of [merged[key], gov[key], meta[key]]) {
-      for (const token of splitCsvOrList(val)) {
-        const low = token.toLowerCase();
-        cohortTargets.add(low.startsWith("harness:") || low === "all" ? low : `harness:${low}`);
-      }
-    }
-  }
-  for (const t of tags) {
-    if (t.startsWith("cohort:") || t.startsWith("harness:")) cohortTargets.add(t);
-  }
-
-  if (cohortTargets.size > 0 && harnessKind != null) {
-    if (
-      cohortTargets.has("all") ||
-      cohortTargets.has("*") ||
-      cohortTargets.has("cohort:all") ||
-      cohortTargets.has("harness:all")
-    ) {
-      return true;
-    }
-    const hk = String(harnessKind).trim().toLowerCase();
-    const callerTokens = new Set([hk, `harness:${hk}`]);
-    for (const rawC of splitCsvOrList(cohort)) {
-      const lowC = rawC.toLowerCase();
-      callerTokens.add(lowC);
-      if (lowC.startsWith("cohort:")) callerTokens.add(lowC.slice("cohort:".length));
-      else callerTokens.add(`cohort:${lowC}`);
-    }
-    const expandedTargets = new Set();
-    for (const tgt of cohortTargets) {
-      expandedTargets.add(tgt);
-      if (tgt.startsWith("cohort:")) expandedTargets.add(tgt.slice("cohort:".length));
-    }
-    let matchedAny = false;
-    for (const tok of callerTokens) {
-      if (expandedTargets.has(tok)) {
-        matchedAny = true;
-        break;
-      }
-    }
-    if (!matchedAny) return false;
-  }
-
   return true;
 }
 
 export function stripGovernanceEnvelopeForProvision(rawVal, extraEnvelope = null) {
+  const cleaned = Object.fromEntries(Object.entries(rawVal).filter(([k]) => !GOV_ENVELOPE_KEYS.has(k)));
+  cleaned.metadata_tags = {...(cleaned.metadata_tags || {}), fabric_governance: JSON.stringify(canonicalGovernance(rawVal, extraEnvelope))};
+  return cleaned;
+}
+
+export function stripGovernanceEnvelopeForContext(rawVal, extraEnvelope = null) {
   if (!rawVal || typeof rawVal !== "object" || Array.isArray(rawVal)) return rawVal;
   const cleaned = {};
   for (const [k, v] of Object.entries(rawVal)) {
     if (!GOV_ENVELOPE_KEYS.has(k)) cleaned[k] = v;
   }
-  const meta = { ...(cleaned.metadata_tags && typeof cleaned.metadata_tags === "object" ? cleaned.metadata_tags : {}) };
-  const gov = rawVal.governance && typeof rawVal.governance === "object" ? rawVal.governance : {};
-  const envMap = extraEnvelope && typeof extraEnvelope === "object" ? extraEnvelope : {};
-
-  const collectedCohorts = [];
-  for (const key of ["cohort", "cohorts", "target_cohort", "target_cohorts", "allowed_cohorts"]) {
-    for (const src of [rawVal[key], gov[key], envMap[key]]) {
-      collectedCohorts.push(...splitCsvOrList(src));
-    }
-  }
-  for (const tag of [...splitCsvOrList(rawVal.tags), ...splitCsvOrList(gov.tags), ...splitCsvOrList(envMap.tags)]) {
-    const low = tag.toLowerCase();
-    if (low.startsWith("cohort:") || low.startsWith("harness:")) collectedCohorts.push(low);
-    else if (low.startsWith("status:") && !("status" in meta)) meta.status = low;
-  }
-  const nonAll = [...new Set(collectedCohorts)].filter((c) => c.toLowerCase() !== "all");
-  if (nonAll.length && !("cohort" in meta)) {
-    meta.cohort = nonAll.join(",");
-  }
-  for (const key of ["visibility_scope", "producer_surface"]) {
-    const val = rawVal[key] || gov[key] || envMap[key];
-    if (typeof val === "string" && val.trim() && !(key in meta)) {
-      const low = val.trim().toLowerCase();
-      if (key === "producer_surface" && low === "surface:tessera") continue;
-      if (key === "visibility_scope" && low === "public_commons") continue;
-      meta[key] = val.trim();
-    }
-  }
-  const allowedSurfs = splitCsvOrList(rawVal.allowed_surfaces || gov.allowed_surfaces || envMap.allowed_surfaces);
-  if (allowedSurfs.length && !("allowed_surfaces" in meta)) {
-    meta.allowed_surfaces = allowedSurfs.join(",");
-  }
-  if (Object.keys(meta).length > 0) cleaned.metadata_tags = meta;
+  cleaned.governance = canonicalGovernance(rawVal, extraEnvelope);
   return cleaned;
 }
 
-export function stripGovernanceEnvelopeForContext(rawVal) {
-  if (!rawVal || typeof rawVal !== "object" || Array.isArray(rawVal)) return rawVal;
-  const cleaned = {};
-  for (const [k, v] of Object.entries(rawVal)) {
-    if (!GOV_ENVELOPE_KEYS.has(k)) cleaned[k] = v;
+export function provisionPassesLens(stored, {harnessKind, cohort = ""}) {
+  const trustedLocal = ["local", "system_builtin", "examples", "harness"].includes(stored.source_store) || stored.source_store?.startsWith("harness:");
+  let raw = {metadata_tags: stored?.provision?.metadata_tags || {}};
+  if (!trustedLocal) {
+    try { raw = {governance: JSON.parse(raw.metadata_tags.fabric_governance || "{}")}; }
+    catch { return false; }
   }
-  return cleaned;
-}
-
-export function provisionPassesLens(stored, { harnessKind, cohort = "" }) {
-  return passesGovernanceLens(
-    { metadata_tags: stored?.provision?.metadata_tags || {} },
-    { namespace: "herma.provisions", harnessKind, cohort }
-  );
+  return passesGovernanceLens(raw, {harnessKind, cohort, trustedLocal});
 }
 
 export function validateContextEntry(raw) {
@@ -928,6 +788,7 @@ export function validateContextEntry(raw) {
   const updatedAt = String(raw.updated_at || "").trim() || new Date().toISOString();
   const version = raw.version != null && Number.isFinite(Number(raw.version)) ? Math.max(1, Math.trunc(Number(raw.version))) : 1;
   return {
+    governance: raw.governance ?? null,
     entry_id: entryId,
     kind,
     title,
@@ -1042,19 +903,7 @@ export function enforceNotConsumerAssistant(request) {
       "Cookie-bearing browser sessions are refused; use a stateless coding harness credential."
     );
   }
-  const ua = (h.get("user-agent") || "").toLowerCase();
   const declared = (h.get("x-herma-harness") || "").trim().toLowerCase();
-  const combined = `${ua} ${declared}`;
-  for (const marker of BLOCKED_CONSUMER_SURFACES) {
-    if (combined.includes(marker)) {
-      throw new HermaErr(
-        403,
-        "harness_required",
-        "Configurable Coding Harness Required",
-        `Consumer assistant surface ('${marker}') cannot access or configure Herma; use a fully configurable agentic coding harness (muse-code, opencode, claude-code, or codex).`
-      );
-    }
-  }
   if (declared && !ALLOWED_HARNESS_KINDS.has(declared)) {
     throw new HermaErr(
       403,
@@ -1119,7 +968,7 @@ export async function authenticateHarness(db, request, { isAdmin = false } = {})
       403,
       "harness_required",
       "Configurable Coding Harness Required",
-      "Missing valid Herma harness key (hmk_<id>.<secret>). Only configurable agentic coding harnesses may route through or configure Herma."
+      "Missing valid Herma harness key (hmk_<id>.<secret>). Coding harnesses and personal assistants require a scoped Herma key."
     );
   }
   const body = raw.slice(4);
@@ -2019,6 +1868,7 @@ export function buildLlmsTxt(publicUrl) {
   const base = String(publicUrl || "").replace(/\/+$/, "");
   return [
     "# Herma",
+    "Public MCP and /api/preview require no key. Private /v1 routing and management require scoped hmk_ credentials. Personal assistants are supported. Read /connect.json; tracked artifact persistence uses your own Tessera tan_ session or tsk_ key.",
     "",
     "> Context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim caller-isolated noun, verb, and URI context before LLM execution.",
     "",
@@ -2128,7 +1978,7 @@ ${renderHeader()}
 <main>
 <span class="pill">Herma v${HERMA_VERSION} · Programmable AI Request Middleware · 24/7 Cloudflare D1 + Tessera Cloud</span>
 <h1>Context-Shimming AI Middleware for Configurable Coding Harnesses</h1>
-<p class="lead"><strong>Herma:</strong> context-shimming AI middleware for configurable coding harnesses -- intercepts requests via <strong>keyword</strong>, <strong>semantic</strong>, or <strong>micromodel</strong> rules to <strong>respond directly</strong> or shim atomic <strong>noun, verb, and URI context</strong> from a user-configured database before LLM execution. Generic consumer assistants and contributor-tier models remain deterministically refused.</p>
+<p class="lead"><strong>Herma:</strong> context-shimming AI middleware for configurable coding harnesses -- intercepts requests via <strong>keyword</strong>, <strong>semantic</strong>, or <strong>micromodel</strong> rules to <strong>respond directly</strong> or shim atomic <strong>noun, verb, and URI context</strong> from a user-configured database before LLM execution. Personal assistants with scoped credentials are supported. Contributor-tier models remain refused.</p>
 <section class="grid">
 <div class="card"><span class="pill">Tier 1-3 Rules</span><h3>Keyword, Semantic &amp; Micromodel</h3><p>Evaluates prompt terms, file path globs, tool names, semantic similarity, and micromodel intent routing without bloating static system prompts.</p></div>
 <div class="card"><span class="pill">Caller-Isolated Shims</span><h3>Atomic Noun, Verb &amp; Entity Memory</h3><p>Isolates custom rules, context entries, receipts, and top-of-mind working entities per <code>caller_scope</code> while protecting <code>system_builtin</code> guardrails.</p></div>
@@ -2169,9 +2019,9 @@ export function renderConnectHtml(publicUrl) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><link rel="icon" href="/favicon.svg" type="image/svg+xml"/><title>Connect a Configurable Coding Harness -- Herma</title><style>${STYLE}</style></head><body>
 ${renderHeader()}
 <main>
-<span class="pill">Configurable Harnesses Only</span>
-<h1>Connect Muse Code, OpenCode, Claude Code, or Codex</h1>
-<p class="lead">Only fully configurable agentic coding harnesses that control custom base URLs, headers, and scoped <code>hmk_</code> credentials can route through or configure Herma. Generic consumer chat clients (such as Muse Personal Assistant) are deterministically refused with <code>HTTP 403 harness_required</code>.</p>
+<span class="pill">Scoped Agent Access</span>
+<h1>Connect a coding harness or personal assistant</h1>
+<p class="lead">Coding harnesses and personal assistants that control custom base URLs, headers, and scoped <code>hmk_</code> credentials can route through or configure Herma. Personal assistants use the same scoped keys; missing credentials return <code>HTTP 403 harness_required</code>.</p>
 <div class="card" style="margin-bottom:1.2rem;"><h3>1. Populate Caller-Scoped Noun / Verb Context Entries</h3><pre>curl -fsS -X POST ${base}/v1/context \\
   -H "Content-Type: application/json" \\
   -H "X-Herma-Key: hmk_&lt;id&gt;.&lt;secret&gt;" \\
@@ -2189,4 +2039,29 @@ ${renderHeader()}
 </main>
 ${renderFooter(publicUrl)}
 </body></html>`;
+}
+
+export async function reserveRouteRequest(db, callerScope, limit = 60) {
+  const hour = Math.floor(Date.now() / 3600000);
+  const result = await db.prepare("INSERT INTO route_quotas (caller_scope, hour, used) VALUES (?, ?, 1) ON CONFLICT(caller_scope, hour) DO UPDATE SET used = used + 1 WHERE used < ?").bind(callerScope, hour, limit).run();
+  if (Number(result?.meta?.changes || 0) !== 1) throw new HermaErr(429, "route_quota_exceeded", "Route Quota Exceeded", "60 routed requests per key per hour. Retry next hour.");
+  await db.prepare("DELETE FROM route_quotas WHERE hour < ?").bind(hour - 24).run();
+}
+
+export function resolveUpstream(request, env, path) {
+  const override = request.headers.get("x-upstream-base-url") || request.headers.get("x-herma-upstream-url") || "";
+  const configured = env.UPSTREAM_LLM_URL || "";
+  const raw = (override || configured).replace(/\/+$/, "");
+  if (!raw) throw new HermaErr(502, "missing_upstream", "Missing Upstream", "Configure UPSTREAM_LLM_URL or an allowlisted provider URL with your own key.");
+  let target;
+  try { target = new URL(raw); } catch { throw new HermaErr(400, "invalid_upstream", "Invalid Upstream", "Expected an absolute provider URL."); }
+  if (!["https:", "http:"].includes(target.protocol) || target.username || target.password || target.hash) throw new HermaErr(400, "invalid_upstream", "Invalid Upstream", "Invalid provider URL.");
+  const allowed = String(env.HERMA_ALLOWED_UPSTREAM_HOSTS || "ollama.com,api.llama.com,api.openai.com,api.anthropic.com,127.0.0.1,localhost").split(",").map(s => s.trim().toLowerCase());
+  if (override && !allowed.includes(target.hostname.toLowerCase()) && (!configured || target.origin !== new URL(configured).origin)) throw new HermaErr(403, "upstream_not_allowed", "Upstream Not Allowed", "Provider hostname is not allowlisted.");
+  const callerKey = request.headers.get("x-upstream-api-key") || "";
+  const operatorKey = env.UPSTREAM_LLM_API_KEY || "";
+  if (operatorKey && !callerKey && (!configured || target.origin !== new URL(configured).origin)) throw new HermaErr(403, "upstream_credential_origin_mismatch", "Credential Origin Mismatch", "Server credentials are bound to the configured provider origin. Supply your own key for an alternate provider.");
+  const base = target.pathname.replace(/\/+$/, "");
+  if (base === "" || base === "/v1") target.pathname = path;
+  return {url: target.toString(), key: callerKey || operatorKey};
 }

@@ -22,23 +22,26 @@ Static system prompts bloat every turn when stuffed with every rule, schema, and
 
 ## Configurable Coding Harnesses & Caller Isolation
 
-Herma is intentionally restricted to **fully configurable agentic coding harnesses** where the developer controls custom base URLs, headers, and scoped `hmk_<id>.<secret>` credentials:
+Herma accepts coding harnesses and personal assistants that can send explicit scoped credentials to configurable endpoints:
 - Supported harnesses: `muse-code`, `opencode`, `claude-code`, `codex`, `swarm-worker`, `custom-harness`.
 - Multi-caller non-poisoning: starter guardrails live in protected `system_builtin` (`403 builtin_protected` for non-admins), while custom rules, context entries, receipts, entity memory, and outcomes are strictly partitioned by `caller_scope = key:<key_id>`.
-- Closed consumer chat clients (such as a generic **Muse Personal Assistant** chat session, browser navigation requests, or cookie sessions) cannot configure rules/context or route through Herma (`HTTP 403 harness_required`).
+- Personal assistants may use the same scoped `hmk_` keys. Browser navigation and cookie authentication remain refused; model routing and configuration require explicit credentials.
 - Contributor-tier models (`contributor` and `*-contributor`) are deterministically refused (`HTTP 403 contributor_tier_refused`).
 - AI-agent discovery & preview: serves `POST /api/preview` (`persisted: false`), `POST /mcp` (stateless JSON-RPC 2.0), `/.well-known/agent-card.json`, `/llms.txt`, `/llms-full.txt`, `/robots.txt`, and `/healthz`.
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/ta-amps/tessera.git
 git clone https://github.com/ta-amps/herma.git
 cd herma
 make setup
 make check
 make demo
 ```
+
+Herma installs independently. `pyproject.toml` pins Tessera to an immutable public
+Git commit, and `uv.lock` records the resolved dependency. Python 3.12+, Git and
+uv are required; no sibling checkout is needed.
 
 ## Sibling Ecosystem (`ta-amps`)
 
@@ -56,3 +59,5 @@ make demo
 - [docs/setup.md](docs/setup.md) -- local setup, context database (`GET/POST /v1/context`), Tessera & handshake sync, and Cloudflare deploy
 - [docs/handoff.md](docs/handoff.md) -- current status and roadmap
 - [examples/provisions/README.md](examples/provisions/README.md) -- authored example provisions & atomic noun/verb context entries
+
+External coding harnesses and personal assistants: [anonymous previews and tracked Tessera access](docs/access-modes.md), or `GET /connect.json`.

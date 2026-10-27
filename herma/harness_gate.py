@@ -1,4 +1,4 @@
-"""Configurable-harness access gate: blocks generic consumer chat assistants from configuring or routing."""
+"""Configurable-harness access gate: authenticates scoped agent and personal-assistant clients."""
 
 from __future__ import annotations
 
@@ -18,16 +18,6 @@ from herma.errors import (
 from herma.schemas import PROJECT_TAG_PATTERN, HarnessKind, HarnessScope
 
 ALLOWED_HARNESS_KINDS: frozenset[str] = frozenset(get_args(HarnessKind))
-BLOCKED_CONSUMER_SURFACES: tuple[str, ...] = (
-    "muse-personal-assistant",
-    "muse personal assistant",
-    "meta-ai-consumer",
-    "meta.ai/",
-    "messenger-assistant",
-    "whatsapp-assistant",
-    "instagram-assistant",
-    "generic-chat-ui",
-)
 KEY_PREFIX = "hmk_"
 PROJECT_TAG_RE = re.compile(PROJECT_TAG_PATTERN)
 
@@ -74,7 +64,7 @@ def parse_bearer_or_header(headers: Mapping[str, str]) -> tuple[str, str]:
 
 
 def enforce_not_consumer_assistant(headers: Mapping[str, str]) -> str | None:
-    """Refuse browser navigation/cookie auth and generic consumer chat surfaces."""
+    """Require stateless credentials; client product names do not confer or remove privileges."""
     lower = {k.lower(): v for k, v in headers.items()}
     if lower.get("sec-fetch-mode", "").strip().lower() == "navigate":
         raise HarnessRequiredError(
@@ -84,16 +74,7 @@ def enforce_not_consumer_assistant(headers: Mapping[str, str]) -> str | None:
         raise HarnessRequiredError(
             "Cookie-bearing browser sessions are refused; use a stateless coding harness credential."
         )
-    ua = lower.get("user-agent", "").lower()
     declared = lower.get("x-herma-harness", "").strip().lower()
-    combined = f"{ua} {declared}"
-    for marker in BLOCKED_CONSUMER_SURFACES:
-        if marker in combined:
-            raise HarnessRequiredError(
-                f"Consumer assistant surface ({marker!r}) cannot access or configure Herma; "
-                "use a fully configurable agentic coding harness (for example muse-code, opencode, "
-                "claude-code, or codex)."
-            )
     if declared and declared not in ALLOWED_HARNESS_KINDS:
         allowed = ", ".join(sorted(ALLOWED_HARNESS_KINDS))
         raise HarnessRequiredError(
@@ -127,7 +108,7 @@ def require_scope(
             raise HarnessRequiredError(
                 "Configuring provisions requires an explicit X-Herma-Harness header from a "
                 "configurable coding harness (muse-code, opencode, claude-code, codex, swarm-worker, "
-                "or custom-harness)."
+                "personal-assistant, or custom-harness)."
             )
         if declared != principal.harness_kind:
             raise HarnessRequiredError(

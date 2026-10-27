@@ -7,22 +7,34 @@ import os
 import time
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import httpx
 
 from herma.errors import HermaError
 from herma.harness_gate import HarnessPrincipal
-from herma.injector import assemble_augmented_request, extract_envelope
+from herma.injector import (
+    assemble_augmented_request,
+    extract_envelope,
+    extract_shimmed_preview,
+)
+from herma.profiles import (
+    CALLER_PROFILES_LIST,
+    CallerProfile,
+    get_caller_profile,
+)
 from herma.schemas import (
     SYSTEM_BUILTIN_SCOPE,
+    CallerProfileId,
     ExtractedEntity,
     InjectionReceipt,
+    ProfileCompareResponse,
+    ProfileShimDiff,
     TriggerMatch,
     WireFormat,
 )
-from herma.store import ProvisionStore, provision_passes_lens
+from herma.store import ProvisionStore, passes_governance_lens, provision_passes_lens
 from herma.triggers.engine import evaluate_provisions
 
 DEFAULT_UPSTREAMS: dict[str, str] = {
@@ -139,7 +151,13 @@ def _resolve_upstream_url(wire_format: WireFormat, headers: Mapping[str, str]) -
     )
     if override:
         parsed = urlparse(override)
-        if parsed.scheme not in ("https", "http") or not parsed.hostname:
+        if (
+            parsed.scheme not in ("https", "http")
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.fragment
+        ):
             raise HermaError(
                 400, "invalid_upstream", "Invalid Upstream URL", "Malformed X-Herma-Upstream-Url."
             )
@@ -172,6 +190,23 @@ def _resolve_upstream_headers(
     wire_format: WireFormat, incoming: Mapping[str, str]
 ) -> dict[str, str]:
     lower = {k.lower(): v for k, v in incoming.items()}
+    target = urlparse(_resolve_upstream_url(wire_format, incoming))
+    configured = urlparse(_resolve_upstream_url(wire_format, {}))
+    caller_key = lower.get("x-upstream-api-key", "").strip()
+    operator_key = os.environ.get("HERMA_UPSTREAM_API_KEY", "").strip()
+    if (
+        operator_key
+        and not caller_key
+        and (target.scheme, target.hostname, target.port)
+        != (configured.scheme, configured.hostname, configured.port)
+    ):
+        raise HermaError(
+            403,
+            "upstream_credential_origin_mismatch",
+            "Credential Origin Mismatch",
+            "Server credentials are bound to the configured provider origin. "
+            "Supply your own upstream key for an allowlisted alternate provider.",
+        )
     out: dict[str, str] = {"Content-Type": "application/json"}
     upstream_key = (
         lower.get("x-upstream-api-key", "").strip()
@@ -213,6 +248,8 @@ class HermaMiddleware:
         persist: bool = True,
         offline_only: bool = False,
         builtin_only: bool = False,
+        caller_profile: CallerProfile | None = None,
+        profile_explicit: bool = False,
     ) -> InterceptionOutcome:
         started = time.perf_counter()
         envelope = extract_envelope(wire_format, payload, extra_paths=workspace_paths)
@@ -247,7 +284,16 @@ class HermaMiddleware:
                 if builtin_only
                 else self.store.get_context_entries_for_caller(target_scope, all_refs)
             )
-            context_map = {entry.entry_id: entry for entry in entries}
+            context_map = {
+                entry.entry_id: entry
+                for entry in entries
+                if entry.governance is None
+                or passes_governance_lens(
+                    {"governance": entry.governance},
+                    harness_kind=principal.harness_kind,
+                    cohort=cohort,
+                )
+            }
         else:
             context_map = {}
 
@@ -259,6 +305,8 @@ class HermaMiddleware:
             max_total_chars=self.max_total_chars,
             context_entries=context_map,
             project_tag=project_tag,
+            caller_profile=caller_profile,
+            profile_explicit=profile_explicit,
         )
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         if persist:
@@ -277,6 +325,133 @@ class HermaMiddleware:
             entities=envelope.extracted_entities,
         )
 
+    async def compare_profiles(
+        self,
+        *,
+        principal: HarnessPrincipal,
+        prompt: str,
+        profile_ids: list[CallerProfileId] | list[str] | None = None,
+        wire_format: Literal["chat_completions", "responses", "messages"] = "chat_completions",
+        model: str = "muse-spark-open",
+        workspace_paths: list[str] | None = None,
+        cohort: str = "",
+        builtin_only: bool = False,
+    ) -> ProfileCompareResponse:
+        """Compare deterministic shims across CallerProfile lenses in 0 upstream LLM calls."""
+        if wire_format == "responses":
+            payload: dict[str, Any] = {"model": model, "input": prompt}
+        elif wire_format == "messages":
+            payload = {
+                "model": model,
+                "max_tokens": 256,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+        else:
+            payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+
+        specs: list[CallerProfile] = []
+        seen_pids: set[str] = set()
+        if profile_ids:
+            for pid in profile_ids:
+                spec = get_caller_profile(str(pid))
+                if spec.profile_id not in seen_pids:
+                    seen_pids.add(spec.profile_id)
+                    specs.append(spec)
+        else:
+            specs = list(CALLER_PROFILES_LIST)
+
+        envelope = extract_envelope(wire_format, payload, extra_paths=workspace_paths)
+        target_scope = SYSTEM_BUILTIN_SCOPE if builtin_only else principal.caller_scope
+        candidates = (
+            self.store.list_provisions(
+                caller_scope=SYSTEM_BUILTIN_SCOPE,
+                include_builtin=True,
+                enabled_only=True,
+            )
+            if builtin_only
+            else self.store.list_provisions_for_caller(target_scope, enabled_only=True)
+        )
+        active = [
+            sp
+            for sp in candidates
+            if provision_passes_lens(sp, harness_kind=principal.harness_kind, cohort=cohort)
+        ]
+        matched_pairs = await evaluate_provisions(
+            active,
+            envelope.trigger_context,
+            offline_only=True,
+        )
+        all_refs = [ref for stored, _ in matched_pairs for ref in stored.provision.context_refs]
+        if all_refs:
+            entries = (
+                self.store.get_context_entries(
+                    all_refs,
+                    caller_scope=SYSTEM_BUILTIN_SCOPE,
+                    include_builtin=True,
+                )
+                if builtin_only
+                else self.store.get_context_entries_for_caller(target_scope, all_refs)
+            )
+            context_map = {
+                entry.entry_id: entry
+                for entry in entries
+                if entry.governance is None
+                or passes_governance_lens(
+                    {"governance": entry.governance},
+                    harness_kind=principal.harness_kind,
+                    cohort=cohort,
+                )
+            }
+        else:
+            context_map = {}
+
+        comparisons: list[ProfileShimDiff] = []
+        by_profile: dict[str, ProfileShimDiff] = {}
+        for spec in specs:
+            augmented, receipt = assemble_augmented_request(
+                principal=principal,
+                envelope=envelope,
+                payload=payload,
+                matches=matched_pairs,
+                max_total_chars=self.max_total_chars,
+                context_entries=context_map,
+                project_tag="compare",
+                caller_profile=spec,
+                profile_explicit=True,
+            )
+            diff = ProfileShimDiff(
+                caller_profile=spec.profile_id,
+                ranking_strategy=spec.strategy,
+                max_chars=spec.max_chars,
+                suppress_code_dumps=spec.suppress_code_dumps,
+                profile_guidance_header=spec.profile_guidance_header,
+                injected_chars=receipt.injected_chars,
+                selected_provisions=[p.split("@", 1)[0] for p in receipt.provisions_fired],
+                provisions_fired=list(receipt.provisions_fired),
+                selected_context_refs=list(receipt.shimmed_context_refs),
+                uris_injected=list(receipt.uris_injected),
+                responded_directly=receipt.responded_directly,
+                direct_response_text=receipt.direct_response_text,
+                shimmed_preview=extract_shimmed_preview(wire_format, augmented, receipt),
+                receipt_sha256=receipt.receipt_sha256,
+            )
+            comparisons.append(diff)
+            by_profile[spec.profile_id] = diff
+
+        return ProfileCompareResponse(
+            ok=True,
+            persisted=False,
+            upstream_llm_calls=0,
+            scope_evaluated=target_scope,
+            prompt=prompt,
+            wire_format=wire_format,
+            comparisons=comparisons,
+            by_profile=by_profile,
+        )
+
     async def forward_upstream(
         self,
         *,
@@ -289,6 +464,7 @@ class HermaMiddleware:
             "x-herma-receipt-sha256": outcome.receipt.receipt_sha256,
             "x-herma-provisions-fired": ",".join(outcome.receipt.provisions_fired),
             "x-herma-entities-tracked": str(outcome.receipt.entities_tracked),
+            "x-herma-caller-profile": outcome.receipt.caller_profile,
         }
         if outcome.receipt.shimmed_context_refs:
             meta_headers["x-herma-shimmed-context"] = ",".join(outcome.receipt.shimmed_context_refs)
