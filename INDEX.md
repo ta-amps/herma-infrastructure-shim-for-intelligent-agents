@@ -96,11 +96,12 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/check_architecture.py](scripts/check_architecture.py) | Check that architecture.json still describes this repo truthfully. |
 | [scripts/check_public.py](scripts/check_public.py) | Fail if a file headed for a public repo holds a secret or a private name. |
 
-## tests/ (5)
+## tests/ (6)
 
 | File | What it is |
 |---|---|
 | [tests/test_api_and_proxy.py](tests/test_api_and_proxy.py) | Tests for multi-protocol payload augmentation, deduplication, edge lockdown, and HTTP endpoints. |
+| [tests/test_cli_demo.py](tests/test_cli_demo.py) | The CI demo verifies the supported client policy and its real provision pipeline. |
 | [tests/test_external_access_security.py](tests/test_external_access_security.py) | Regression proofs for scoped personal-assistant access and fail-closed fabric imports. |
 | [tests/test_harness_gate_and_store.py](tests/test_harness_gate_and_store.py) | Tests for configurable-harness access gate, CAS store, Tessera sync, and remote handshake sync. |
 | [tests/test_herma.py](tests/test_herma.py) | Tests for multi-caller isolation, CAS, governance lens, entity memory, insights, preview, and MCP parity. |
