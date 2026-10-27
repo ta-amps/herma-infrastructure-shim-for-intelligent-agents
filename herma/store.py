@@ -352,6 +352,15 @@ class ProvisionStore:
                     raw_bytes = tessera_store.get_blob(blob_sha)
                     excerpt = raw_bytes.decode("utf-8", errors="replace")[:780]
                     resolved_uris.append(u.model_copy(update={"inline_excerpt": excerpt}))
+                elif u.uri.startswith("tessera://buckets/") and not u.inline_excerpt:
+                    rest = u.uri.removeprefix("tessera://buckets/").strip()
+                    bucket_name, sep, obj_key = rest.partition("/")
+                    if sep and bucket_name and obj_key and hasattr(tessera_store, "get_object"):
+                        _, raw_bytes = tessera_store.get_object(bucket_name, obj_key)
+                        excerpt = raw_bytes.decode("utf-8", errors="replace")[:780]
+                        resolved_uris.append(u.model_copy(update={"inline_excerpt": excerpt}))
+                    else:
+                        resolved_uris.append(u)
                 else:
                     resolved_uris.append(u)
             if resolved_uris != prov.uris:
@@ -388,6 +397,18 @@ class ProvisionStore:
                         b_resp.raise_for_status()
                         excerpt = b_resp.text[:780]
                         resolved_uris.append(u.model_copy(update={"inline_excerpt": excerpt}))
+                    elif u.uri.startswith("tessera://buckets/") and not u.inline_excerpt:
+                        rest = u.uri.removeprefix("tessera://buckets/").strip()
+                        bucket_name, sep, obj_key = rest.partition("/")
+                        if sep and bucket_name and obj_key:
+                            o_resp = await client.get(
+                                f"{root}/v1/buckets/{bucket_name}/objects/{obj_key}"
+                            )
+                            o_resp.raise_for_status()
+                            excerpt = o_resp.text[:780]
+                            resolved_uris.append(u.model_copy(update={"inline_excerpt": excerpt}))
+                        else:
+                            resolved_uris.append(u)
                     else:
                         resolved_uris.append(u)
                 if resolved_uris != prov.uris:

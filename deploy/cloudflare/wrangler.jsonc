@@ -1,15 +1,36 @@
-// Herma edge on Cloudflare Workers: reverse proxy in front of the Herma middleware service.
+// Herma Cloud Worker: 24/7 programmable AI request middleware on Cloudflare Workers + D1 (`ta-amps-herma`)
+// with direct Service Binding to `tessera` Cloud (`env.TESSERA`) and optional `STORAGE_MODE=origin` fallback.
 // Deploy: npx wrangler@4.149.0 deploy --config deploy/cloudflare/wrangler.jsonc
-// Secret: npx wrangler@4.149.0 secret put EDGE_SECRET --config deploy/cloudflare/wrangler.jsonc
+// Secret: npx wrangler@4.149.0 secret put BOOTSTRAP_SECRET --config deploy/cloudflare/wrangler.jsonc
 {
   "name": "herma",
   "main": "worker.js",
   "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "d1_databases": [
+    {
+      "binding": "HERMA_DB",
+      "database_name": "ta-amps-herma",
+      "database_id": "82f9df26-3390-4d58-80a1-82ad0fdcfc7d"
+    }
+  ],
+  "services": [
+    {
+      "binding": "TESSERA",
+      "service": "tessera"
+    }
+  ],
   // "routes": [{ "pattern": "herma.<your-domain>", "custom_domain": true }],
   "vars": {
+    "STORAGE_MODE": "cloud",
+    "PUBLIC_URL": "https://herma.ta-amps.workers.dev",
+    "TESSERA_URL": "https://tessera.ta-amps.workers.dev",
     "ORIGIN": "https://herma-api.fly.dev"
   },
   "observability": {
-    "enabled": true
+    "enabled": true,
+    "traces": {
+      "enabled": true
+    }
   }
 }

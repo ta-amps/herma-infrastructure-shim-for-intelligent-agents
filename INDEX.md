@@ -27,13 +27,15 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) |  |
 
-## deploy/ (5)
+## deploy/ (7)
 
 | File | What it is |
 |---|---|
 | [deploy/bootstrap-hosting.sh](deploy/bootstrap-hosting.sh) | One-time hosting setup for one service on Fly.io behind a Cloudflare Worker: the Fly app and its |
-| [deploy/cloudflare/worker.js](deploy/cloudflare/worker.js) | Cloudflare edge for Herma: reverse proxy in front of the Herma middleware service. |
-| [deploy/cloudflare/wrangler.jsonc](deploy/cloudflare/wrangler.jsonc) | Herma edge on Cloudflare Workers: reverse proxy in front of the Herma middleware service. |
+| [deploy/cloudflare/d1-herma.sql](deploy/cloudflare/d1-herma.sql) | Persistent Cloudflare D1 schema for Herma programmable AI request middleware (ta-amps-herma). |
+| [deploy/cloudflare/herma_engine.js](deploy/cloudflare/herma_engine.js) | Pure 3-tier trigger engine, configurable-harness gate, multi-protocol payload injector, |
+| [deploy/cloudflare/worker.js](deploy/cloudflare/worker.js) | Cloudflare Cloud Worker for Herma: 24/7 programmable AI request middleware backed by Cloudflare D1 |
+| [deploy/cloudflare/wrangler.jsonc](deploy/cloudflare/wrangler.jsonc) | Herma Cloud Worker: 24/7 programmable AI request middleware on Cloudflare Workers + D1 (ta-amps-herma) |
 | [deploy/fly/Dockerfile](deploy/fly/Dockerfile) |  |
 | [deploy/fly/fly.toml](deploy/fly/fly.toml) |  |
 

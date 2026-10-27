@@ -12,7 +12,7 @@ Static system prompts bloat every turn when stuffed with every rule in an organi
 2. **Tier 2 — Semantic Similarity Triggers (`~1–5 ms`)**: Hybrid concept-cluster + subword cosine matching (plus optional `/v1/embeddings`) so paraphrased intent fires the right provision even with zero shared literal keywords.
 3. **Tier 3 — Micromodel Router Triggers**: Lightweight fast classifier prompt (`HERMA_MICROMODEL_URL`, with deterministic offline fallback) invoked only when Tier 1 and Tier 2 did not already match in `any` mode.
 
-Matched provisions inject bounded rule prose and authoritative URIs (`https://`, `tessera://blobs/<sha256>`, `mcp://`, `urn:`) once per conversation (skipping duplicate re-injection on later turns) and record a canonical SHA-256 `InjectionReceipt`.
+Matched provisions inject bounded rule prose and authoritative URIs (`https://`, `tessera://blobs/<sha256>`, `tessera://buckets/<bucket>/<key>`, `mcp://`, `urn:`) once per conversation (skipping duplicate re-injection on later turns) and record a canonical SHA-256 `InjectionReceipt`.
 
 ## Configurable Coding Harnesses Only
 

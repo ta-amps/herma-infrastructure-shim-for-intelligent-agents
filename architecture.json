@@ -180,6 +180,22 @@
         "schemas",
         "store"
       ]
+    },
+    {
+      "id": "edge",
+      "title": "Cloud Worker & Edge",
+      "path": [
+        "deploy/cloudflare/worker.js",
+        "deploy/cloudflare/herma_engine.js",
+        "deploy/cloudflare/d1-herma.sql",
+        "deploy/cloudflare/wrangler.jsonc"
+      ],
+      "kind": "edge",
+      "domain": "neutral",
+      "role": "24/7 native Cloudflare Worker + D1 (ta-amps-herma) + Tessera Cloud Service Binding running 3-tier trigger evaluation, multi-protocol injection, and receipt persistence, with optional STORAGE_MODE=origin fallback",
+      "depends_on": [
+        "api"
+      ]
     }
   ],
   "invariants": [
