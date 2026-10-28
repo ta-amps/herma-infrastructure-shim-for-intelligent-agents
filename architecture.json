@@ -375,6 +375,18 @@
       "checked_by": [
         "tests/test_herma.py::test_public_preview_svg_brand_chrome_discovery_and_stateless_mcp_parity"
       ]
+    },
+    {
+      "id": "H16",
+      "statement": "Micromodel decisions require boolean apply and finite numeric confidence in [0,1], malformed replies do not activate fallback, and offline trigger evaluation skips classifier and remote embedding requests",
+      "enforced_by": "triggers",
+      "checked_by": [
+        "tests/test_triggers.py::test_micromodel_requires_typed_decision",
+        "tests/test_triggers.py::test_malformed_model_reply_does_not_activate_fallback",
+        "tests/test_triggers.py::test_offline_engine_blocks_all_provider_calls",
+        "tests/test_api_and_proxy.py::test_preview_and_dry_run_never_call_configured_trigger_providers",
+        "test/triggers.test.js"
+      ]
     }
   ],
   "import_rules": [

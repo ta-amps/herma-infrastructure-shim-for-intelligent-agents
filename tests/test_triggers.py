@@ -145,3 +145,121 @@ async def test_engine_short_circuits_micromodel_when_keyword_matches(
     assert hits[0][1].matched_tiers == ["keyword"]
     assert calls == 0
     assert json.loads(prov.model_dump_json())["prov_id"] == "PROV-SHORT-CIRCUIT"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("decision", "expected"),
+    [
+        ({"apply": True, "confidence": 0.9}, True),
+        ({"apply": True, "confidence": 1}, True),
+        ({"apply": True, "confidence": 0.2}, False),
+        ({"apply": False, "confidence": 0.9, "label": "apply"}, False),
+        *[
+            ({"apply": value, "confidence": 0.9}, False)
+            for value in ("false", "true", 0, 1, None, [], {})
+        ],
+        *[
+            ({"apply": True, "confidence": value}, False)
+            for value in ("0.9", True, False, None, -1, 2, float("nan"), float("inf"))
+        ],
+        ({"confidence": 0.9, "label": "apply"}, False),
+        ({"apply": True}, False),
+        ({"apply": True, "confidence": 0.9, "label": ["apply"]}, False),
+        ({"apply": True, "confidence": 0.9, "reason": {}}, False),
+        ([], False),
+        (None, False),
+    ],
+)
+async def test_micromodel_requires_typed_decision(
+    monkeypatch: pytest.MonkeyPatch, decision: object, expected: bool
+) -> None:
+    calls = 0
+
+    async def post(_client: httpx.AsyncClient, url: str, **kwargs: Any) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        assert '"apply": true|false' in kwargs["json"]["messages"][0]["content"]
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(decision)}}]},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    monkeypatch.setenv("HERMA_MICROMODEL_URL", "https://example.com/classify")
+    monkeypatch.setenv("HERMA_MICROMODEL_MODEL", "muse-spark-open")
+    spec = MicromodelTrigger(
+        intent_question="Should this synthetic rule apply?", fallback_keywords=["synthetic"]
+    )
+    matched, reasons, _ = await evaluate_micromodel_trigger(spec, "synthetic request")
+    assert matched is expected
+    assert calls == 1
+    assert not any("fallback" in reason for reason in reasons)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "envelope",
+    [
+        {"choices": [None]},
+        {"choices": []},
+        {"choices": [{"message": {"content": {"apply": True, "confidence": 1}}}]},
+        {"choices": [{"message": {"content": "not JSON"}}]},
+        {"choices": [{"message": {"content": 'prefix {"apply":true,"confidence":1}'}}]},
+        [],
+        None,
+    ],
+)
+async def test_malformed_model_reply_does_not_activate_fallback(
+    monkeypatch: pytest.MonkeyPatch, envelope: object
+) -> None:
+    async def post(_client: httpx.AsyncClient, url: str, **_kwargs: Any) -> httpx.Response:
+        return httpx.Response(200, json=envelope, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    monkeypatch.setenv("HERMA_MICROMODEL_URL", "https://example.com/classify")
+    spec = MicromodelTrigger(
+        intent_question="Should this synthetic rule apply?", fallback_keywords=["synthetic"]
+    )
+    assert await evaluate_micromodel_trigger(spec, "synthetic request") == (False, [], 0.0)
+
+
+@pytest.mark.anyio
+async def test_offline_engine_blocks_all_provider_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    async def post(_client: httpx.AsyncClient, url: str, **_kwargs: Any) -> httpx.Response:
+        calls.append(url)
+        return httpx.Response(503, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    monkeypatch.setenv("HERMA_MICROMODEL_URL", "https://example.com/classify")
+    monkeypatch.setenv("HERMA_EMBEDDINGS_URL", "https://example.com/embeddings")
+    semantic = SemanticTrigger(exemplars=["synthetic request"])
+    micro = MicromodelTrigger(
+        intent_question="Should this synthetic rule apply?", fallback_keywords=["synthetic"]
+    )
+    stored = _wrap(
+        Provision(
+            prov_id="PROV-OFFLINE-BOUNDARY",
+            title="Offline boundary",
+            summary="Synthetic network-free trigger check.",
+            inject_text="Use this synthetic guidance.",
+            triggers=TriggerSpec(mode="all", semantic=semantic, micromodel=micro),
+        )
+    )
+    hits = await evaluate_provisions(
+        [stored], TriggerContext("synthetic request"), offline_only=True
+    )
+    assert len(hits) == 1
+    assert hits[0][1].matched_tiers == ["semantic", "micromodel"]
+    assert any("semantic:cosine" in reason for reason in hits[0][1].reasons)
+    assert any("micromodel:fallback" in reason for reason in hits[0][1].reasons)
+    assert (await evaluate_semantic_trigger(semantic, "synthetic request", offline_only=True))[0]
+    assert calls == []
+
+    # Configured online mode still attempts both providers and can use the allowed fallback.
+    hits = await evaluate_provisions([stored], TriggerContext("synthetic request"))
+    assert len(hits) == 1
+    assert calls == ["https://example.com/embeddings", "https://example.com/classify"]

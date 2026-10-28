@@ -1392,20 +1392,29 @@ async function evaluateMicromodel(spec, text, env, { offlineOnly = false } = {})
           model: mmModel,
           temperature: 0,
           messages: [
-            { role: "system", content: "Reply only with JSON: {\"label\":\"apply\"|\"skip\",\"confidence\":0.0..1.0}" },
+            { role: "system", content: "Reply only with JSON: {\"apply\":true|false,\"label\":\"apply\"|\"skip\",\"confidence\":0.0..1.0,\"reason\":\"short phrase\"}" },
             { role: "user", content: `${spec.intent_question}\n\nRequest:\n${String(text).slice(0, 2000)}` },
           ],
         }),
       });
       if (resp.ok) {
-        const data = await resp.json();
-        const raw = data?.choices?.[0]?.message?.content || "{}";
-        const parsed = JSON.parse(raw);
-        const label = String(parsed.label || "").toLowerCase();
-        const conf = Number(parsed.confidence ?? 0);
-        const pos = new Set((spec.positive_labels || ["apply", "yes", "true"]).map((s) => s.toLowerCase()));
+        let data;
+        try { data = await resp.json(); }
+        catch { return { matched: false, reasons: [], confidence: 0.0 }; }
+        const raw = data?.choices?.[0]?.message?.content;
+        let parsed;
+        try { parsed = typeof raw === "string" ? JSON.parse(raw) : null; }
+        catch { parsed = null; }
+        if (!parsed || Array.isArray(parsed) || typeof parsed !== "object" ||
+            typeof parsed.apply !== "boolean" || typeof parsed.confidence !== "number" ||
+            !Number.isFinite(parsed.confidence) || parsed.confidence < 0 || parsed.confidence > 1 ||
+            ["label", "reason"].some(field => field in parsed && typeof parsed[field] !== "string")) {
+          return { matched: false, reasons: [], confidence: 0.0 };
+        }
+        const label = parsed.label || "apply";
+        const conf = parsed.confidence;
         const minConf = spec.min_confidence ?? 0.6;
-        if (pos.has(label) && conf >= minConf) {
+        if (parsed.apply && conf >= minConf) {
           return { matched: true, reasons: [`micromodel:llm(${label}@${conf.toFixed(2)})`], confidence: conf };
         }
         return { matched: false, reasons: [], confidence: conf };

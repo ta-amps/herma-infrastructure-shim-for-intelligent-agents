@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import json
+import math
 import os
-import re
 
 import httpx
 
 from herma.harness_gate import refuse_contributor_model
 from herma.schemas import MicromodelTrigger
-
-JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
 def _offline_fallback(spec: MicromodelTrigger, text: str) -> tuple[bool, list[str], float]:
@@ -32,15 +30,27 @@ def _offline_fallback(spec: MicromodelTrigger, text: str) -> tuple[bool, list[st
 
 
 def _parse_classifier_json(raw_content: str) -> dict[str, object] | None:
-    cleaned = raw_content.strip()
-    match = JSON_OBJ_RE.search(cleaned)
-    if not match:
-        return None
     try:
-        parsed = json.loads(match.group(0))
+        parsed = json.loads(raw_content)
     except json.JSONDecodeError:
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def _classifier_decision(parsed: dict[str, object]) -> tuple[bool, float] | None:
+    """The decision is a JSON boolean, never Python truthiness or a label alias."""
+    apply_flag = parsed.get("apply")
+    raw_conf = parsed.get("confidence")
+    if type(apply_flag) is not bool or type(raw_conf) not in (int, float):
+        return None
+    if not isinstance(raw_conf, int | float) or not 0 <= raw_conf <= 1:
+        return None
+    conf = float(raw_conf)
+    if not math.isfinite(conf):
+        return None
+    if any(field in parsed and not isinstance(parsed[field], str) for field in ("label", "reason")):
+        return None
+    return apply_flag, conf
 
 
 async def evaluate_micromodel_trigger(
@@ -89,25 +99,25 @@ async def evaluate_micromodel_trigger(
                 },
             )
             resp.raise_for_status()
-            data = resp.json()
-            msg = data["choices"][0]["message"]
-            content = str(msg.get("content") or "")
-            parsed = _parse_classifier_json(content)
-            if parsed is None:
-                return _offline_fallback(spec, text)
-            apply_flag = bool(parsed.get("apply", False))
-            label = str(parsed.get("label", "")).strip().lower()
-            raw_conf = parsed.get("confidence", 0.0)
-            conf = float(raw_conf) if isinstance(raw_conf, int | float | str) else 0.0
-            positive = apply_flag or label in {lbl.lower() for lbl in spec.positive_labels}
-            matched = positive and conf >= spec.min_confidence
-            reasons = (
-                [
-                    f"micromodel:{model}(conf={conf:.2f},reason={str(parsed.get('reason', ''))[:48]!r})"
-                ]
-                if matched
-                else []
-            )
-            return matched, reasons, round(conf, 4)
     except Exception:
         return _offline_fallback(spec, text)
+
+    try:
+        data = resp.json()
+        msg = data["choices"][0]["message"]
+        content = msg.get("content")
+        parsed = _parse_classifier_json(content) if isinstance(content, str) else None
+        decision = _classifier_decision(parsed) if parsed is not None else None
+        if decision is None or parsed is None:
+            return False, [], 0.0
+        apply_flag, conf = decision
+        matched = apply_flag and conf >= spec.min_confidence
+        reasons = (
+            [f"micromodel:{model}(conf={conf:.2f},reason={str(parsed.get('reason', ''))[:48]!r})"]
+            if matched
+            else []
+        )
+        return matched, reasons, round(conf, 4)
+    except (KeyError, IndexError, TypeError, AttributeError, ValueError):
+        # A malformed response is not permission to activate a provision or its fallback.
+        return False, [], 0.0

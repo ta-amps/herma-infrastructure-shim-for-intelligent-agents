@@ -113,11 +113,12 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/check_architecture.py](scripts/check_architecture.py) | Check that architecture.json still describes this repo truthfully. |
 | [scripts/check_public.py](scripts/check_public.py) | Fail if a file headed for a public repo holds a secret or a private name. |
 
-## test/ (1)
+## test/ (2)
 
 | File | What it is |
 |---|---|
 | [test/conversation.test.js](test/conversation.test.js) |  |
+| [test/triggers.test.js](test/triggers.test.js) |  |
 
 ## tests/ (8)
 
