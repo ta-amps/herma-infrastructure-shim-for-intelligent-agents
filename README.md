@@ -11,6 +11,10 @@ an exceptional fallback, not a default step for every task.
 
 In Classical Greece, a *herma* was an inscribed roadside stone waymarker placed along the road, carved with civic precepts and directional pointers that travellers read *en route* to their destination. **Herma** sits inline between configurable agentic coding harnesses (`muse-code`, `opencode`, `claude-code`, `codex`, `swarm-worker`) and upstream LLM endpoints (`/v1/chat/completions`, `/v1/responses`, `/v1/messages`).
 
+## Worker execution policy
+
+The [worker-first execution policy](docs/WORKER-FIRST-EXECUTION.md) defines claimed verbs, worker self-checks, private worker access, proportionate review and exceptional server inference. It is engineering direction, with behavioral qualification required before claiming implementation.
+
 ## Why Herma Exists
 
 Static system prompts bloat every turn when stuffed with every rule, schema, and command recipe in an organization, yet omitting a rule causes coding agents to violate subtle invariants. Herma inspects outbound coding-harness requests across **three trigger tiers** with strict **`caller_scope` isolation** and either **shims bounded context** or **responds directly**:

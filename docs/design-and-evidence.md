@@ -80,3 +80,7 @@ select less context, split a larger verb if needed, then make one bounded profil
 adjustment. Record the original input, environment, model, actual calls, schema
 errors and receipt. If progress stops, park the work with a concrete question.
 More retries or encouragement do not replace a valid contract.
+
+## Worker placement policy
+
+The [worker-first execution policy](WORKER-FIRST-EXECUTION.md) distinguishes worker-requested proxy traffic, private managed workers and direct server inference. Keep those costs and authorities separate.

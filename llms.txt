@@ -11,6 +11,7 @@
 
 ## Documents
 - [CHANGELOG.md](https://github.com/ta-amps/herma/blob/main/CHANGELOG.md): Changelog
+- [docs/WORKER-FIRST-EXECUTION.md](https://github.com/ta-amps/herma/blob/main/docs/WORKER-FIRST-EXECUTION.md): Worker-first execution and private work
 - [docs/access-modes.md](https://github.com/ta-amps/herma/blob/main/docs/access-modes.md): External agent access
 - [docs/agent-troubleshooting.md](https://github.com/ta-amps/herma/blob/main/docs/agent-troubleshooting.md): Bilateral agent communication
 - [docs/architecture.md](https://github.com/ta-amps/herma/blob/main/docs/architecture.md): Architecture
