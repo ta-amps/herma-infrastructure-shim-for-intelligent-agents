@@ -909,9 +909,33 @@ def create_app() -> FastAPI:
         )
         return {"synced": [s.provision.prov_id for s in synced], "count": len(synced)}
 
+    @application.get("/api/conversation-schema")
+    async def conversation_schemas() -> dict[str, object]:
+        from herma.conversation_contracts import ConversationTurn, Proposal, WorkContract
+
+        return {
+            "conversation_turn": ConversationTurn.model_json_schema(),
+            "work_contract": WorkContract.model_json_schema(),
+            "proposal": Proposal.model_json_schema(),
+        }
+
     @application.get("/connect.json")
     async def access_modes() -> dict[str, object]:
-        return ACCESS_INFO
+        return {
+            **ACCESS_INFO,
+            "work_conversations": {
+                "enabled": os.environ.get("HERMA_CONVERSATION_ENABLED") == "true",
+                "turn_endpoint": "/v1/conversations/turn",
+                "schema_endpoint": "/api/conversation-schema",
+                "snapshot_endpoint": "/v1/conversations/{id}",
+                "credential": "hmk_",
+                "scope": "route",
+                "providers": ["meta", "ollama"],
+                "executed": False,
+                "context": "Caller-visible context entries containing typed work_contract schemas.",
+                "documentation": "https://github.com/ta-amps/herma/blob/t/H15-work-conversation/docs/conversations.md",
+            },
+        }
 
     application.add_middleware(AgentAccessMiddleware)
     return application

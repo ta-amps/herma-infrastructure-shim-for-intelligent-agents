@@ -119,6 +119,12 @@ def test_malformed_or_invented_tool_calls_are_blocked(reply: dict[str, Any]) -> 
     assert proposal.status == "blocked" and not proposal.executed
 
 
+@pytest.mark.parametrize("choice", [None, [], "invalid", 17])
+def test_malformed_meta_choice_is_a_blocked_receipt(choice: Any) -> None:
+    proposal, issues = parse_proposal({"choices": [choice]}, "meta", [contract()])
+    assert proposal.status == "blocked" and issues[0]["rule"] == "invalid_tool_call"
+
+
 @pytest.mark.parametrize(
     "patch",
     [
@@ -150,6 +156,13 @@ def test_replay_is_idempotent_and_state_is_caller_scoped(tmp_path: Path) -> None
     engine = ConversationEngine(store, call=call)
     first = asyncio.run(engine.turn("key:alice", turn()))
     assert first["proposal"]["status"] == "ready" and first["executed"] is False
+    assert asyncio.run(engine.turn("key:alice", turn())) == first
+    # A retry must not reconstruct a newer, possibly oversized context or call the provider.
+    with engine.state.connect() as conn:
+        conn.execute(
+            "UPDATE work_conversations SET history=? WHERE scope=?",
+            (json.dumps([{"role": "user", "content": "x" * 40000}]), "key:alice"),
+        )
     assert asyncio.run(engine.turn("key:alice", turn())) == first
     assert calls == 1
     assert engine.state.snapshot("key:bob", "conversation-one")["history"] == []

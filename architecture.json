@@ -4,7 +4,7 @@
   "name": "herma",
   "summary": "Herma: context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic noun, verb, and URI context from a caller-isolated database before LLM execution. Rules, deterministic entity memory, and atomic noun/verb entries load from SQLite/D1, governed Tessera stores and blobs, or remote handshake servers; personal assistants use the same scoped credentials as coding harnesses; contributor-tier models are refused.",
   "status": {
-    "as_of": "2026-10-27",
+    "as_of": "2026-10-28",
     "stage": "prototype",
     "notes": "Caller-isolated provisions, context_entries, receipts, deterministic entity memory, and rule outcomes; system_builtin protection, /v1/admin/keys bootstrap/admin lockdown, single-statement atomic SQL CAS, Layer-1 Tessera governance lens + SHA-256 blob verification, non-mutating candidate_provisions insights, interactive /api/preview, SVG brand chrome, discovery routes, and stateless JSON-RPC /mcp verified across Python and Cloudflare Worker + D1."
   },
@@ -198,7 +198,8 @@
         "herma/conversation.py",
         "herma/conversation_contracts.py",
         "herma/conversation_provider.py",
-        "herma/conversation_state.py"
+        "herma/conversation_state.py",
+        "herma/conversation_schema.py"
       ],
       "kind": "library",
       "domain": "neutral",
@@ -236,7 +237,11 @@
         "deploy/cloudflare/worker.js",
         "deploy/cloudflare/herma_engine.js",
         "deploy/cloudflare/d1-herma.sql",
-        "deploy/cloudflare/wrangler.jsonc"
+        "deploy/cloudflare/wrangler.jsonc",
+        "deploy/cloudflare/entry.js",
+        "deploy/cloudflare/conversation.js",
+        "deploy/cloudflare/conversation_state.js",
+        "deploy/cloudflare/conversation_data.json"
       ],
       "kind": "edge",
       "domain": "neutral",
@@ -245,7 +250,8 @@
         "api"
       ],
       "tests": [
-        "tests/test_herma.py"
+        "tests/test_herma.py",
+        "test/conversation.test.js"
       ]
     }
   ],

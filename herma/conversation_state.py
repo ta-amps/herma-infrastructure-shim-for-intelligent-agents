@@ -61,6 +61,26 @@ class ConversationState:
                 "active": row["active"],
             }
 
+    def replay(
+        self, scope: str, conversation: str, request: str, fingerprint: str
+    ) -> dict[str, Any] | None:
+        """Resolve retries before rebuilding a potentially larger model context."""
+        with self.connect() as conn:
+            previous = conn.execute(
+                "SELECT * FROM work_turns WHERE scope=? AND conversation=? AND request=?",
+                (scope, conversation, request),
+            ).fetchone()
+            if not previous:
+                return None
+            if previous["fingerprint"] != fingerprint:
+                raise conflict("request_id_conflict", "The request ID belongs to different input.")
+            if previous["response"] is None:
+                raise conflict(
+                    "request_in_progress",
+                    "This turn is running or needs operator reconciliation; do not replay model calls.",
+                )
+            return dict(json.loads(previous["response"]))
+
     def reserve(
         self,
         *,

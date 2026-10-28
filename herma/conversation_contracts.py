@@ -10,6 +10,7 @@ from jsonschema import Draft202012Validator, SchemaError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from tessera.ontology.categories import get_category_spec
 
+from herma.conversation_schema import validate_portable_schema
 from herma.schemas import ContextEntry
 
 
@@ -37,24 +38,7 @@ class WorkContract(BaseModel):
         except SchemaError as exc:
             raise ValueError("invalid JSON schema") from exc
 
-        def check(node: Any, depth: int = 0) -> None:
-            if depth > 16:
-                raise ValueError("schema nesting limit exceeded")
-            if isinstance(node, dict):
-                if any(key in node for key in ("$ref", "$dynamicRef", "$recursiveRef")):
-                    raise ValueError("schema references are not allowed")
-                for field in node.get("properties", {}).values():
-                    if not isinstance(field, dict) or not any(
-                        key in field for key in ("type", "enum", "const", "anyOf", "oneOf")
-                    ):
-                        raise ValueError("every property needs an explicit type or alternatives")
-                for value in node.values():
-                    check(value, depth + 1)
-            elif isinstance(node, list):
-                for value in node:
-                    check(value, depth + 1)
-
-        check(self.input_schema)
+        validate_portable_schema(self.input_schema)
         return self
 
     @property
@@ -96,7 +80,7 @@ def load_contracts(entries: list[ContextEntry]) -> list[WorkContract]:
             result.append(contract)
     if not result:
         raise ValueError("no work contracts in the caller-visible context entries")
-    return result
+    return sorted(result, key=lambda contract: contract.operation_id)
 
 
 def schema_issues(contract: WorkContract, value: Any) -> list[dict[str, str]]:

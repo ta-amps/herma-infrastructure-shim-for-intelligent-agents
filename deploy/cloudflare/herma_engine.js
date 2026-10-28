@@ -1881,6 +1881,7 @@ export function buildLlmsTxt(publicUrl) {
     "",
     "## Core Authenticated Endpoints (`hmk_` Harness Key Required)",
     "- `POST /v1/handshake`: Negotiate Surface Handshake v1.0 limits (`X-Surface-Id`).",
+    "- `POST /v1/conversations/turn`, `GET /v1/conversations/{id}`: Optional typed work dialogue using caller-visible work contracts, expected_version and request_id. Returns a clarification, proposal or blocker with executed:false. Check work_conversations.enabled in /connect.json; requires hmk_ route scope.",
     "- `POST /v1/dry-run`: Inspect caller-isolated augmented payload, matches, entities, and receipt.",
     "- `POST /v1/chat/completions`, `POST /v1/responses`, `POST /v1/messages`: Multi-wire shim or direct-response proxy.",
     "- `GET|POST /v1/context`, `GET /v1/provisions`, `PUT|DELETE /v1/provisions/{prov_id}`: Caller-scoped atomic CAS CRUD (`system_builtin` protected with 403).",

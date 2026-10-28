@@ -17,6 +17,14 @@ jobs:
         with:
           path: herma
       - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: herma/package-lock.json
+      - name: Install Worker dependencies
+        working-directory: herma
+        run: npm ci --ignore-scripts
       - name: Install
         working-directory: herma
         run: uv sync --locked --all-groups

@@ -62,6 +62,8 @@ def parse_proposal(
     try:
         if provider == "meta":
             choice = reply["choices"][0]
+            if not isinstance(choice, dict):
+                raise ValueError("invalid choice")
             if choice.get("finish_reason") == "length":
                 return Proposal(
                     status="blocked",
@@ -86,7 +88,8 @@ def parse_proposal(
             arguments = _strict_json(arguments)
         if not isinstance(arguments, dict):
             raise ValueError("tool arguments must be an object")
-        encode(arguments)
+        if len(encode(arguments)) > 32768:
+            raise ValueError("tool arguments too large")
         if name in {"ask_clarification", "report_blocker"}:
             field = "question" if name == "ask_clarification" else "reason"
             value = arguments.get(field)
@@ -119,7 +122,7 @@ def parse_proposal(
             category_id=contract.category_id,
             arguments=arguments,
         ), []
-    except (KeyError, IndexError, TypeError, ValueError, StopIteration):
+    except (KeyError, IndexError, TypeError, ValueError, StopIteration, RecursionError):
         return Proposal(
             status="blocked",
             reply="The model did not return one valid function call. Choose a smaller task or a compatible tool-calling profile.",
@@ -154,6 +157,12 @@ class ConversationEngine:
         contract_hash = hashlib.sha256(
             encode([item.model_dump(mode="json") for item in contracts])
         ).hexdigest()
+        fingerprint = hashlib.sha256(
+            encode({"turn": turn.model_dump(mode="json"), "contract_hash": contract_hash})
+        ).hexdigest()
+        replay = self.state.replay(scope, turn.conversation_id, turn.request_id, fingerprint)
+        if replay is not None:
+            return replay
         snapshot = self.state.snapshot(scope, turn.conversation_id)
         guidance = [
             {
@@ -188,9 +197,6 @@ class ConversationEngine:
         else:
             body["options"] = {"num_predict": config.max_output, "temperature": 0}
         tokens, cost = config.reservation(body)
-        fingerprint = hashlib.sha256(
-            encode({"turn": turn.model_dump(mode="json"), "contract_hash": contract_hash})
-        ).hexdigest()
         version, replay = self.state.reserve(
             scope=scope,
             conversation=turn.conversation_id,

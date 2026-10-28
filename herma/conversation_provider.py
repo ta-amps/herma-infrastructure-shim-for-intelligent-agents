@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import os
@@ -102,6 +103,7 @@ async def request_model(
         raise ProviderFailure("provider_not_configured")
     try:
         async with (
+            asyncio.timeout(config.timeout_seconds),
             httpx.AsyncClient(
                 timeout=config.timeout_seconds, follow_redirects=False, transport=transport
             ) as client,
@@ -125,7 +127,13 @@ async def request_model(
         if not isinstance(parsed, dict):
             raise ProviderFailure("provider_invalid_response")
         return parsed
-    except (httpx.HTTPError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+    except (
+        httpx.HTTPError,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+        TimeoutError,
+        RecursionError,
+    ) as exc:
         raise ProviderFailure("provider_unavailable") from exc
 
 
