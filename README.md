@@ -13,7 +13,7 @@ In Classical Greece, a *herma* was an inscribed roadside stone waymarker placed 
 
 ## Worker execution policy
 
-The [worker-first execution policy](docs/WORKER-FIRST-EXECUTION.md) defines claimed verbs, worker self-checks, private worker access, proportionate review and exceptional server inference. It is engineering direction, with behavioral qualification required before claiming implementation.
+The [worker-first execution policy](docs/WORKER-FIRST-EXECUTION.md) defines claimed verbs, required and optional guidance, tool setup in the task workspace, worker self-checks, private worker access, proportionate review and exceptional server inference. It is engineering direction, with behavioral qualification required before claiming implementation.
 
 ## Why Herma Exists
 
