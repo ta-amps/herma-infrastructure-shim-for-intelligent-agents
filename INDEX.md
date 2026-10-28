@@ -41,12 +41,13 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/fly/Dockerfile](deploy/fly/Dockerfile) |  |
 | [deploy/fly/fly.toml](deploy/fly/fly.toml) |  |
 
-## docs/ (6)
+## docs/ (7)
 
 | File | What it is |
 |---|---|
 | [docs/access-modes.md](docs/access-modes.md) | External agent access |
 | [docs/architecture.md](docs/architecture.md) | Architecture |
+| [docs/conversations.md](docs/conversations.md) | Typed work conversations |
 | [docs/handoff.md](docs/handoff.md) | Handoff & Status |
 | [docs/harnesses.md](docs/harnesses.md) | Connecting Configurable Agentic Coding Harnesses |
 | [docs/setup.md](docs/setup.md) | Setup, Context Database, Backing Stores & Cloudflare Deployment |
@@ -64,7 +65,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [examples/provisions/README.md](examples/provisions/README.md) | Example Provisions & Atomic Noun/Verb Context |
 | [examples/provisions/context/CONTEXT-TESSERA-NOUNS-VERBS.json](examples/provisions/context/CONTEXT-TESSERA-NOUNS-VERBS.json) | JSON object: entries |
 
-## herma/ (19)
+## herma/ (23)
 
 | File | What it is |
 |---|---|
@@ -74,6 +75,10 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [herma/api/app.py](herma/api/app.py) | FastAPI application for Herma middleware (:7730). |
 | [herma/api/pages.py](herma/api/pages.py) | Server-rendered HTML console, SVG brand chrome, interactive preview script, and discovery specs. |
 | [herma/cli.py](herma/cli.py) | Command-line interface for Herma: seed, keys, context, dry-run, 3-tier demo, and serve. |
+| [herma/conversation.py](herma/conversation.py) | Scoped dialogue producing typed proposals; execution stays in the caller's harness. |
+| [herma/conversation_contracts.py](herma/conversation_contracts.py) | Typed, caller-configured work contracts and validated conversational proposals. |
+| [herma/conversation_provider.py](herma/conversation_provider.py) | Bounded provider calls with fixed credential destinations and explicit tool schemas. |
+| [herma/conversation_state.py](herma/conversation_state.py) | Durable caller isolation, per-turn CAS and pre-call conversation budgets. |
 | [herma/errors.py](herma/errors.py) | Typed errors mapped deterministically to RFC 9457 problem+json HTTP responses. |
 | [herma/harness_gate.py](herma/harness_gate.py) | Configurable-harness access gate: authenticates scoped agent and personal-assistant clients. |
 | [herma/injector.py](herma/injector.py) | Extracts signals and deterministic entities from payloads and shims rules, URIs, and noun/verb context. |
@@ -96,12 +101,13 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/check_architecture.py](scripts/check_architecture.py) | Check that architecture.json still describes this repo truthfully. |
 | [scripts/check_public.py](scripts/check_public.py) | Fail if a file headed for a public repo holds a secret or a private name. |
 
-## tests/ (6)
+## tests/ (7)
 
 | File | What it is |
 |---|---|
 | [tests/test_api_and_proxy.py](tests/test_api_and_proxy.py) | Tests for multi-protocol payload augmentation, deduplication, edge lockdown, and HTTP endpoints. |
 | [tests/test_cli_demo.py](tests/test_cli_demo.py) | The CI demo verifies the supported client policy and its real provision pipeline. |
+| [tests/test_conversation.py](tests/test_conversation.py) | Typed proposals, caller isolation, budget fencing and real HTTP provider contracts. |
 | [tests/test_external_access_security.py](tests/test_external_access_security.py) | Regression proofs for scoped personal-assistant access and fail-closed fabric imports. |
 | [tests/test_harness_gate_and_store.py](tests/test_harness_gate_and_store.py) | Tests for configurable-harness access gate, CAS store, Tessera sync, and remote handshake sync. |
 | [tests/test_herma.py](tests/test_herma.py) | Tests for multi-caller isolation, CAS, governance lens, entity memory, insights, preview, and MCP parity. |

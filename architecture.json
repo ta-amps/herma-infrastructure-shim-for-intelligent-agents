@@ -183,11 +183,34 @@
         "proxy",
         "schemas",
         "store",
-        "triggers"
+        "triggers",
+        "conversation"
       ],
       "tests": [
         "tests/test_api_and_proxy.py",
         "tests/test_herma.py"
+      ]
+    },
+    {
+      "id": "conversation",
+      "title": "Typed work conversation",
+      "path": [
+        "herma/conversation.py",
+        "herma/conversation_contracts.py",
+        "herma/conversation_provider.py",
+        "herma/conversation_state.py"
+      ],
+      "kind": "library",
+      "domain": "neutral",
+      "role": "Caller-scoped typed proposals, canonical category binding, atomic turn and spend reservations, bounded Meta/Ollama calls; no action execution",
+      "depends_on": [
+        "errors",
+        "harness_gate",
+        "schemas",
+        "store"
+      ],
+      "tests": [
+        "tests/test_conversation.py"
       ]
     },
     {

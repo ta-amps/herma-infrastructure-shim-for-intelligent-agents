@@ -25,6 +25,8 @@ from herma.api.pages import (
     render_connect_page,
     render_overview_page,
 )
+from herma.conversation import ConversationEngine
+from herma.conversation_contracts import ConversationTurn
 from herma.errors import AdminRequiredError, HermaError
 from herma.harness_gate import (
     HarnessPrincipal,
@@ -548,6 +550,30 @@ def create_app() -> FastAPI:
         }
 
     # --- Authenticated 'route' endpoints for configurable harnesses ---
+
+    @application.post("/v1/conversations/turn")
+    async def conversation_turn(req: Request, body: ConversationTurn) -> JSONResponse:
+        enforce_not_consumer_assistant(req.headers)
+        store = get_store()
+        principal = store.authenticate_headers(req.headers, is_admin=_is_admin_request(req.headers))
+        require_scope(principal, "route", req.headers)
+        if os.environ.get("HERMA_CONVERSATION_ENABLED", "").lower() != "true":
+            raise HermaError(
+                503,
+                "conversation_disabled",
+                "Conversation disabled",
+                "The operator has not enabled model-assisted work conversations.",
+            )
+        result = await ConversationEngine(store).turn(principal.caller_scope, body)
+        return JSONResponse(content=result, headers={"X-Request-Id": body.request_id})
+
+    @application.get("/v1/conversations/{conversation_id}")
+    def conversation_status(req: Request, conversation_id: str) -> dict[str, Any]:
+        enforce_not_consumer_assistant(req.headers)
+        store = get_store()
+        principal = store.authenticate_headers(req.headers, is_admin=_is_admin_request(req.headers))
+        require_scope(principal, "route", req.headers)
+        return ConversationEngine(store).state.snapshot(principal.caller_scope, conversation_id)
 
     @application.post("/v1/handshake")
     def handshake_api(req: Request, body: HandshakeRequest) -> JSONResponse:

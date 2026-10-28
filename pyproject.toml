@@ -12,6 +12,7 @@ dependencies = [
   "fastapi>=0.115",
   "uvicorn>=0.30",
   "tessera[mcp] @ git+https://github.com/ta-amps/tessera.git@ecca97deb88b82e627df66c98400b3a302e2bdb0",
+  "jsonschema>=4.23,<5",
 ]
 
 [project.scripts]
@@ -23,6 +24,7 @@ dev = [
   "pytest-timeout>=2.3",
   "ruff>=0.6",
   "mypy>=1.11",
+  "types-jsonschema>=4.26.0.20261006",
 ]
 
 [build-system]
