@@ -12,8 +12,10 @@
 ## Documents
 - [CHANGELOG.md](https://github.com/ta-amps/herma/blob/main/CHANGELOG.md): Changelog
 - [docs/access-modes.md](https://github.com/ta-amps/herma/blob/main/docs/access-modes.md): External agent access
+- [docs/agent-troubleshooting.md](https://github.com/ta-amps/herma/blob/main/docs/agent-troubleshooting.md): Bilateral agent communication
 - [docs/architecture.md](https://github.com/ta-amps/herma/blob/main/docs/architecture.md): Architecture
 - [docs/conversations.md](https://github.com/ta-amps/herma/blob/main/docs/conversations.md): Typed work conversations
+- [docs/design-and-evidence.md](https://github.com/ta-amps/herma/blob/main/docs/design-and-evidence.md): Design decisions and measured limits
 - [docs/handoff.md](https://github.com/ta-amps/herma/blob/main/docs/handoff.md): Handoff & Status
 - [docs/harnesses.md](https://github.com/ta-amps/herma/blob/main/docs/harnesses.md): Connecting Configurable Agentic Coding Harnesses
 - [docs/setup.md](https://github.com/ta-amps/herma/blob/main/docs/setup.md): Setup, Context Database, Backing Stores & Cloudflare Deployment

@@ -163,7 +163,7 @@ def _resolve_upstream_url(wire_format: WireFormat, headers: Mapping[str, str]) -
             )
         allow_raw = os.environ.get(
             "HERMA_ALLOWED_UPSTREAM_HOSTS",
-            "ollama.com,api.llama.com,api.openai.com,api.anthropic.com,127.0.0.1,localhost",
+            "ollama.com,api.meta.ai,api.llama.com,api.openai.com,api.anthropic.com,127.0.0.1,localhost",
         )
         allowed_hosts = {h.strip().lower() for h in allow_raw.split(",") if h.strip()}
         if parsed.hostname.lower() not in allowed_hosts:

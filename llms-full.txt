@@ -15,6 +15,11 @@ URL: https://github.com/ta-amps/herma/blob/main/README.md
 
 Optional [typed work conversations](docs/conversations.md) let authenticated harnesses ask for clarification and receive one schema-checked noun/verb proposal at a time. Meta and Ollama calls use server credentials, durable budget reservations and caller-scoped state. A proposal is never executed by the conversation endpoint.
 
+Read the [design decisions and experiment results](docs/design-and-evidence.md)
+and [agent troubleshooting guide](docs/agent-troubleshooting.md). Workers self-check;
+additional review is assigned as a verb when needed. Server-funded LLM review is
+an exceptional fallback, not a default step for every task.
+
 **Herma:** context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic noun, verb, and URI context from a user-configured database before LLM execution.
 
 In Classical Greece, a *herma* was an inscribed roadside stone waymarker placed along the road, carved with civic precepts and directional pointers that travellers read *en route* to their destination. **Herma** sits inline between configurable agentic coding harnesses (`muse-code`, `opencode`, `claude-code`, `codex`, `swarm-worker`) and upstream LLM endpoints (`/v1/chat/completions`, `/v1/responses`, `/v1/messages`).
@@ -24,8 +29,8 @@ In Classical Greece, a *herma* was an inscribed roadside stone waymarker placed 
 Static system prompts bloat every turn when stuffed with every rule, schema, and command recipe in an organization, yet omitting a rule causes coding agents to violate subtle invariants. Herma inspects outbound coding-harness requests across **three trigger tiers** with strict **`caller_scope` isolation** and either **shims bounded context** or **responds directly**:
 
 1. **Shimming Context Based on Rules & Details (`action: "shim_context"`)**:
-   - **Tier 1 -- Keyword, Regex, File-Path & Tool Triggers (`~0 ms`)**: Exact terms, bounded regexes, workspace file globs (`src/tessera/*.py`), and declared tool names.
-   - **Tier 2 -- Semantic Similarity Triggers (`~1-5 ms`)**: Hybrid concept-cluster + subword cosine matching (plus optional `/v1/embeddings`) so paraphrased intent fires the right rule with zero shared literal keywords.
+   - **Tier 1 -- Keyword, Regex, File-Path & Tool Triggers**: Exact terms, bounded regexes, workspace file globs (`src/tessera/*.py`), and declared tool names. No general latency benchmark is claimed.
+   - **Tier 2 -- Semantic Similarity Triggers**: Hybrid concept-cluster + subword cosine matching (plus optional `/v1/embeddings`) can match paraphrased intent without shared literal keywords. Match quality depends on the configured rules and examples.
    - **Tier 3 -- Micromodel Router Triggers**: Lightweight fast classifier prompt (`HERMA_MICROMODEL_URL`, with deterministic offline fallback) invoked only when Tier 1 and Tier 2 did not already match in `any` mode.
    - Matched rules shim bounded rule prose, authoritative URIs (`https://`, SHA-256 verified `tessera://blobs/<sha256>`, `tessera://buckets/<bucket>/<key>`, `mcp://`, `urn:`), and **atomic noun, verb, and detail definitions** (`[NOUN/VERB CONTEXT]`) pulled from a caller-isolated database (`POST /v1/context` / `GET /v1/context`, SQLite/D1 `context_entries`, Layer-1 governed [Tessera](https://github.com/ta-amps/tessera) noun stores & buckets, or a remote handshake database) -- deduplicated across turns (`once_per_conversation`) with a canonical SHA-256 `InjectionReceipt`.
 
@@ -38,7 +43,7 @@ Static system prompts bloat every turn when stuffed with every rule, schema, and
 ## Configurable Coding Harnesses & Caller Isolation
 
 Herma accepts coding harnesses and personal assistants that can send explicit scoped credentials to configurable endpoints:
-- Supported harnesses: `muse-code`, `opencode`, `claude-code`, `codex`, `swarm-worker`, `custom-harness`.
+- Recognized harness identifiers: `muse-code`, `opencode`, `claude-code`, `codex`, `swarm-worker`, `custom-harness`. An identifier is not a certification of every client; see the [measured attempt matrix](docs/design-and-evidence.md).
 - Multi-caller non-poisoning: starter guardrails live in protected `system_builtin` (`403 builtin_protected` for non-admins), while custom rules, context entries, receipts, entity memory, and outcomes are strictly partitioned by `caller_scope = key:<key_id>`.
 - Personal assistants may use the same scoped `hmk_` keys. Browser navigation and cookie authentication remain refused; model routing and configuration require explicit credentials.
 - Contributor-tier models (`contributor` and `*-contributor`) are deterministically refused (`HTTP 403 contributor_tier_refused`).
@@ -162,6 +167,11 @@ uv run herma keys issue --label workstation --harness opencode --scopes route,co
 
 Save the printed `hmk_<id>.<secret>` token in a `0600` secret file.
 
+This CLI issues a key in the selected local database. It does not provision the
+hosted Worker. For hosted access an operator issues a scoped key through the
+authenticated `/v1/admin/keys` route. A Tessera `tsk_` or `tan_` credential does
+not substitute for a Herma harness key. Client labels do not create authority.
+
 ## 2. OpenCode / OpenAI-Compatible Harnesses (`/v1/chat/completions`)
 
 Point your provider `baseURL` at `https://herma.ta-amps.workers.dev/v1` (or `http://127.0.0.1:7730/v1` locally) and attach:
@@ -169,17 +179,35 @@ Point your provider `baseURL` at `https://herma.ta-amps.workers.dev/v1` (or `htt
 - `X-Herma-Harness: opencode`
 - `X-Upstream-Api-Key: <your-upstream-llm-key>` (or set `HERMA_UPSTREAM_API_KEY` on the Herma origin; direct-response rules answer without an upstream key)
 
+For an explicitly selected Meta provider, set `X-Upstream-Base-Url` to
+`https://api.meta.ai/v1` with a caller-owned upstream key. The allowed hostname
+does not let the request borrow an operator credential configured for another
+origin. In Workers the generic proxy uses `UPSTREAM_LLM_URL` and
+`UPSTREAM_LLM_API_KEY`; the paid conversation API uses separate `META_API_KEY`
+and `OLLAMA_API_KEY` secrets. These are different configuration paths.
+
 ## 3. Muse Code / Responses-Compatible Harnesses (`/v1/responses`)
 
 Point the Responses endpoint at `https://herma.ta-amps.workers.dev/v1/responses` with `X-Herma-Harness: muse-code` and `--contributor-mode off`. Herma shims matched provisions + noun/verb context into `instructions` or returns a direct `response` object.
+
+This describes the Responses wire adapter, not a full native provider-host
+replacement. Native Muse startup also requests `/muse-code/models`; a client that
+sets only a global base URL may fail before inference. The recorded native Muse
+fixture used Meta's provider path with a separate typed MCP connector. Full native
+Muse startup through Herma's generic proxy is not certified. Preserve ordinary
+client approvals and sandboxing; inspect actual native tool events.
 
 ## 4. Claude Code (`/v1/messages`)
 
 Set `ANTHROPIC_BASE_URL=https://herma.ta-amps.workers.dev` and pass `X-Herma-Key` + `X-Herma-Harness: claude-code` via custom headers. Herma shims matched provisions + noun/verb context into the top-level `system` prompt or returns a direct Anthropic `message` object.
 
-## Why Generic Consumer Assistants Cannot Access Herma
+## Credential and client requirements
 
 Personal assistants that support tool or MCP connections can use the open preview. Private routing and configuration require `X-Herma-Key` and a matching `X-Herma-Harness` declaration; client names and user-agent strings are not authorization.
+
+See [the experiment matrix](design-and-evidence.md) for the distinction between
+HTTP tests, native fixtures and pending full-loop tests, and the
+[bilateral troubleshooting guide](agent-troubleshooting.md) for recovery steps.
 
 ========================================================================
 FILE: docs/setup.md

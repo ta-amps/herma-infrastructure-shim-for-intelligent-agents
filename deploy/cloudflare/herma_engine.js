@@ -2057,7 +2057,7 @@ export function resolveUpstream(request, env, path) {
   let target;
   try { target = new URL(raw); } catch { throw new HermaErr(400, "invalid_upstream", "Invalid Upstream", "Expected an absolute provider URL."); }
   if (!["https:", "http:"].includes(target.protocol) || target.username || target.password || target.hash) throw new HermaErr(400, "invalid_upstream", "Invalid Upstream", "Invalid provider URL.");
-  const allowed = String(env.HERMA_ALLOWED_UPSTREAM_HOSTS || "ollama.com,api.llama.com,api.openai.com,api.anthropic.com,127.0.0.1,localhost").split(",").map(s => s.trim().toLowerCase());
+  const allowed = String(env.HERMA_ALLOWED_UPSTREAM_HOSTS || "ollama.com,api.meta.ai,api.llama.com,api.openai.com,api.anthropic.com,127.0.0.1,localhost").split(",").map(s => s.trim().toLowerCase());
   if (override && !allowed.includes(target.hostname.toLowerCase()) && (!configured || target.origin !== new URL(configured).origin)) throw new HermaErr(403, "upstream_not_allowed", "Upstream Not Allowed", "Provider hostname is not allowlisted.");
   const callerKey = request.headers.get("x-upstream-api-key") || "";
   const operatorKey = env.UPSTREAM_LLM_API_KEY || "";

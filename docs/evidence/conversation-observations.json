@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "observed_date": "2026-10-28",
+  "scope": "One synthetic deployed HTTP typed proposal per provider and exact replay; not native full-loop certification.",
+  "provider_credentials": "Worker secrets; no provider key supplied by the probe client.",
+  "runs": [
+    {
+      "provider": "meta",
+      "model": "muse-spark-1.3",
+      "typed_object_passed": true,
+      "identical_replay": true,
+      "executed": false,
+      "input_tokens": 1042,
+      "output_tokens": 482,
+      "receipt_sha256": "3d13293faac6f29095a09f1bfc53b2e55b5b8d16a42497f52e24ff41ac6deb72",
+      "estimated_uncached_cost_usd": 0.003351,
+      "invoice_cost_usd": null,
+      "cost_reason": "Reported token usage at standard uncached tariffs, not provider billing."
+    },
+    {
+      "provider": "ollama",
+      "model": "muse-spark-open",
+      "typed_object_passed": true,
+      "identical_replay": true,
+      "executed": false,
+      "input_tokens": 881,
+      "output_tokens": 1200,
+      "receipt_sha256": "231bf28cad7d7c0190f46c97068f4c76b094371c006e28d47f4010747c1838e8",
+      "invoice_cost_usd": null,
+      "cost_reason": "No trusted per-run invoice price was supplied."
+    }
+  ],
+  "source_run_fingerprint": "193d6b46dc8fcf867823b65ddbf84592d5bbaa8b37a15ff81ff3af73a6117d8c",
+  "limitations": [
+    "This is a redacted observation summary; it is not the full private transcript.",
+    "The live provider tests are not part of CI.",
+    "A replayed proposal proves neither external execution nor semantic correctness.",
+    "Prior native fixtures used a local typed adapter; hosted native full loops remain pending."
+  ]
+}
