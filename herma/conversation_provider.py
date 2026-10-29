@@ -195,6 +195,31 @@ class ProviderConfig:
             raise ValueError(
                 "generation settings cannot override the conversation contract or output allowance"
             )
+        if (
+            set(self.generation) & {"prompt", "prompt_id", "best_of", "speed", "inference_geo"}
+            or (
+                "n" in self.generation
+                and (
+                    self.provider not in {"meta", "openrouter"}
+                    or type(self.generation["n"]) is not int
+                    or self.generation["n"] != 1
+                )
+            )
+            or (
+                "service_tier" in self.generation
+                and (
+                    self.provider not in {"openai", "anthropic"}
+                    or self.generation["service_tier"]
+                    != ("default" if self.provider == "openai" else "standard_only")
+                )
+            )
+        ):
+            raise HermaError(
+                503,
+                "unsupported_generation_configuration",
+                "Unsupported generation configuration",
+                "Typed proposals support one output, locally scoped prompt content, and standard service tiers. Remove stored prompt/best_of/speed/inference_geo settings, use n=1 only for chat-completions providers, and use OpenAI default or Anthropic standard_only service tiers.",
+            )
         if self.provider == "ollama" and (
             not isinstance(self.generation.get("options", {}), dict)
             or "num_predict" in self.generation.get("options", {})
@@ -250,6 +275,7 @@ class ProviderConfig:
                     for tool in tools
                 ],
                 max_tokens=self.max_output,
+                service_tier="standard_only",
             )
         elif self.provider == "openai":
             body.update(
@@ -259,6 +285,7 @@ class ProviderConfig:
                 background=False,
                 parallel_tool_calls=False,
                 max_output_tokens=self.max_output,
+                service_tier="default",
             )
             if self.reasoning_effort is not None:
                 body["reasoning"] = {**body.get("reasoning", {}), "effort": self.reasoning_effort}
@@ -332,6 +359,23 @@ class ProviderFailure(Exception):
         self.retry_guidance_source = retry_guidance_source
 
 
+def provider_credential(provider: str) -> str:
+    """Check dispatch readiness without reserving allowance or changing offline preparation."""
+    key = os.environ.get(
+        {
+            "meta": "META_API_KEY",
+            "ollama": "OLLAMA_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "openrouter": "OPENROUTER_API_KEY",
+        }[provider],
+        "",
+    )
+    if not key.strip():
+        raise ProviderFailure("provider_not_configured", outcome="not_sent")
+    return key
+
+
 async def request_model(
     config: ProviderConfig,
     body: dict[str, Any],
@@ -342,18 +386,7 @@ async def request_model(
     config.reservation(body)
     if operator_policy(config.provider)[0]:
         raise ProviderFailure("provider_operator_disabled", outcome="not_sent")
-    key = os.environ.get(
-        {
-            "meta": "META_API_KEY",
-            "ollama": "OLLAMA_API_KEY",
-            "openai": "OPENAI_API_KEY",
-            "anthropic": "ANTHROPIC_API_KEY",
-            "openrouter": "OPENROUTER_API_KEY",
-        }[config.provider],
-        "",
-    )
-    if not key:
-        raise ProviderFailure("provider_not_configured", outcome="not_sent")
+    key = provider_credential(config.provider)
     headers = {"Authorization": "Bearer " + key, "Content-Type": "application/json"}
     if config.provider == "anthropic":
         headers = {
@@ -379,8 +412,11 @@ async def request_model(
         ):
             if response.status_code != 200:
                 retry_seconds, retry_source = retry_guidance(response.headers, time.time())
+                accepted = 200 <= response.status_code < 300
                 code = (
-                    "provider_rate_limited"
+                    "provider_outcome_uncertain"
+                    if accepted
+                    else "provider_rate_limited"
                     if response.status_code == 429
                     else "provider_unauthorized"
                     if response.status_code in {401, 403}
@@ -391,7 +427,7 @@ async def request_model(
                 rejected = ProviderFailure(
                     code,
                     outcome="unknown"
-                    if response.status_code >= 500 or response.status_code == 408
+                    if accepted or response.status_code >= 500 or response.status_code == 408
                     else "rejected",
                     retry_after_seconds=retry_seconds,
                     retry_guidance_source=retry_source,
@@ -418,6 +454,8 @@ async def request_model(
         parsed = json.loads(raw)
         if not isinstance(parsed, dict):
             raise ProviderFailure("provider_invalid_response")
+        if config.provider == "openai" and parsed.get("status") in ("queued", "in_progress"):
+            raise ProviderFailure("provider_outcome_uncertain", http_status=200)
         return parsed
     except (
         httpx.HTTPError,

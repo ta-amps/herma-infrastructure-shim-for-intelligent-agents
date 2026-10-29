@@ -154,6 +154,9 @@ export function providerConfig(env, provider) {
       (provider === "ollama" && (!object(generation.options ?? {}) || has(generation.options ?? {}, "num_predict"))) ||
       (provider === "openai" && has(generation, "reasoning") && !object(generation.reasoning)) ||
       !isInt(ollama_calls_per_day) || ollama_calls_per_day < 1 || ollama_calls_per_day > 1000) fail(503, "invalid_provider_configuration");
+  if (["prompt", "prompt_id", "best_of", "speed", "inference_geo"].some(k => has(generation, k)) ||
+      (has(generation, "n") && (!["meta", "openrouter"].includes(provider) || generation.n !== 1)) ||
+      (has(generation, "service_tier") && (!["openai", "anthropic"].includes(provider) || generation.service_tier !== (provider === "openai" ? "default" : "standard_only")))) fail(503, "unsupported_generation_configuration");
   const url = { meta: "https://api.meta.ai/v1/chat/completions", ollama: "https://ollama.com/api/chat", openai: "https://api.openai.com/v1/responses", anthropic: "https://api.anthropic.com/v1/messages", openrouter: "https://openrouter.ai/api/v1/chat/completions" }[provider];
   const budget_usd = provider === "openrouter" ? openrouter_budget_usd : provider === "anthropic" ? anthropic_budget_usd : provider === "openai" ? openai_budget_usd : provider === "meta" ? meta_budget_usd : 0;
   return { provider, model, max_output, reasoning_effort, meta_budget_usd, ollama_calls_per_day, openai_budget_usd, anthropic_budget_usd, anthropic_version, openrouter_budget_usd, openrouter_provider, rates, generation, caller_token_limit, budget_usd, url };
@@ -172,9 +175,9 @@ export function buildRequest(config, turn, contracts, history) {
   ];
   const body = { ...config.generation, model: config.model, stream: false };
   if (config.provider === "anthropic") {
-    Object.assign(body, { system: messages.filter(m => m.role === "system").map(m => m.content).join("\n"), messages: messages.filter(m => m.role !== "system"), tools: tools.map(tool => ({ name: tool.function.name, description: tool.function.description, input_schema: tool.function.parameters })), max_tokens: config.max_output });
+    Object.assign(body, { system: messages.filter(m => m.role === "system").map(m => m.content).join("\n"), messages: messages.filter(m => m.role !== "system"), tools: tools.map(tool => ({ name: tool.function.name, description: tool.function.description, input_schema: tool.function.parameters })), max_tokens: config.max_output, service_tier: "standard_only" });
   } else if (config.provider === "openai") {
-    Object.assign(body, { input: messages, tools: tools.map(tool => ({ type: "function", ...tool.function, strict: false })), store: false, background: false, parallel_tool_calls: false, max_output_tokens: config.max_output });
+    Object.assign(body, { input: messages, tools: tools.map(tool => ({ type: "function", ...tool.function, strict: false })), store: false, background: false, parallel_tool_calls: false, max_output_tokens: config.max_output, service_tier: "default" });
     if (config.reasoning_effort !== null) body.reasoning = { ...body.reasoning, effort: config.reasoning_effort };
   } else {
     Object.assign(body, { messages, tools });
@@ -229,12 +232,17 @@ export function parseProposal(reply, provider, contracts) {
   } catch { return blocked("invalid_tool_call"); }
 }
 
+export function providerCredential(env, provider) {
+  const key = env[{ meta: "META_API_KEY", ollama: "OLLAMA_API_KEY", openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY", openrouter: "OPENROUTER_API_KEY" }[provider]];
+  if (typeof key !== "string" || !key.trim()) { const error = new ConversationError(503, "provider_not_configured"); error.outcome = "not_sent"; throw error; }
+  return key;
+}
+
 export async function requestModel(env, config, body, timeoutMs = 25000) {
   let policy;
   try { policy = operatorPolicy(env, config.provider); } catch { fail(503, "invalid_provider_configuration"); }
   if (policy.disabled) { const error = new ConversationError(503, "provider_operator_disabled"); error.outcome = "not_sent"; throw error; }
-  const key = env[{ meta: "META_API_KEY", ollama: "OLLAMA_API_KEY", openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY", openrouter: "OPENROUTER_API_KEY" }[config.provider]];
-  if (!key) fail(503, "provider_not_configured");
+  const key = providerCredential(env, config.provider);
   const url = config.url;
   const headers = config.provider === "anthropic" ? { "x-api-key": key, "anthropic-version": config.anthropic_version, "Content-Type": "application/json" } : { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" };
   const controller = new AbortController();
@@ -242,10 +250,11 @@ export async function requestModel(env, config, body, timeoutMs = 25000) {
   try {
     const response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), redirect: "manual", signal: controller.signal });
     if (response.status !== 200) {
-      const code = response.status === 429 ? "provider_rate_limited" : [401, 403].includes(response.status) ? "provider_unauthorized" : response.status >= 500 ? "provider_unavailable" : "provider_rejected";
+      const accepted = response.status >= 200 && response.status < 300;
+      const code = accepted ? "provider_outcome_uncertain" : response.status === 429 ? "provider_rate_limited" : [401, 403].includes(response.status) ? "provider_unauthorized" : response.status >= 500 ? "provider_unavailable" : "provider_rejected";
       const error = new ConversationError(502, code);
       error.http_status = response.status;
-      error.outcome = response.status >= 500 || response.status === 408 ? "unknown" : "rejected";
+      error.outcome = accepted || response.status >= 500 || response.status === 408 ? "unknown" : "rejected";
       const retry = retryGuidance(response.headers, Date.now() / 1000);
       error.retry_after_seconds = retry.seconds;
       error.retry_guidance_source = retry.source;
@@ -263,6 +272,9 @@ export async function requestModel(env, config, body, timeoutMs = 25000) {
     for (const chunk of chunks) { raw.set(chunk, at); at += chunk.byteLength; }
     const parsed = strictJson(new TextDecoder("utf-8", { fatal: true }).decode(raw));
     if (!object(parsed)) fail(502, "provider_invalid_response");
+    if (config.provider === "openai" && ["queued", "in_progress"].includes(parsed.status)) {
+      const error = new ConversationError(502, "provider_outcome_uncertain"); error.outcome = "unknown"; error.http_status = 200; throw error;
+    }
     return parsed;
   } catch (error) {
     if (error instanceof ConversationError) throw error;
