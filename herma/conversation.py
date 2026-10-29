@@ -22,6 +22,7 @@ from herma.conversation_provider import (
     ProviderConfig,
     ProviderFailure,
     encode,
+    provider_credential,
     request_model,
     usage_for,
 )
@@ -364,6 +365,7 @@ class ConversationEngine:
                 ):
                     raise ProviderFailure("provider_model_not_configured", outcome="not_sent")
                 body = config.build_request(messages, tools_for(contracts))
+                provider_credential(config.provider)
                 attempt_tokens, attempt_cost = config.reservation(body)
                 attempt.update(
                     destination=config.url,
@@ -375,7 +377,7 @@ class ConversationEngine:
                     else None,
                     max_output_tokens=config.max_output,
                     timeout_seconds=config.timeout_seconds,
-                    reserved_tokens=attempt_tokens,
+                    reservation_ceiling_tokens=attempt_tokens,
                     reservation_ceiling_usd=attempt_cost / 1000000
                     if config.provider != "ollama"
                     else None,
@@ -494,9 +496,11 @@ class ConversationEngine:
                     "provider_model_not_configured",
                     "output_allowance_required",
                     "invalid_provider_configuration",
+                    "unsupported_generation_configuration",
                     "provider_unauthorized",
                     "provider_rate_limited",
                     "provider_rejected",
+                    "provider_outcome_uncertain",
                     "provider_unavailable",
                     "provider_budget_exhausted",
                     "provider_call_budget_exhausted",

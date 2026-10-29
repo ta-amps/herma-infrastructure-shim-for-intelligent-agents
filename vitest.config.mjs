@@ -52,6 +52,11 @@ export default defineConfig({
         if (openrouter && (body.provider?.only?.join() !== "synthetic-host" || body.provider?.order?.join() !== "synthetic-host" || body.provider?.allow_fallbacks !== false || body.provider?.require_parameters !== true || body.models !== undefined)) return new Response("Unpinned gateway route", { status: 422 });
         if (url.hostname === "api.meta.ai" && text === "rotate-test") return new Response("SYNTHETIC rejection", { status: 429, headers: { "Retry-After": "60" } });
         if (url.hostname === "api.meta.ai" && text === "unknown-rotate-test") return new Response("SYNTHETIC uncertain", { status: 503 });
+        if (url.hostname === "api.meta.ai" && text.startsWith("accepted-status-")) {
+          const status = Number(text.slice("accepted-status-".length));
+          return new Response(status === 204 ? null : '{"status":"queued","id":"private-job"}', { status, headers: { Location: "https://example.com/private-job", "Retry-After": "60" } });
+        }
+        if (openai && ["openai-queued", "openai-in_progress"].includes(text)) return Response.json({ status: text.slice("openai-".length), output: [], id: "private-job" });
         if (text === "redirect-test") return new Response(null, { status: 302, headers: { Location: "https://example.com/forbidden" } });
         if (text === "too-large-test") return new Response("x".repeat(1048577));
         if (text === "failure-test") return new Response("private upstream body", { status: 429 });

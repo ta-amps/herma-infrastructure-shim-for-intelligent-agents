@@ -336,7 +336,7 @@ class ConversationState:
                 "INSERT INTO work_budgets VALUES (?,?,0,?) ON CONFLICT(scope,hour) DO UPDATE SET reserved_tokens=reserved_tokens+excluded.reserved_tokens",
                 (scope, hour, tokens),
             )
-            attempt["reservation_status"] = "reserved"
+            attempt.update(reservation_status="reserved", reserved_tokens=tokens)
             attempt["health_ticket"] = admission["ticket"]
             conn.execute(
                 "UPDATE work_turns SET exception_record=? WHERE scope=? AND conversation=? AND request=? AND version=?",

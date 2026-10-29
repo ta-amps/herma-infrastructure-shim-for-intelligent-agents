@@ -130,7 +130,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/provider_health.test.js](test/provider_health.test.js) |  |
 | [test/triggers.test.js](test/triggers.test.js) |  |
 
-## tests/ (14)
+## tests/ (15)
 
 | File | What it is |
 |---|---|
@@ -143,6 +143,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [tests/test_harness_gate_and_store.py](tests/test_harness_gate_and_store.py) | Tests for configurable-harness access gate, CAS store, Tessera sync, and remote handshake sync. |
 | [tests/test_herma.py](tests/test_herma.py) | Tests for multi-caller isolation, CAS, governance lens, entity memory, insights, preview, and MCP parity. |
 | [tests/test_index_portability.py](tests/test_index_portability.py) | The index CLI produces the same bytes in differently named checkouts. |
+| [tests/test_provider_accounting.py](tests/test_provider_accounting.py) | Known skips do not spend allowance; nonfinal provider outcomes keep reservations. |
 | [tests/test_provider_contracts.py](tests/test_provider_contracts.py) | Provider selection, native generation and exception allowance stay explicit. |
 | [tests/test_provider_diagnostics.py](tests/test_provider_diagnostics.py) | Provider error evidence is bounded, private and never a raw response echo. |
 | [tests/test_provider_health.py](tests/test_provider_health.py) | Shared operator limits admit one funded, explicitly authorized recovery probe. |

@@ -154,6 +154,119 @@ describe("typed conversation in the Workers runtime", () => {
     });
   });
 
+  it.each([["meta", "META_API_KEY"], ["ollama", "OLLAMA_API_KEY"], ["openai", "OPENAI_API_KEY"], ["anthropic", "ANTHROPIC_API_KEY"], ["openrouter", "OPENROUTER_API_KEY"]])("preflights the selected %s key before allowance while preserving offline preparation", async (provider, variable) => {
+    const target = caller(), config = { ...env, [variable]: "" };
+    expect(buildRequest(providerConfig(config, provider), turn({ provider }), [], []).tokens).toBeGreaterThan(16384);
+    await runInDurableObject(target.stub, async (_instance, state) => {
+      let reservations = 0;
+      const fresh = new WorkConversation(state, { ...config, WORK_REASONING_BUDGET: { getByName: () => { reservations++; throw new Error("SYNTHETIC no reservation expected"); } } });
+      const input = turn({ provider }), result = await fresh.turn(target.id, input, [entry]);
+      expect(result.body.error_code).toBe("provider_not_configured");
+      expect(result.body.attempts[0]).toMatchObject({ outcome: "not_sent", reservation_status: "not_reserved", reserved_tokens: 0 });
+      expect(result.body.reserved_tokens).toBe(0);
+      expect(reservations).toBe(0);
+      expect(state.storage.sql.exec("SELECT SUM(tokens) AS n FROM budgets").one().n).toBe(0);
+      expect(result.body.server_exception.actions.some(action => action.action === "provider_request")).toBe(false);
+      expect(await fresh.turn(target.id, input, [entry])).toEqual(result);
+    });
+  });
+
+  it("preserves the exact fallback allowance when the first provider key is absent", async () => {
+    const probe = caller();
+    const first = await probe.stub.turn(probe.id, turn(), [entry]), limit = first.body.reserved_tokens, target = caller();
+    await runInDurableObject(target.stub, async (_instance, state) => {
+      const budget = env.WORK_REASONING_BUDGET.getByName(crypto.randomUUID());
+      const fresh = new WorkConversation(state, { ...env, META_API_KEY: "", HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR: String(limit), WORK_REASONING_BUDGET: { getByName: () => budget } });
+      const result = await fresh.turn(target.id, plannedTurn(), [entry, providerPlan(target.id)]);
+      expect(result.body.proposal.status).toBe("ready");
+      expect(result.body.attempts[0]).toMatchObject({ error_code: "provider_not_configured", outcome: "not_sent", reservation_status: "not_reserved", reserved_tokens: 0 });
+      expect(result.body.reserved_tokens).toBe(limit);
+      expect(state.storage.sql.exec("SELECT SUM(tokens) AS n FROM budgets").one().n).toBe(limit);
+      expect(result.body.server_exception.actions.filter(action => action.action === "provider_request").map(action => action.provider)).toEqual(["ollama"]);
+      expect((await budget.summary()).today).toEqual([{ provider: "ollama", reserved_calls: 1 }]);
+    });
+  });
+
+  it("reports zero reserved attempt tokens for a known caller-budget denial", async () => {
+    const target = caller();
+    await runInDurableObject(target.stub, async (_instance, state) => {
+      let reservations = 0;
+      const fresh = new WorkConversation(state, { ...env, HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR: "1", WORK_REASONING_BUDGET: { getByName: () => { reservations++; throw new Error("SYNTHETIC no reservation expected"); } } });
+      const result = await fresh.turn(target.id, plannedTurn(), [entry, providerPlan(target.id)]);
+      expect(result.body.error_code).toBe("conversation_budget_exhausted");
+      expect(result.body.attempts).toHaveLength(1);
+      expect(result.body.attempts[0]).toMatchObject({ outcome: "not_sent", reservation_status: "not_reserved", reserved_tokens: 0 });
+      expect(result.body.attempts[0].reservation_ceiling_tokens).toBeGreaterThan(1);
+      expect(result.body.reserved_tokens).toBe(0);
+      expect(reservations).toBe(0);
+    });
+  });
+
+  it.each([201, 202, 204, 206].flatMap(status => [false, true].map(uncertain => [status, uncertain])))("keeps nonfinal HTTP%s outcomes unknown with uncertainty grant=%s", async (status, uncertain) => {
+    const target = caller();
+    await runInDurableObject(target.stub, async (_instance, state) => {
+      const budget = env.WORK_REASONING_BUDGET.getByName(crypto.randomUUID());
+      const fresh = new WorkConversation(state, { ...env, WORK_REASONING_BUDGET: { getByName: () => budget } });
+      const input = plannedTurn({ message: "accepted-status-" + status }), entries = [entry, providerPlan(target.id, uncertain)];
+      const result = await fresh.turn(target.id, input, entries), attempt = result.body.attempts[0];
+      expect(result.body.attempts).toHaveLength(uncertain ? 2 : 1);
+      expect(attempt).toMatchObject({ error_code: "provider_outcome_uncertain", upstream_http_status: status, outcome: "unknown", reservation_status: "reserved", usage: { input_tokens: null, output_tokens: null }, provider_health: { requires_uncertain_authorization: true } });
+      expect(attempt.reserved_usd).toBeGreaterThan(0);
+      expect(attempt.reserved_tokens).toBeGreaterThan(0);
+      expect(JSON.stringify(result)).not.toContain("private-job");
+      const before = await budget.summary();
+      expect(await fresh.turn(target.id, input, entries)).toEqual(result);
+      expect(await budget.summary()).toEqual(before);
+      expect(fresh.snapshot(scope(), input.conversation_id).status).toBe(403);
+    });
+  });
+
+  it.each(["queued", "in_progress"])("keeps OpenAI HTTP200 %s bodies and shared health uncertain", async status => {
+    const target = caller();
+    await runInDurableObject(target.stub, async (_instance, state) => {
+      const budget = env.WORK_REASONING_BUDGET.getByName(crypto.randomUUID());
+      const fresh = new WorkConversation(state, { ...env, WORK_REASONING_BUDGET: { getByName: () => budget } });
+      const input = turn({ provider: "openai", message: "openai-" + status });
+      const result = await fresh.turn(target.id, input, [entry]);
+      expect(result.body.error_code).toBe("provider_outcome_uncertain");
+      expect(result.body.attempts[0]).toMatchObject({ outcome: "unknown", upstream_http_status: 200, reservation_status: "reserved", provider_health: { requires_uncertain_authorization: true } });
+      expect(JSON.stringify(result)).not.toContain("private-job");
+      expect(await fresh.turn(target.id, input, [entry])).toEqual(result);
+      expect((await budget.summary()).today).toEqual([{ provider: "openai", reserved_calls: 1 }]);
+    });
+  });
+
+  it.each([
+    ["openrouter", { n: 3 }], ["meta", { n: 2 }], ["openrouter", { n: true }], ["openrouter", { n: "1" }], ["openai", { n: 1 }],
+    ["openrouter", { best_of: 3 }], ["openai", { service_tier: "priority" }], ["openai", { service_tier: "auto" }],
+    ["openai", { service_tier: "flex" }], ["openai", { service_tier: null }], ["anthropic", { service_tier: "auto" }],
+    ["openrouter", { service_tier: "default" }], ["openai", { prompt: { id: "pmpt_synthetic", version: "1" } }], ["openrouter", { prompt_id: "pmpt_synthetic" }],
+    ["anthropic", { speed: "fast" }], ["anthropic", { inference_geo: "us" }]
+  ])("refuses unpriced or opaque %s generation %j before reservation", async (provider, generation) => {
+    const config = { ...env, [`HERMA_CONVERSATION_${provider.toUpperCase()}_GENERATION`]: JSON.stringify(generation) };
+    expect(() => providerConfig(config, provider)).toThrow("unsupported_generation_configuration");
+    const target = caller();
+    await runInDurableObject(target.stub, async (_instance, state) => {
+      let reservations = 0;
+      const fresh = new WorkConversation(state, { ...config, WORK_REASONING_BUDGET: { getByName: () => { reservations++; throw new Error("SYNTHETIC no reservation expected"); } } });
+      const result = await fresh.turn(target.id, turn({ provider }), [entry]);
+      expect(result.body.code).toBe("unsupported_generation_configuration");
+      expect(reservations).toBe(0);
+      expect(state.storage.sql.exec("SELECT COUNT(*) AS n FROM budgets").one().n).toBe(0);
+    });
+  });
+
+  it.each(["openai", "anthropic", "openrouter"])("preserves normal %s generation and native output with explicit standard pricing", provider => {
+    const generation = { temperature: 0.4, ...(provider === "openrouter" ? { n: 1 } : {}) };
+    const config = providerConfig({ ...env, HERMA_CONVERSATION_MAX_OUTPUT: "300000", [`HERMA_CONVERSATION_${provider.toUpperCase()}_GENERATION`]: JSON.stringify(generation) }, provider);
+    const { body, tokens } = buildRequest(config, turn({ provider }), [], []);
+    expect(body.temperature).toBe(0.4);
+    expect(body[provider === "openai" ? "max_output_tokens" : "max_tokens"]).toBe(300000);
+    expect(tokens).toBeGreaterThan(300000);
+    if (provider === "openrouter") { expect(body.n).toBe(1); expect(body.service_tier).toBeUndefined(); }
+    else expect(body.service_tier).toBe(provider === "openai" ? "default" : "standard_only");
+  });
+
   it("releases caller tokens only for a definite provider-budget denial before failover", async () => {
     const meta = caller(), ollama = caller();
     const a = await meta.stub.turn(meta.id, turn({ provider: "meta" }), [entry]);

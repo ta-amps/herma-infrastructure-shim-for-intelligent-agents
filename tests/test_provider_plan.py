@@ -51,6 +51,8 @@ def prepared(
     entry = plan_entry(uncertain=uncertain)
     store.upsert_context_entry(entry, caller_scope="key:alice", is_admin=False)
     monkeypatch.setenv("HERMA_CONVERSATION_MAX_OUTPUT", "16384")
+    monkeypatch.setenv("META_API_KEY", "synthetic-provider-key")
+    monkeypatch.setenv("OLLAMA_API_KEY", "synthetic-provider-key")
     body = entry.schema_or_body
     assert isinstance(body, dict)
     monkeypatch.setenv(
@@ -241,7 +243,11 @@ def test_anthropic_native_protocol_and_credential_are_distinct(
     assert proposal.status == "ready" and proposal.executed is False
 
 
-def test_exact_token_allowance_has_no_hidden_coordination_charge(tmp_path: Path) -> None:
+def test_exact_token_allowance_has_no_hidden_coordination_charge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OLLAMA_API_KEY", "synthetic-provider-key")
+
     async def call(_config: ProviderConfig, _body: dict[str, Any]) -> dict[str, Any]:
         return tool_reply({"value": {"message": "SYNTHETIC", "synthetic": True}})
 

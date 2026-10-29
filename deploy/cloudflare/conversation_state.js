@@ -1,6 +1,6 @@
 // Conversation coordination, not a work queue. Tessera owns executable tasks.
 import { DurableObject } from "cloudflare:workers";
-import { ConversationError, fail, hash, validateTurn, loadContracts, loadProviderPlan, providerConfig, buildRequest, requestModel, parseProposal, blocked, usageFor } from "./conversation.js";
+import { ConversationError, fail, hash, validateTurn, loadContracts, loadProviderPlan, providerConfig, providerCredential, buildRequest, requestModel, parseProposal, blocked, usageFor } from "./conversation.js";
 import { operatorPolicy, freshHealth, admitHealth, settleHealth, healthView } from "./provider_health.js";
 
 const DAY = 86400000;
@@ -214,7 +214,8 @@ export class WorkConversation extends DurableObject {
           if (plan && candidate.provider === "openrouter" && candidate.routing_provider !== config.openrouter_provider) fail(503, "provider_model_not_configured");
           if (config.model !== candidate.model) fail(503, "provider_model_not_configured");
           const { body, tokens, microusd } = buildRequest(config, turn, contracts, current ? JSON.parse(current.history) : []);
-          Object.assign(attempt, { destination: config.url, routing_provider: config.provider === "openrouter" ? config.openrouter_provider : null, max_output_tokens: config.max_output, timeout_seconds: 25, deadline_policy: "timeout_from_provider_dispatch", reserved_tokens: tokens, reservation_ceiling_usd: config.provider === "ollama" ? null : microusd / 1000000 });
+          providerCredential(this.env, config.provider);
+          Object.assign(attempt, { destination: config.url, routing_provider: config.provider === "openrouter" ? config.openrouter_provider : null, max_output_tokens: config.max_output, timeout_seconds: 25, deadline_policy: "timeout_from_provider_dispatch", reservation_ceiling_tokens: tokens, reservation_ceiling_usd: config.provider === "ollama" ? null : microusd / 1000000 });
           const tokenHour = Math.floor(Date.now() / 3600000);
           this.ctx.storage.transactionSync(() => {
             const hour = tokenHour, budget = first(this.ctx.storage.sql, "SELECT tokens FROM budgets WHERE hour=?", hour);
@@ -222,6 +223,9 @@ export class WorkConversation extends DurableObject {
             this.ctx.storage.sql.exec("INSERT INTO budgets VALUES (?,0,?) ON CONFLICT(hour) DO UPDATE SET tokens=tokens+excluded.tokens", hour, tokens);
           });
           base.reserved_tokens += tokens;
+          attempt.reserved_tokens = tokens;
+          attempt.reservation_status = "pending";
+          base.reservation_status = "pending";
           persist();
           const reservation = await this.env.WORK_REASONING_BUDGET.getByName("provider-allowance-v1").reserve(attempt.attempt_id, config.provider, fingerprint, microusd, { allow_probe: plan?.allow_recovery_probe !== false, allow_uncertain: plan?.allow_uncertain_outcome === true });
           if (typeof reservation?.ok !== "boolean" || (!reservation.ok && !reservationDenials.has(reservation.code)) || (reservation.ok && (!reservation.ticket || Object.keys(reservation.ticket).length !== 2 || !["*", config.model].every(key => Object.hasOwn(reservation.ticket, key) && Number.isSafeInteger(reservation.ticket[key]) && reservation.ticket[key] >= 0) || !["healthy", "recovery_probe"].includes(reservation.health?.state)))) throw new Error("invalid_reservation_response");
@@ -272,7 +276,7 @@ export class WorkConversation extends DurableObject {
         }
         if (attempt.available_after !== null) this.ctx.storage.sql.exec("INSERT INTO provider_health VALUES (?,?,?) ON CONFLICT(provider,model) DO UPDATE SET available_after=excluded.available_after", attempt.provider, attempt.model, attempt.available_after);
         persist();
-        if (errorCode === null || !plan || !["provider_not_configured", "provider_model_not_configured", "output_allowance_required", "invalid_provider_configuration", "provider_unauthorized", "provider_rate_limited", "provider_rejected", "provider_unavailable", "provider_budget_exhausted", "provider_call_budget_exhausted", "provider_cooldown", "provider_operator_disabled", "provider_backpressure", "provider_recovery_probe_required", "provider_recovery_probe_inflight", "provider_outcome_reconciliation_required"].includes(errorCode) || (attempt.outcome === "unknown" && !plan.allow_uncertain_outcome)) break;
+        if (errorCode === null || !plan || !["provider_not_configured", "provider_model_not_configured", "output_allowance_required", "invalid_provider_configuration", "unsupported_generation_configuration", "provider_unauthorized", "provider_rate_limited", "provider_rejected", "provider_outcome_uncertain", "provider_unavailable", "provider_budget_exhausted", "provider_call_budget_exhausted", "provider_cooldown", "provider_operator_disabled", "provider_backpressure", "provider_recovery_probe_required", "provider_recovery_probe_inflight", "provider_outcome_reconciliation_required"].includes(errorCode) || (attempt.outcome === "unknown" && !plan.allow_uncertain_outcome)) break;
       }
       const last = attempts.at(-1);
       const response = await this.#finish(turn, { ...base, ...proposal, provider: last.provider, model: last.model, usage: last.usage, latency_ms: Date.now() - started, error_code: errorCode }, turn.message);

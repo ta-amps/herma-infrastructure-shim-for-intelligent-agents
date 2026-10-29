@@ -140,6 +140,8 @@ describe("shared operator provider availability", () => {
       const result = await instance.turn(target.id, input(), [entry]);
       expect(result.body.error_code).toBe("storage_or_coordination_unavailable");
       expect(result.body.server_exception.actions.some(action => action.action === "provider_request")).toBe(false);
+      expect(result.body.attempts[0].reservation_status).toBe("pending");
+      expect(result.body.reservation_status).toBe("pending");
       expect(state.storage.sql.exec("SELECT SUM(tokens) AS n FROM budgets").one().n).toBeGreaterThan(0);
     });
   });

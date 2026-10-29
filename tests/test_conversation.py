@@ -49,6 +49,7 @@ CONTRACT = {
 @pytest.fixture(autouse=True)
 def explicit_test_allowance(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HERMA_CONVERSATION_MAX_OUTPUT", "16384")
+    monkeypatch.setenv("OLLAMA_API_KEY", "synthetic-provider-key")
 
 
 def contract() -> WorkContract:

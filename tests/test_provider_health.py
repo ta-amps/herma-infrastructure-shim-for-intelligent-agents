@@ -44,6 +44,7 @@ def prepare_plan(
 @pytest.fixture
 def configured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HERMA_CONVERSATION_MAX_OUTPUT", "16384")
+    monkeypatch.setenv("META_API_KEY", "synthetic-provider-key")
     monkeypatch.setenv("HERMA_CONVERSATION_DISABLED_PROVIDERS", "[]")
     monkeypatch.setenv(
         "HERMA_CONVERSATION_PROVIDER_PLAN_ALLOWLIST",
