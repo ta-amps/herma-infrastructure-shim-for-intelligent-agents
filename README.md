@@ -1,10 +1,19 @@
 # Herma
 
+Herma is the integration and context adapter project. A project is a public
+surface and purpose organizing nouns and verbs. Versioned nouns carry data and
+evidence; claimable verbs carry work. Tessera's storage and task contracts remain
+the shared authority. Herma adds no separate domain reasoning runtime.
+
 The default agentic executor is the worker's own harness holding a Tessera verb.
 Inputs, contracts, artifacts and evidence remain scoped nouns. Herma supplies
 configured context when useful; server model turns are explicit bounded exceptions.
 
-Optional [typed work conversations](docs/conversations.md) let authenticated harnesses ask for clarification and receive one schema-checked noun/verb proposal at a time. Meta and Ollama calls use server credentials, durable budget reservations and caller-scoped state. A proposal is never executed by the conversation endpoint.
+Optional [typed work conversations](docs/conversations.md) let authenticated harnesses ask for clarification and receive one schema-checked noun/verb proposal at a time. Muse, Ollama Cloud and OpenAI use explicit provider protocols, server credentials, output allowances, durable budget reservations and caller-scoped state. The existing turn receipt records the server exception. A proposal is never executed by the conversation endpoint.
+
+Workers may use their own local or cloud providers through the ordinary shim.
+Herma preserves native generation settings without imposing a response-token
+default. See [provider selection and local resources](docs/conversations.md#worker-owned-providers).
 
 Read the [design decisions and experiment results](docs/design-and-evidence.md)
 and [agent troubleshooting guide](docs/agent-troubleshooting.md). Workers self-check;

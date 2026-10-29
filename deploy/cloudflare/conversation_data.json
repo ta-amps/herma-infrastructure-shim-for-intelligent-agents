@@ -624,7 +624,8 @@
           "default": "ollama",
           "enum": [
             "ollama",
-            "meta"
+            "meta",
+            "openai"
           ],
           "title": "Provider",
           "type": "string"

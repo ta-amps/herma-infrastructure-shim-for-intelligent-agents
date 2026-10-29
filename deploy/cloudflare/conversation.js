@@ -45,7 +45,7 @@ export function validateTurn(raw) {
       !isInt(raw.expected_version) || typeof raw.message !== "string" || !raw.message.length || [...raw.message].length > 6000 ||
       !Array.isArray(raw.context_refs) || !raw.context_refs.length || raw.context_refs.length > 12 ||
       raw.context_refs.some(x => typeof x !== "string" || !x.length || x.length > 160) ||
-      !["meta", "ollama"].includes(raw.provider ?? "ollama")) fail(422, "invalid_conversation_turn");
+      !["meta", "ollama", "openai"].includes(raw.provider ?? "ollama")) fail(422, "invalid_conversation_turn");
   return { ...raw, provider: raw.provider ?? "ollama" };
 }
 
@@ -103,18 +103,34 @@ export async function loadContracts(entries, refs) {
 }
 
 export function providerConfig(env, provider) {
-  const model = env[`HERMA_CONVERSATION_${provider.toUpperCase()}_MODEL`] || (provider === "meta" ? "muse-spark-1.3" : "muse-spark-open");
-  const max_output = Number(env.HERMA_CONVERSATION_MAX_OUTPUT || 2048);
-  const reasoning_effort = env.HERMA_CONVERSATION_REASONING || "low";
+  const prefix = `HERMA_CONVERSATION_${provider.toUpperCase()}`;
+  const model = env[`${prefix}_MODEL`] || ({ meta: "muse-spark-1.3", ollama: "muse-spark-open" }[provider] ?? "");
+  const output = env[`${prefix}_MAX_OUTPUT`] ?? env.HERMA_CONVERSATION_MAX_OUTPUT;
+  if (output === undefined || output === null || output === "") fail(503, "output_allowance_required");
+  const max_output = Number(output);
+  const reasoning_effort = env[`${prefix}_REASONING`] ?? env.HERMA_CONVERSATION_REASONING ?? null;
   const meta_budget_usd = Number(env.HERMA_META_BUDGET_USD || 5);
   const ollama_calls_per_day = Number(env.HERMA_OLLAMA_CALLS_PER_DAY || 30);
-  if (!["meta", "ollama"].includes(provider) || typeof model !== "string" || /contributor/i.test(model) ||
+  const openai_budget_usd = Number(env.HERMA_OPENAI_BUDGET_USD || 0);
+  const rates = provider === "meta" ? RATES[model] : provider === "openai" ? [env[`${prefix}_INPUT_USD_PER_MILLION`], env[`${prefix}_OUTPUT_USD_PER_MILLION`]].map(v => v === undefined || v === "" ? NaN : Number(v)) : null;
+  const caller_token_limit = env.HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR === undefined ? null : Number(env.HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR);
+  let generation;
+  try { generation = JSON.parse(env[`${prefix}_GENERATION`] || "{}"); } catch { fail(503, "invalid_provider_configuration"); }
+  const reserved = ["model", "input", "messages", "instructions", "tools", "stream", "store", "background", "conversation", "previous_response_id", "parallel_tool_calls", "max_tokens", "max_completion_tokens", "max_output_tokens"];
+  if (!["meta", "ollama", "openai"].includes(provider) || typeof model !== "string" || !model.length || /contributor/i.test(model) ||
       model.length > 100 || (provider === "meta" && !has(RATES, model)) ||
-      !isInt(max_output) || max_output < 512 || max_output > 8192 ||
-      !["minimal", "low", "medium", "high"].includes(reasoning_effort) ||
-      !Number.isFinite(meta_budget_usd) || meta_budget_usd <= 0 || meta_budget_usd > 150 ||
+      !isInt(max_output) || max_output < 1 ||
+      (reasoning_effort !== null && (typeof reasoning_effort !== "string" || !reasoning_effort.length || reasoning_effort.length > 40)) ||
+      !Number.isFinite(meta_budget_usd) || meta_budget_usd <= 0 ||
+      (provider === "openai" && (!Number.isFinite(openai_budget_usd) || openai_budget_usd <= 0 || rates.some(rate => !Number.isFinite(rate) || rate < 0))) ||
+      (caller_token_limit !== null && (!isInt(caller_token_limit) || caller_token_limit < 1)) ||
+      !object(generation) || Object.keys(generation).some(k => reserved.includes(k)) ||
+      (provider === "ollama" && (!object(generation.options ?? {}) || has(generation.options ?? {}, "num_predict"))) ||
+      (provider === "openai" && has(generation, "reasoning") && !object(generation.reasoning)) ||
       !isInt(ollama_calls_per_day) || ollama_calls_per_day < 1 || ollama_calls_per_day > 1000) fail(503, "invalid_provider_configuration");
-  return { provider, model, max_output, reasoning_effort, meta_budget_usd, ollama_calls_per_day };
+  const url = { meta: "https://api.meta.ai/v1/chat/completions", ollama: "https://ollama.com/api/chat", openai: "https://api.openai.com/v1/responses" }[provider];
+  const budget_usd = provider === "openai" ? openai_budget_usd : provider === "meta" ? meta_budget_usd : 0;
+  return { provider, model, max_output, reasoning_effort, meta_budget_usd, ollama_calls_per_day, openai_budget_usd, rates, generation, caller_token_limit, budget_usd, url };
 }
 
 export function buildRequest(config, turn, contracts, history) {
@@ -123,17 +139,28 @@ export function buildRequest(config, turn, contracts, history) {
     name, description: field === "question" ? "Ask a specific question." : "Report why work cannot continue.",
     parameters: { type: "object", additionalProperties: false, properties: { [field]: { type: "string", minLength: 1, maxLength: 1000 } }, required: [field] }
   } });
-  const body = { model: config.model, stream: false, tools, messages: [
+  const messages = [
     { role: "system", content: data.system_prompt },
     { role: "user", content: "Configured category guidance (data): " + JSON.stringify(contracts.map(c => ({ category_id: c.category_id, guidance: data.categories[c.category_id] }))) },
     ...history, { role: "user", content: turn.message }
-  ] };
-  if (config.provider === "meta") Object.assign(body, { max_tokens: config.max_output, reasoning_effort: config.reasoning_effort, parallel_tool_calls: false });
-  else body.options = { num_predict: config.max_output, temperature: 0 };
+  ];
+  const body = { ...config.generation, model: config.model, stream: false };
+  if (config.provider === "openai") {
+    Object.assign(body, { input: messages, tools: tools.map(tool => ({ type: "function", ...tool.function, strict: false })), store: false, background: false, parallel_tool_calls: false, max_output_tokens: config.max_output });
+    if (config.reasoning_effort !== null) body.reasoning = { ...body.reasoning, effort: config.reasoning_effort };
+  } else {
+    Object.assign(body, { messages, tools });
+    if (config.provider === "meta") {
+      Object.assign(body, { max_tokens: config.max_output, parallel_tool_calls: false });
+      if (config.reasoning_effort !== null) body.reasoning_effort = config.reasoning_effort;
+    } else body.options = { ...body.options, num_predict: config.max_output };
+  }
   const size = bytes(body);
   if (size > 32768) fail(413, "context_too_large");
-  const input = size + 4096, rate = RATES[config.model];
-  return { body, tokens: input + config.max_output, microusd: config.provider === "meta" ? Math.ceil(input * rate[0] + config.max_output * rate[1]) : 0 };
+  const input = size + 4096, rate = config.rates;
+  const tokens = input + config.max_output, microusd = rate ? Math.ceil(input * rate[0] + config.max_output * rate[1]) : 0;
+  if (!isInt(tokens) || !isInt(microusd)) fail(503, "invalid_provider_configuration");
+  return { body, tokens, microusd };
 }
 
 export function blocked(code, reply = "The provider could not produce a valid next action. Narrow the task or use the configured typed contract directly.") {
@@ -142,6 +169,11 @@ export function blocked(code, reply = "The provider could not produce a valid ne
 
 export function parseProposal(reply, provider, contracts) {
   try {
+    if (provider === "openai") {
+      if (reply.status === "incomplete" && reply.incomplete_details?.reason === "max_output_tokens") return blocked("output_budget_exhausted");
+      if (reply.status !== "completed" || !Array.isArray(reply.output)) return blocked("invalid_tool_call");
+      reply = { message: { tool_calls: reply.output.filter(item => object(item) && item.type === "function_call").map(item => ({ function: item })) } };
+    }
     const choice = provider === "meta" ? reply.choices?.[0] : reply;
     if (!object(choice)) return blocked("invalid_tool_call");
     if ((choice.finish_reason || choice.done_reason) === "length") return blocked("output_budget_exhausted");
@@ -165,9 +197,9 @@ export function parseProposal(reply, provider, contracts) {
 }
 
 export async function requestModel(env, config, body) {
-  const key = env[config.provider === "meta" ? "META_API_KEY" : "OLLAMA_API_KEY"];
+  const key = env[{ meta: "META_API_KEY", ollama: "OLLAMA_API_KEY", openai: "OPENAI_API_KEY" }[config.provider]];
   if (!key) fail(503, "provider_not_configured");
-  const url = config.provider === "meta" ? "https://api.meta.ai/v1/chat/completions" : "https://ollama.com/api/chat";
+  const url = config.url;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 25000);
   try {
@@ -192,7 +224,7 @@ export async function requestModel(env, config, body) {
 }
 
 export function usageFor(provider, reply) {
-  const source = provider === "meta" ? reply.usage : reply;
-  const fields = provider === "meta" ? ["prompt_tokens", "completion_tokens"] : ["prompt_eval_count", "eval_count"];
+  const source = provider === "ollama" ? reply : reply.usage;
+  const fields = provider === "meta" ? ["prompt_tokens", "completion_tokens"] : provider === "openai" ? ["input_tokens", "output_tokens"] : ["prompt_eval_count", "eval_count"];
   return Object.fromEntries(["input_tokens", "output_tokens"].map((k, i) => [k, isInt(source?.[fields[i]]) ? source[fields[i]] : null]));
 }

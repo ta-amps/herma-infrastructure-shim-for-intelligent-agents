@@ -46,6 +46,11 @@ CONTRACT = {
 }
 
 
+@pytest.fixture(autouse=True)
+def explicit_test_allowance(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HERMA_CONVERSATION_MAX_OUTPUT", "16384")
+
+
 def contract() -> WorkContract:
     return WorkContract.model_validate(copy.deepcopy(CONTRACT))
 
@@ -262,7 +267,9 @@ def test_provider_redirect_cannot_exfiltrate_secret(monkeypatch: pytest.MonkeyPa
     with pytest.raises(ProviderFailure, match="provider_rejected"):
         asyncio.run(
             request_model(
-                ProviderConfig("meta", "muse-spark-1.3"), {}, transport=httpx.MockTransport(handler)
+                ProviderConfig("meta", "muse-spark-1.3", max_output=16384),
+                {},
+                transport=httpx.MockTransport(handler),
             )
         )
     assert calls == ["https://api.meta.ai/v1/chat/completions"]

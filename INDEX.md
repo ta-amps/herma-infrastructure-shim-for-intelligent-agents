@@ -122,7 +122,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/conversation.test.js](test/conversation.test.js) |  |
 | [test/triggers.test.js](test/triggers.test.js) |  |
 
-## tests/ (8)
+## tests/ (9)
 
 | File | What it is |
 |---|---|
@@ -133,4 +133,5 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [tests/test_external_access_security.py](tests/test_external_access_security.py) | Regression proofs for scoped personal-assistant access and fail-closed fabric imports. |
 | [tests/test_harness_gate_and_store.py](tests/test_harness_gate_and_store.py) | Tests for configurable-harness access gate, CAS store, Tessera sync, and remote handshake sync. |
 | [tests/test_herma.py](tests/test_herma.py) | Tests for multi-caller isolation, CAS, governance lens, entity memory, insights, preview, and MCP parity. |
+| [tests/test_provider_contracts.py](tests/test_provider_contracts.py) | Provider selection, native generation and exception allowance stay explicit. |
 | [tests/test_triggers.py](tests/test_triggers.py) | Tests for Tier-1 (keyword/regex/path/tool), Tier-2 (semantic), and Tier-3 (micromodel) triggers. |

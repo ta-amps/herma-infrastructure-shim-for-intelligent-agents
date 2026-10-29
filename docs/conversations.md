@@ -32,17 +32,54 @@ Provider configuration is operator-owned:
 | `HERMA_CONVERSATION_ENABLED` | disabled |
 | `HERMA_CONVERSATION_META_MODEL` | `muse-spark-1.3` |
 | `HERMA_CONVERSATION_OLLAMA_MODEL` | `muse-spark-open` |
-| `HERMA_CONVERSATION_MAX_OUTPUT` | 2048, bounded to 512 through 8192 |
-| `HERMA_CONVERSATION_REASONING` | `low` for Meta |
-| `HERMA_META_BUDGET_USD` | 5 cumulative reserved dollars, maximum 150 |
+| `HERMA_CONVERSATION_OPENAI_MODEL` | Required when selecting OpenAI; no guessed model |
+| `HERMA_CONVERSATION_<PROVIDER>_MAX_OUTPUT` | Required positive output allowance; no default or universal token clamp |
+| `HERMA_CONVERSATION_MAX_OUTPUT` | Optional legacy shared allowance, overridden by the provider setting |
+| `HERMA_CONVERSATION_<PROVIDER>_REASONING` | Omitted unless configured; optional shared `HERMA_CONVERSATION_REASONING` fallback |
+| `HERMA_CONVERSATION_<PROVIDER>_GENERATION` | JSON object of native generation settings, empty by default |
+| `HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR` | Optional cumulative caller token allowance; absent by default |
+| `HERMA_META_BUDGET_USD` | 5 cumulative reserved dollars |
+| `HERMA_OPENAI_BUDGET_USD` | Required positive cumulative reserved dollar allowance for OpenAI |
+| `HERMA_CONVERSATION_OPENAI_INPUT_USD_PER_MILLION` | Required configured model input price ceiling |
+| `HERMA_CONVERSATION_OPENAI_OUTPUT_USD_PER_MILLION` | Required configured model output price ceiling |
 | `HERMA_OLLAMA_CALLS_PER_DAY` | 30 shared UTC-day reservations in the Worker |
 
-Use `META_API_KEY` and `OLLAMA_API_KEY` only in the server secret store. Their destinations are fixed to the provider's HTTPS host; redirects are refused. Contributor models are refused. Model bodies are capped at 32 KiB, responses at 1 MiB, and requests time out. Each caller is limited to 60 turns and 200,000 conservatively reserved tokens per hour. Meta reservations also share a durable global ceiling across callers. The price ceiling uses the standard Spark and Wonder tariffs in the [Meta pricing documentation](https://dev.meta.ai/docs/pricing-rate-limits); review those rates before changing models.
+`<PROVIDER>` is `META`, `OLLAMA` or `OPENAI`. Use `META_API_KEY`, `OLLAMA_API_KEY` and `OPENAI_API_KEY` only in the server secret store. Each credential has a fixed HTTPS destination; redirects are refused, missing credentials fail closed and a failed provider never triggers another provider. Contributor models are refused. These API keys are independent of harness subscriptions or signed-in application sessions.
+
+| Turn provider | Protocol and destination | Generation mapping |
+| --- | --- | --- |
+| `meta` (Muse) | Chat Completions, `https://api.meta.ai/v1/chat/completions` | Explicit allowance becomes `max_tokens`; optional `reasoning_effort` |
+| `ollama` (Cloud) | Native chat, `https://ollama.com/api/chat` | Explicit allowance becomes `options.num_predict`; native options and `think` survive |
+| `openai` | Responses, `https://api.openai.com/v1/responses` | Explicit allowance becomes `max_output_tokens`; optional `reasoning` settings |
+
+OpenAI requires an explicitly priced model and operator allowance before spending. Responses function tools use the flat tool schema and parse completed `function_call` output items. `strict:false` preserves the existing portable contract's optional fields; Herma still validates every proposed payload locally. Responses storage and background execution are disabled. See the official [function calling guide](https://developers.openai.com/api/docs/guides/function-calling) and [Responses reference](https://developers.openai.com/api/reference/python/resources/responses/methods/create), checked October 29, 2026. OpenAI-compatible Chat Completions servers are not assumed to implement Responses.
+
+Generation JSON cannot replace the model, inputs, tools, storage controls or output allowance. Configure the allowance separately so the exact submitted bound and pre-call reservation agree. Other native settings survive without a forced temperature or reasoning effort. For example, Ollama generation JSON can contain `{"think":true,"options":{"num_ctx":524288,"temperature":0.4}}`; that does not change `num_predict`. A configured 300,000-token allowance remains 300,000, subject to the selected provider/model's actual support. There is no hidden 2,048-token reservation or implicit 200,000-token hourly cutoff. Configure a smaller explicit allowance when the task needs one, or a verified provider capacity when it needs the full model range.
+
+The output allowance is required only for this operator-funded server exception. Missing configuration returns `output_allowance_required` before inference. Deployments upgrading from the old implicit default must configure the provider allowances deliberately or leave the conversation flag disabled. Model request bodies remain limited to 32 KiB and parsed responses to 1 MiB to bound request handling; these are transport protections, not generation settings. Requests time out and each caller has 60 server conversation turns per hour. Meta and OpenAI reservations also share separate durable global dollar ceilings across callers. Meta prices use the standard Spark and Wonder tariffs in the [Meta pricing documentation](https://dev.meta.ai/docs/pricing-rate-limits); review those rates and OpenAI's configured tariff before changing models. These server spending controls do not limit Tessera worker claims or caller-funded proxy output.
 
 Reservations are not invoices. Responses retain reported token usage, or null if absent, while cost stays null with a reason. Uncertain calls are not refunded automatically. Starting another conversation cannot reset a caller's hourly quota or the global provider ceiling.
+
+The existing turn record persists `server_exception` before inference: the caller-requested interactive purpose, why that server capability was selected, authenticated principal, caller/conversation/context scope, proposal-only effect, operator payer, destination, exact output allowance, reservation, timeout and no-retry/no-provider-fallback policy. Completion adds usage and outcome to the same receipt. There is no second work queue or domain authority. Private workers holding scoped Tessera verbs remain the preferred way to perform planning, research, generation and review. Empty queues, unavailable workers, malformed data and missing review capacity do not invoke this endpoint automatically.
 
 The Worker reports `reservation_status` as pending, reserved or denied, separately from the planned `reservation_ceiling_usd`. A denied provider budget returns 429 with a stored blocked receipt; its exact replay also returns 429. `GET /v1/admin/conversation-budget` requires the existing admin credential and shows aggregate reserved dollars and daily call counts without tokens or transcripts. Increasing the budget variable changes the cumulative ceiling; a deployment does not reset the ledger. Python experiment databases and the deployed Worker have separate ledgers, so the operator must reconcile both against the account-wide ceiling.
 
 Deploy with the repository's pinned Wrangler after `npm ci --ignore-scripts` and `make check`. The additive `work-conversation-v1` migration creates `WorkConversation` and `WorkReasoningBudget`; D1 context/auth tables remain authoritative. Set provider keys with Wrangler secrets, then enable the flag. To stop new model turns, disable the flag and retain the DO bindings/classes and budget ledger. Roll forward with the disabled flag for an emergency rollback; do not remove stateful classes or reset their namespace. The public MCP tools stay deterministic; paid conversations are reached through the authenticated HTTP route.
 
 Recovery proceeds one step at a time: clarify required fields, narrow the task, choose fewer context entries, then adjust an operator-owned reasoning/output profile or provider. Explicit function schemas are used because [Ollama Cloud does not currently support structured outputs](https://docs.ollama.com/capabilities/structured-outputs). Keep the original failure and controls when evaluating a repair. A successful proposal is evidence of schema conformance, not evidence that a real task completed.
+
+## Worker-owned providers
+
+The ordinary Herma shim accepts caller-funded `/v1/chat/completions`, `/v1/responses` and `/v1/messages` requests. Set `X-Upstream-Base-Url` or `X-Herma-Upstream-Url` explicitly and provide that destination's `X-Upstream-Api-Key`. The selected wire protocol must exist at the chosen service. Herma passes generation fields through, including an omitted output limit; it does not inject the server conversation allowance. An operator credential is bound to its configured origin and is never borrowed for an alternate provider.
+
+| Worker resource | Herma route | Explicit upstream base |
+| --- | --- | --- |
+| OpenAI Responses model | `/v1/responses` | `https://api.openai.com` |
+| Muse Chat Completions | `/v1/chat/completions` | `https://api.meta.ai` |
+| Ollama Cloud compatibility endpoint | `/v1/chat/completions` | `https://ollama.com` |
+| Local Ollama compatibility endpoint | `/v1/chat/completions` | `http://localhost:11434` |
+| Other local compatible server | Its supported protocol route | Its explicit operator-allowlisted endpoint |
+
+Localhost means the machine running Herma. Run the Python shim beside a local harness/model; a deployed Cloudflare Worker cannot use the caller's localhost. Default allowlisting includes localhost and 127.0.0.1. Additional hosts require `HERMA_ALLOWED_UPSTREAM_HOSTS`. Keep unrelated provider credentials out of the worker environment, and do not place keys in nouns, verb briefs or receipts. Native Ollama `/api/chat` is available to a worker directly; the ordinary shim's compatible route is `/v1/chat/completions`.
+
+The project surface organizes these integration capabilities. Nouns remain versioned input/context/evidence, verbs remain claimable work, and Tessera's existing storage/task contracts own their lifecycle. Provider selection changes a worker's permitted execution resources; it does not create a new reasoning authority.

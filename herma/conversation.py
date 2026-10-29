@@ -60,7 +60,28 @@ def parse_proposal(
     reply: dict[str, Any], provider: str, contracts: list[WorkContract]
 ) -> tuple[Proposal, list[dict[str, str]]]:
     try:
-        if provider == "meta":
+        if provider == "openai":
+            if (
+                reply.get("status") == "incomplete"
+                and isinstance(reply.get("incomplete_details"), dict)
+                and reply["incomplete_details"].get("reason") == "max_output_tokens"
+            ):
+                return Proposal(
+                    status="blocked", reply="The model exhausted its explicit output allowance."
+                ), [{"path": "/", "rule": "output_budget_exhausted"}]
+            if reply.get("status") != "completed":
+                raise ValueError("response did not complete")
+            output = reply["output"]
+            if not isinstance(output, list):
+                raise ValueError("invalid output")
+            message = {
+                "tool_calls": [
+                    {"function": item}
+                    for item in output
+                    if isinstance(item, dict) and item.get("type") == "function_call"
+                ]
+            }
+        elif provider == "meta":
             choice = reply["choices"][0]
             if not isinstance(choice, dict):
                 raise ValueError("invalid choice")
@@ -182,21 +203,28 @@ class ConversationEngine:
             *snapshot["history"],
             {"role": "user", "content": turn.message},
         ]
-        body: dict[str, Any] = {
-            "model": config.model,
-            "messages": messages,
-            "tools": tools_for(contracts),
-            "stream": False,
-        }
-        if config.provider == "meta":
-            body.update(
-                max_tokens=config.max_output,
-                reasoning_effort=config.reasoning_effort,
-                parallel_tool_calls=False,
-            )
-        else:
-            body["options"] = {"num_predict": config.max_output, "temperature": 0}
+        body = config.build_request(messages, tools_for(contracts))
         tokens, cost = config.reservation(body)
+        exception_record = {
+            "purpose": "caller_requested_typed_proposal",
+            "worker_path_reason": "Caller explicitly selected the interactive server capability.",
+            "principal": scope,
+            "data_scope": {
+                "caller_scope": scope,
+                "context_refs": turn.context_refs,
+                "conversation_id": turn.conversation_id,
+            },
+            "effects": "proposal_only",
+            "payer": "operator",
+            "provider": config.provider,
+            "destination": config.url,
+            "max_output_tokens": config.max_output,
+            "reserved_tokens": tokens,
+            "reserved_usd": cost / 1000000 if config.provider != "ollama" else None,
+            "timeout_seconds": config.timeout_seconds,
+            "deadline_policy": "timeout_from_provider_dispatch",
+            "retry_policy": "no_automatic_retry_or_provider_fallback",
+        }
         version, replay = self.state.reserve(
             scope=scope,
             conversation=turn.conversation_id,
@@ -205,11 +233,11 @@ class ConversationEngine:
             fingerprint=fingerprint,
             contract_hash=contract_hash,
             tokens=tokens,
+            token_limit=config.caller_token_limit,
             provider=config.provider,
             reserve_microusd=cost,
-            budget_microusd=int(config.meta_budget_usd * 1000000)
-            if config.provider == "meta"
-            else 0,
+            budget_microusd=int(config.budget_usd * 1000000),
+            exception_record=exception_record,
         )
         if replay is not None:
             return replay
@@ -238,13 +266,14 @@ class ConversationEngine:
             "validation_issues": issues,
             "provider": config.provider,
             "model": config.model,
-            "reasoning_effort": config.reasoning_effort if config.provider == "meta" else None,
+            "reasoning_effort": config.reasoning_effort if config.provider != "ollama" else None,
             "max_output_tokens": config.max_output,
             "usage": usage_for(config.provider, reply),
             "cost_usd": None,
             "cost_reason": "Provider invoice is not available; reservations are conservative ceilings, not charges.",
             "reserved_tokens": tokens,
-            "reserved_usd": cost / 1000000 if config.provider == "meta" else None,
+            "reserved_usd": cost / 1000000 if config.provider != "ollama" else None,
+            "server_exception": exception_record,
             "latency_ms": round((time.monotonic() - started) * 1000),
             "error_code": error,
             "executed": False,
