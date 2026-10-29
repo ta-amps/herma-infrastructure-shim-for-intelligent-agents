@@ -61,6 +61,7 @@ describe("typed conversation in the Workers runtime", () => {
     expect(second.body.max_output_tokens).toBe(16384);
     expect(second.body.server_exception).toMatchObject({ purpose: "caller_requested_typed_proposal", principal: id, payer: "operator", retry_policy: "no_automatic_retry_or_provider_fallback" });
     expect(second.body.usage).toEqual({ input_tokens: 100, output_tokens: 50 });
+    expect(second.body.attempts[0]).toMatchObject({ upstream_http_status: 200, provider_diagnostics: null });
     expect(second.body.receipt_hash).toMatch(/^[a-f0-9]{64}$/);
     if (provider === "openrouter") expect(second.body.attempts[0]).toMatchObject({ destination: "https://openrouter.ai/api/v1/chat/completions", routing_provider: "synthetic-host", reported_provider: "synthetic-host" });
     await runInDurableObject(stub, (_instance, state) => state.storage.sql.exec("UPDATE conversations SET history=?", JSON.stringify([{ role: "user", content: "x".repeat(40000) }])));
@@ -75,6 +76,7 @@ describe("typed conversation in the Workers runtime", () => {
     expect(result.body.attempts.map(a => [a.provider, a.outcome])).toEqual([["meta", "rejected"], ["ollama", "completed"]]);
     expect(result.body.attempts[0].usage).toEqual({ input_tokens: null, output_tokens: null });
     expect(result.body.attempts[0].reserved_usd).toBeGreaterThan(0);
+    expect(result.body.attempts[0]).toMatchObject({ upstream_http_status: 429, provider_diagnostics: { body_state: "malformed", reason: "unknown" } });
     expect(await stub.turn(id, input, [entry, plan])).toEqual(result);
     expect((await stub.snapshot(id, input.conversation_id)).body.attempts).toEqual(result.body.attempts);
     expect((await stub.snapshot(scope(), input.conversation_id)).status).toBe(403);
@@ -220,6 +222,25 @@ describe("typed conversation in the Workers runtime", () => {
     expect(result.body.executed).toBe(false);
     expect(JSON.stringify(result)).not.toContain("private upstream body");
     expect(await stub.turn(id, input, [entry])).toEqual(result);
+  });
+
+  it.each([
+    ["diagnostic-parameter", 400, "unsupported_parameter"],
+    ["diagnostic-credit", 400, "credit_or_quota_exhausted"],
+    ["diagnostic-model", 404, "model_unavailable"],
+    ["diagnostic-unknown", 503, "unknown"]
+  ])("persists only bounded %s diagnostics, preserving usage, reservation and replay", async (message, status, reason) => {
+    const { id, stub } = caller(), input = turn({ message, provider: "openai" });
+    const result = await stub.turn(id, input, [entry]), attempt = result.body.attempts[0];
+    expect(result.body.error_code).toBe(status === 503 ? "provider_unavailable" : "provider_rejected");
+    expect(attempt).toMatchObject({ upstream_http_status: status, outcome: status === 503 ? "unknown" : "rejected", reservation_status: "reserved", usage: { input_tokens: null, output_tokens: null }, provider_diagnostics: { source: "provider_reported", body_state: "parsed", reason } });
+    expect(attempt.reserved_usd).toBeGreaterThan(0);
+    expect(await stub.turn(id, input, [entry])).toEqual(result);
+    expect((await stub.snapshot(id, input.conversation_id)).body.attempts).toEqual(result.body.attempts);
+    expect((await stub.snapshot(scope(), input.conversation_id)).status).toBe(403);
+    const raw = JSON.stringify(result);
+    for (const value of ["sk-" + "synthetic".repeat(8), "acct_synthetic_private", "req_synthetic_private", "metadata"]) expect(raw).not.toContain(value);
+    if (reason === "unknown") expect(attempt.provider_diagnostics).toMatchObject({ type: null, code: null, parameter: null });
   });
 
   it("reconstructs from SQLite and seals an uncertain turn without another provider call", async () => {

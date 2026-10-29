@@ -4,12 +4,13 @@ Architecture direction adopted October 28, 2026, clarified October 29. This poli
 
 Independently schedulable agentic work must be a **verb that an authorized worker claims**, unless an explicit server exception applies. A noun holds versioned input, context, code, a tool, a model, a recipe, an artifact or evidence. Workers reason, act, check and repair. The server coordinates identity, discovery, leases, storage, validation and receipts without autonomous model calls on the normal path.
 
-## Projects, nouns and verbs
+## Nouns, verbs and public surfaces
 
-Use three concepts to explain the system. A **project** is a public surface and
-scoped purpose that organizes **nouns** and **verbs**. Its definition, configuration
-and profile can use existing noun records. A project is not a new queue, storage
-or permission authority. Packs distribute reusable nouns and verb templates;
+The domain primitives are **nouns** and **verbs**, supported by limited
+infrastructure and public surfaces. A **project** is a human grouping or a surface
+label with a scoped purpose, not a third primitive. Its definition, configuration
+and profile use existing noun records. A project is not a new queue, storage
+or permission authority. Seed packs contain reusable nouns and verbs;
 their repositories and showcase pages do not become independent agent runtimes.
 
 Every new capability must identify its nouns, independently schedulable verbs,

@@ -2,6 +2,7 @@
 import { Validator } from "@cfworker/json-schema";
 import data from "./conversation_data.json" with { type: "json" };
 import { canonicalJson, sha256Hex } from "./herma_engine.js";
+import { readProviderError } from "./provider_diagnostics.js";
 
 export class ConversationError extends Error {
   constructor(status, code) { super(code); this.status = status; this.code = code; }
@@ -237,13 +238,14 @@ export async function requestModel(env, config, body, timeoutMs = 25000) {
   try {
     const response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), redirect: "manual", signal: controller.signal });
     if (response.status !== 200) {
-      await response.body?.cancel();
       const code = response.status === 429 ? "provider_rate_limited" : [401, 403].includes(response.status) ? "provider_unauthorized" : response.status >= 500 ? "provider_unavailable" : "provider_rejected";
       const error = new ConversationError(502, code);
+      error.http_status = response.status;
       error.outcome = response.status >= 500 || response.status === 408 ? "unknown" : "rejected";
       const rawRetry = response.headers.get("retry-after");
       const retry = rawRetry && Number.isFinite(Number(rawRetry)) ? Number(rawRetry) : rawRetry ? Math.max(0, (Date.parse(rawRetry) - Date.now()) / 1000) : NaN;
       error.retry_after_seconds = Number.isFinite(retry) && retry >= 0 ? retry : null;
+      error.diagnostics = await readProviderError(response);
       throw error;
     }
     const reader = response.body.getReader(), chunks = []; let size = 0;

@@ -173,7 +173,7 @@ export class WorkConversation extends DurableObject {
       for (let index = 0; index < candidates.length; index++) {
         const candidate = candidates[index];
         const attempt = { attempt_id: await hash({ scope, conversation: turn.conversation_id, request: turn.request_id, index }), provider: candidate.provider, model: candidate.model,
-          reported_model: null, status: "selected", outcome: "not_sent", usage: { input_tokens: null, output_tokens: null }, usage_reason: "provider_usage_not_reported", reservation_status: "not_reserved", reserved_tokens: 0, reserved_usd: null, payer: "operator", error_code: null, available_after: null };
+          reported_model: null, status: "selected", outcome: "not_sent", usage: { input_tokens: null, output_tokens: null }, usage_reason: "provider_usage_not_reported", reservation_status: "not_reserved", reserved_tokens: 0, reserved_usd: null, payer: "operator", error_code: null, upstream_http_status: null, provider_diagnostics: null, available_after: null };
         attempts.push(attempt); persist();
         try {
           const config = initial || providerConfig(this.env, candidate.provider);
@@ -216,7 +216,7 @@ export class WorkConversation extends DurableObject {
           attempt.timeout_seconds = remainingMs / 1000;
           persist();
           const reply = await requestModel(this.env, config, body, remainingMs);
-          Object.assign(attempt, { status: "completed", outcome: "completed", usage: usageFor(config.provider, reply), reported_model: typeof reply.model === "string" ? reply.model : null, reported_provider: typeof reply.provider === "string" ? reply.provider : null, available_after: 0 });
+          Object.assign(attempt, { status: "completed", outcome: "completed", upstream_http_status: 200, usage: usageFor(config.provider, reply), reported_model: typeof reply.model === "string" ? reply.model : null, reported_provider: typeof reply.provider === "string" ? reply.provider : null, available_after: 0 });
           attempt.usage_reason = Object.values(attempt.usage).every(value => value !== null) ? null : "provider_usage_not_reported";
           proposal = parseProposal(reply, config.provider, contracts);
           actions.push({ action: "validate_proposal", model: null, provider: null, model_reason: "deterministic_contract_validation", parent_attempt_id: attempt.attempt_id });
@@ -226,6 +226,7 @@ export class WorkConversation extends DurableObject {
           errorCode = error instanceof ConversationError ? error.code : "storage_or_coordination_unavailable";
           const outcome = errorCode === "provider_not_configured" ? "not_sent" : error.outcome || attempt.outcome;
           Object.assign(attempt, { status: outcome === "not_sent" ? "skipped" : "failed", outcome, error_code: errorCode });
+          if (error instanceof ConversationError) Object.assign(attempt, { upstream_http_status: error.http_status ?? null, provider_diagnostics: error.diagnostics ?? null });
           if (["provider_rate_limited", "provider_unavailable"].includes(errorCode)) attempt.available_after = Date.now() / 1000 + (error.retry_after_seconds ?? 30);
           proposal = blocked(errorCode);
         }

@@ -198,6 +198,7 @@
         "herma/conversation.py",
         "herma/conversation_contracts.py",
         "herma/conversation_provider.py",
+        "herma/provider_diagnostics.py",
         "herma/conversation_state.py",
         "herma/conversation_schema.py",
         "herma/provider_plan.py",
@@ -216,6 +217,7 @@
         "tests/test_conversation.py",
         "tests/test_provider_contracts.py",
         "tests/test_provider_plan.py",
+        "tests/test_provider_diagnostics.py",
         "tests/test_decision_provider.py"
       ]
     },
@@ -245,6 +247,7 @@
         "deploy/cloudflare/wrangler.jsonc",
         "deploy/cloudflare/entry.js",
         "deploy/cloudflare/conversation.js",
+        "deploy/cloudflare/provider_diagnostics.js",
         "deploy/cloudflare/conversation_state.js",
         "deploy/cloudflare/conversation_data.json"
       ],
@@ -256,7 +259,8 @@
       ],
       "tests": [
         "tests/test_herma.py",
-        "test/conversation.test.js"
+        "test/conversation.test.js",
+        "test/provider_diagnostics.test.js"
       ]
     }
   ],

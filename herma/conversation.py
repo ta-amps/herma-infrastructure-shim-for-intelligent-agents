@@ -332,6 +332,8 @@ class ConversationEngine:
                 "reserved_tokens": 0,
                 "payer": "operator",
                 "error_code": None,
+                "upstream_http_status": None,
+                "provider_diagnostics": None,
                 "available_after": None,
             }
             attempts.append(attempt)
@@ -412,6 +414,7 @@ class ConversationEngine:
                 attempt.update(
                     status="completed",
                     outcome="completed",
+                    upstream_http_status=200,
                     usage=usage_for(config.provider, reply),
                     reported_model=reply.get("model")
                     if isinstance(reply.get("model"), str)
@@ -445,6 +448,11 @@ class ConversationEngine:
                     outcome=outcome,
                     error_code=error,
                 )
+                if isinstance(exc, ProviderFailure):
+                    attempt.update(
+                        upstream_http_status=exc.http_status,
+                        provider_diagnostics=exc.diagnostics,
+                    )
                 if isinstance(exc, ProviderFailure) and error in {
                     "provider_rate_limited",
                     "provider_unavailable",

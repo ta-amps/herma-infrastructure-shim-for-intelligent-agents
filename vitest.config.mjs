@@ -49,6 +49,17 @@ export default defineConfig({
         if (text === "redirect-test") return new Response(null, { status: 302, headers: { Location: "https://example.com/forbidden" } });
         if (text === "too-large-test") return new Response("x".repeat(1048577));
         if (text === "failure-test") return new Response("private upstream body", { status: 429 });
+        if (text.startsWith("diagnostic-")) {
+          const secretEcho = "sk-" + "synthetic".repeat(8);
+          const errors = {
+            "diagnostic-parameter": { type: "invalid_request_error", code: "unsupported_parameter", param: "parallel_tool_calls", message: "Unsupported parameter parallel_tool_calls" },
+            "diagnostic-credit": { type: "invalid_request_error", message: "Your credit balance is too low" },
+            "diagnostic-model": { code: "model_not_found", message: "Model requested does not exist" },
+            "diagnostic-unknown": { type: secretEcho, code: secretEcho, param: secretEcho, message: "Unrecognized upstream explanation" }
+          };
+          const error = errors[text];
+          if (error) return Response.json({ error: { ...error, message: `${error.message} ${secretEcho} acct_synthetic_private req_synthetic_private`, metadata: { raw: secretEcho } }, request_id: "req_synthetic_private" }, { status: text === "diagnostic-unknown" ? 503 : text === "diagnostic-model" ? 404 : 400, headers: { "X-Request-ID": "req_synthetic_private" } });
+        }
         if (text === "malformed-test") return Response.json({ choices: [null], message: [] });
         const fn = text === "hi" ? { name: "ask_clarification", arguments: { question: "What SYNTHETIC observation should be recorded?" } } : {
           name: openai || anthropic ? body.tools[0].name : body.tools[0].function.name,

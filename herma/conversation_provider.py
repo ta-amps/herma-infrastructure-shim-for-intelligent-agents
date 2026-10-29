@@ -15,6 +15,7 @@ import httpx
 
 from herma.errors import HermaError
 from herma.harness_gate import refuse_contributor_model
+from herma.provider_diagnostics import ERROR_BODY_BYTES, normalize_provider_error
 
 # Microdollars per token, from the standard-mode provider tariff.
 META_RATES = {"muse-spark-1.3": (1.25, 4.25), "muse-wonder-1.0": (4.0, 20.0)}
@@ -311,7 +312,7 @@ class ProviderConfig:
 
 
 class ProviderFailure(Exception):
-    """Contains only a stable safe code, never a provider response or credential."""
+    """Contains stable codes and bounded categories, never raw provider errors."""
 
     def __init__(
         self,
@@ -320,11 +321,13 @@ class ProviderFailure(Exception):
         outcome: str = "unknown",
         retry_after_seconds: float | None = None,
         http_status: int | None = None,
+        diagnostics: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(code)
         self.outcome = outcome
         self.retry_after_seconds = retry_after_seconds
         self.http_status = http_status
+        self.diagnostics = diagnostics
 
 
 async def request_model(
@@ -354,6 +357,9 @@ async def request_model(
             "anthropic-version": config.anthropic_version,
             "Content-Type": "application/json",
         }
+    # Do not decompress untrusted error bodies while collecting diagnostics.
+    headers["Accept-Encoding"] = "identity"
+    rejected: ProviderFailure | None = None
     try:
         async with (
             asyncio.timeout(config.timeout_seconds),
@@ -391,14 +397,27 @@ async def request_model(
                     if response.status_code >= 500
                     else "provider_rejected"
                 )
-                raise ProviderFailure(
+                rejected = ProviderFailure(
                     code,
                     outcome="unknown"
                     if response.status_code >= 500 or response.status_code == 408
                     else "rejected",
                     retry_after_seconds=retry_seconds,
                     http_status=response.status_code,
+                    diagnostics=normalize_provider_error(b"", body_state="unavailable"),
                 )
+                if response.headers.get("content-encoding", "identity").lower() == "identity":
+                    error_raw = bytearray()
+                    async for chunk in response.aiter_bytes(chunk_size=4096):
+                        if len(error_raw) + len(chunk) > ERROR_BODY_BYTES:
+                            rejected.diagnostics = normalize_provider_error(
+                                b"", body_state="oversized"
+                            )
+                            break
+                        error_raw.extend(chunk)
+                    else:
+                        rejected.diagnostics = normalize_provider_error(bytes(error_raw))
+                raise rejected
             raw = bytearray()
             async for chunk in response.aiter_bytes():
                 raw.extend(chunk)
@@ -415,7 +434,15 @@ async def request_model(
         TimeoutError,
         RecursionError,
     ) as exc:
+        if rejected is not None:
+            raise rejected from exc
         raise ProviderFailure("provider_unavailable") from exc
+    except Exception:
+        # Optional diagnostics must not erase an already observed HTTP rejection.
+        # External cancellation still propagates because it is not an Exception.
+        if rejected is not None:
+            raise rejected from None
+        raise
 
 
 def usage_for(provider: str, reply: dict[str, Any]) -> dict[str, Any]:
