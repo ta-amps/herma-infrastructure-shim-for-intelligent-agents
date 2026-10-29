@@ -1,10 +1,15 @@
 # Herma
 
-Herma is the integration and context adapter surface. Versioned nouns carry data
-and evidence; claimable verbs carry work. A project is a human grouping or surface
-label for those nouns and verbs, not a separate domain primitive. Seed packs
-contain nouns and verbs. Tessera's storage and task contracts remain the shared
-authority. Herma adds no separate domain reasoning runtime.
+Herma is infrastructure: it connects agents to context and models. Versioned nouns
+carry data and evidence; claimable verbs carry work. Tessera's storage and task
+contracts remain the shared authority, and Herma adds no separate domain reasoning
+runtime.
+
+There are exactly two public surfaces: Eranos, the two-sided marketplace, and
+Agora, the single overview of architecture and setup, use cases, connecting any
+agent and contributing. Tessera and Herma are infrastructure. Home is not a
+surface; its address sends people to Agora. Everything else is nouns and
+verbs in seed packs, and an agent kit is a seed pack generated for an NGO's agent.
 
 The default agentic executor is the worker's own harness holding a Tessera verb.
 Inputs, contracts, artifacts and evidence remain scoped nouns. Herma supplies
@@ -75,13 +80,14 @@ Herma installs independently. `pyproject.toml` pins Tessera to an immutable publ
 Git commit, and `uv.lock` records the resolved dependency. Python 3.12+, Git and
 uv are required; no sibling checkout is needed.
 
-## Sibling Ecosystem (`ta-amps`)
+## The ta-amps ecosystem
 
-- **Hub**: `https://home.ta-amps.workers.dev`
-- **Herma** (`https://herma.ta-amps.workers.dev`): context-shimming AI middleware for configurable coding harnesses -- 3-tier rules, caller-isolated noun/verb context database, deterministic entity memory, and zero-token direct responses (`github.com/ta-amps/herma`)
-- **Tessera** (`https://tessera.ta-amps.workers.dev`): atomic noun/verb work queue and compare-and-set storage (`github.com/ta-amps/tessera`)
-- **Shamash** (`https://shamash.ta-amps.workers.dev`): find, quantify, and combat online human harm, scams, and exploitation (`github.com/ta-amps/shamash`)
-- **Eranos** (`https://eranos.ta-amps.workers.dev`): donate unused AI tokens to build and independently review NGO agent kits (`github.com/ta-amps/eranos`)
+- **Eranos** (`https://eranos.ta-amps.workers.dev`), public surface: the two-sided marketplace where people donate spare AI capacity and their agents build and review agent kits for nonprofits (`github.com/ta-amps/eranos`)
+- **Agora** (`https://ta-amps.github.io/agora/`), public surface: the single overview of architecture and setup, use cases, connecting any agent and contributing (`github.com/ta-amps/agora`)
+- **Tessera** (`https://tessera.ta-amps.workers.dev`), infrastructure: atomic noun/verb work queue and compare-and-set storage (`github.com/ta-amps/tessera`)
+- **Herma** (`https://herma.ta-amps.workers.dev`), infrastructure: context-shimming AI middleware for configurable coding harnesses -- 3-tier rules, caller-isolated noun/verb context database, deterministic entity memory, and zero-token direct responses (`github.com/ta-amps/herma`)
+- **Pack library** (`github.com/ta-amps/pack-contributions`): seed packs of nouns and verbs, such as the collection for spotting exploitation and scams in synthetic cases, never accusing anyone
+- `https://home.ta-amps.workers.dev` is not a surface; that address sends people to Agora and still serves the agent brief as text at `/connect`.
 
 ## Documentation
 

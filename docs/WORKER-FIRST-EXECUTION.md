@@ -4,17 +4,37 @@ Architecture direction adopted October 28, 2026, clarified October 29. This poli
 
 Independently schedulable agentic work must be a **verb that an authorized worker claims**, unless an explicit server exception applies. A noun holds versioned input, context, code, a tool, a model, a recipe, an artifact or evidence. Workers reason, act, check and repair. The server coordinates identity, discovery, leases, storage, validation and receipts without autonomous model calls on the normal path.
 
-## Nouns, verbs and public surfaces
+## Required boundaries: nouns, verbs, surfaces and infrastructure
 
-The domain primitives are **nouns** and **verbs**, supported by limited
-infrastructure and public surfaces. A **project** is a human grouping or a surface
-label with a scoped purpose, not a third primitive. Its definition, configuration
-and profile use existing noun records. A project is not a new queue, storage
-or permission authority. Seed packs contain reusable nouns and verbs;
-their repositories and showcase pages do not become independent agent runtimes.
+The architecture has **nouns, verbs, surfaces and narrow supporting
+infrastructure**. Seed packs contain nouns and verbs. These are mandatory design
+boundaries, not suggestions to replace with a separate service for each domain.
+
+Today there are exactly two public surfaces: Eranos, the two-sided marketplace,
+and Agora, the single overview. Tessera and Herma are infrastructure; Herma
+connects agents to context and models. Everything else is nouns and verbs in
+seed packs, including agent kits generated for an NGO's agent.
+
+| Boundary | Responsibility | What it must not become |
+| --- | --- | --- |
+| Nouns | Scoped, versioned knowledge, source observations, tools/code, prompts, profiles, models, data, recipes, configuration, plans, artifacts and evidence | An access grant, execution authority or quality certificate merely because it is stored or hashed |
+| Verbs | Independently schedulable work with input references, acceptance checks, authority and recorded outcomes; authorized workers perform ordinary reasoning | A second queue or an unrecorded server agent |
+| Surfaces | Websites, apps, dashboards, CLI and HTTP/MCP interfaces for discovering and using nouns and verbs | A separate permission system, autonomous domain brain or work authority |
+| Infrastructure | Narrow, explicit identity, authorization, storage, versions, leases, CAS, receipts, transport, health, backpressure and essential management plumbing | A label that exempts domain reasoning from worker execution or permission checks |
+
+A **seed pack bundles nouns and verb templates/seeds**. It is not another entity
+type, scheduler or runtime. Exporting or importing pack data does not execute,
+activate, admit or publish its contents, copy credentials or grant permissions.
+A pack carries no brand name and has no surface of its own; its repository does
+not become an independent agent runtime.
+
+**Project is a convenient human label, not an architectural primitive.** It may
+name a surface and scoped collection of nouns and verbs. Store a needed
+description or profile as an existing noun. Do not add a project service, core
+table, separate execution authority or project-only lifecycle for this vocabulary.
 
 Every new capability must identify its nouns, independently schedulable verbs,
-existing lifecycle owner and any server exception. Reject an implementation
+surface, existing lifecycle owner and any infrastructure or server exception. Reject an implementation
 that hides ordinary domain reasoning inside a server handler, creates a competing
 task authority or lets a pack activate itself. Keep deterministic libraries and
 compatibility endpoints when they serve workers; packaging is not a reason to

@@ -197,7 +197,7 @@ The ordinary Herma shim accepts caller-funded `/v1/chat/completions`, `/v1/respo
 
 Localhost means the machine running Herma. Run the Python shim beside a local harness/model; a deployed Cloudflare Worker cannot use the caller's localhost. Default allowlisting includes localhost and 127.0.0.1. Additional hosts require `HERMA_ALLOWED_UPSTREAM_HOSTS`. Keep unrelated provider credentials out of the worker environment, and do not place keys in nouns, verb briefs or receipts. Native Ollama `/api/chat` is available to a worker directly; the ordinary shim's compatible route is `/v1/chat/completions`.
 
-The project surface organizes these integration capabilities. Nouns remain versioned input/context/evidence, verbs remain claimable work, and Tessera's existing storage/task contracts own their lifecycle. Provider selection changes a worker's permitted execution resources; it does not create a new reasoning authority.
+Herma is infrastructure: these integration capabilities connect agents to context and models. Eranos and Agora are the only public surfaces, and everything else is nouns and verbs in seed packs. Nouns remain versioned input/context/evidence, verbs remain claimable work, and Tessera's existing storage/task contracts own their lifecycle. Provider selection changes a worker's permitted execution resources; it does not create a new reasoning authority.
 
 ## Jev typed decisions
 

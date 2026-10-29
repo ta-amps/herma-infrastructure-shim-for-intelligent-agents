@@ -1,6 +1,6 @@
 # Herma
 
-> Herma is the integration and context adapter surface. Versioned nouns carry data and evidence; claimable verbs carry work. A project is a human grouping or surface label for those nouns and verbs, not a separate domain primitive. Seed packs contain nouns and verbs. Tessera's storage and task contracts remain the shared authority. Herma adds no separate domain reasoning runtime.
+> Herma is infrastructure: it connects agents to context and models. Versioned nouns carry data and evidence; claimable verbs carry work. Tessera's storage and task contracts remain the shared authority, and Herma adds no separate domain reasoning runtime.
 
 ## Start here
 - [README.md](https://github.com/ta-amps/herma/blob/main/README.md): what this is and how to run it
