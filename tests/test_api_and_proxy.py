@@ -3,12 +3,68 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from herma.api.app import create_app, seed_examples_if_present
+from herma.schemas import MicromodelTrigger, Provision, SemanticTrigger, TriggerSpec
 from herma.store import ProvisionStore
+
+
+def test_preview_and_dry_run_never_call_configured_trigger_providers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+
+    async def post(_client: httpx.AsyncClient, url: str, **_kwargs: Any) -> httpx.Response:
+        calls.append(url)
+        return httpx.Response(503, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    monkeypatch.setenv("HERMA_DB", str(tmp_path / "offline.db"))
+    monkeypatch.setenv("HERMA_MICROMODEL_URL", "https://example.com/classify")
+    monkeypatch.setenv("HERMA_EMBEDDINGS_URL", "https://example.com/embeddings")
+    monkeypatch.delenv("HERMA_EDGE_SECRET", raising=False)
+    store = ProvisionStore(tmp_path / "offline.db")
+    store.put_provision(
+        Provision(
+            prov_id="PROV-OFFLINE-HTTP",
+            title="Offline HTTP",
+            summary="Synthetic two-tier preview fixture.",
+            inject_text="Use this synthetic guidance.",
+            triggers=TriggerSpec(
+                mode="all",
+                semantic=SemanticTrigger(exemplars=["synthetic request"]),
+                micromodel=MicromodelTrigger(
+                    intent_question="Should this synthetic rule apply?",
+                    fallback_keywords=["synthetic"],
+                ),
+            ),
+        )
+    )
+    token, _ = store.issue_key(label="SYNTHETIC offline", harness_kind="opencode", scopes=["route"])
+    with TestClient(create_app()) as client:
+        preview = client.post("/api/preview", json={"prompt": "synthetic request"})
+        assert preview.status_code == 200
+        assert preview.json()["persisted"] is False
+        assert preview.json()["matches"][0]["matched_tiers"] == ["semantic", "micromodel"]
+        dry_run = client.post(
+            "/v1/dry-run",
+            headers={"X-Herma-Key": token, "X-Herma-Harness": "opencode"},
+            json={
+                "wire_format": "chat_completions",
+                "payload": {
+                    "model": "muse-spark-open",
+                    "messages": [{"role": "user", "content": "synthetic request"}],
+                },
+            },
+        )
+        assert dry_run.status_code == 200
+        assert dry_run.json()["matches"][0]["matched_tiers"] == ["semantic", "micromodel"]
+    assert calls == []
 
 
 def test_http_edge_lockdown_and_dry_run_across_wire_formats(

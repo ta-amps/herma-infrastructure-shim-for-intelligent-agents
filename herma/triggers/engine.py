@@ -48,7 +48,9 @@ async def evaluate_single_provision(
 
     if spec.semantic is not None:
         configured_count += 1
-        ok, why, sc = await evaluate_semantic_trigger(spec.semantic, ctx.text)
+        ok, why, sc = await evaluate_semantic_trigger(
+            spec.semantic, ctx.text, offline_only=offline_only
+        )
         if ok:
             matched_tiers.append("semantic")
             reasons.extend(why)

@@ -222,13 +222,15 @@ async def _remote_embedding_similarity(
 async def evaluate_semantic_trigger(
     spec: SemanticTrigger,
     text: str,
+    *,
+    offline_only: bool = False,
 ) -> tuple[bool, list[str], float]:
-    """Return (matched, reasons, best_score) for a SemanticTrigger."""
+    """Return (matched, reasons, best_score), without provider I/O in offline mode."""
     emb_url = os.environ.get("HERMA_EMBEDDINGS_URL", "").strip()
     emb_model = os.environ.get("HERMA_EMBEDDINGS_MODEL", "text-embedding-3-small").strip()
     emb_key = os.environ.get("HERMA_EMBEDDINGS_API_KEY", "").strip()
 
-    if emb_url:
+    if emb_url and not offline_only:
         remote_score = await _remote_embedding_similarity(
             text, spec.exemplars, emb_url, emb_model, emb_key
         )

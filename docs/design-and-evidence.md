@@ -81,6 +81,38 @@ adjustment. Record the original input, environment, model, actual calls, schema
 errors and receipt. If progress stops, park the work with a concrete question.
 More retries or encouragement do not replace a valid contract.
 
+## Configured shim reasoning and offline boundaries
+
+A configured shim may routinely use an approved model for interpretation or
+routing. This is separate from executing a verb, reviewing every result or
+granting permissions. The caller's existing scope and provision governance still
+apply. A model's decision activates only an already configured provision.
+
+The micromodel response must contain `apply` as a JSON boolean and `confidence`
+as a finite number from 0 to 1. When supplied, `label` and `reason` must be
+strings. Only `apply: true` at the configured threshold can match; a label cannot
+override `apply: false`. Strings such as `"false"`, integers such as `1`, missing
+decisions and malformed provider responses are rejected without activating a
+fallback. An unavailable provider can still use the provision's explicitly
+configured keyword fallback, with `micromodel:fallback` attribution.
+
+`offline_only=True` in Python and `offlineOnly: true` in the Worker skip
+micromodel provider requests. Python also skips remote embeddings and uses its
+local semantic matcher. The Worker currently uses local semantic matching in
+both modes. Public previews and authenticated dry-runs select this offline
+trigger path. Offline matching does not disable ordinary configured online
+shim requests or expand access to context.
+
+Network-free regression tests in `tests/test_triggers.py`,
+`tests/test_api_and_proxy.py` and `test/triggers.test.js` check typed decisions,
+malformed responses with matching fallback keywords, zero provider calls in
+offline mode, and continued online routing. A retained local before/after probe
+reproduced a string `"false"` activating a rule and one mocked embedding call in
+offline mode before the fixes; both are rejected or suppressed afterward.
+These fixtures establish the tested boundaries, not live model quality or a
+universal routing-success rate. Run `make check` to reproduce the repository
+gates; the tests use synthetic responses without provider credentials or spend.
+
 ## Worker placement policy
 
 The [worker-first execution policy](WORKER-FIRST-EXECUTION.md) distinguishes worker-requested proxy traffic, private managed workers and direct server inference. Keep those costs and authorities separate.
