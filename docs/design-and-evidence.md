@@ -29,6 +29,37 @@ a server-side LLM on each task or turn. Server-funded LLM review is an exception
 bounded fallback, not the default work-completion path. Herma currently proposes
 and clarifies; it does not automatically grade or approve Tessera completions.
 
+## Default execution belongs to workers
+
+Most agentic reasoning should happen inside a worker's configured harness while
+it holds a bounded Tessera verb. The verb references versioned input, contract,
+artifact and evidence nouns. Herma is optional: configured rules can supply a
+small permitted contract or context entry before the worker's own model call.
+Reading a noun, calculating a hash, checking a type or acquiring a lease does not
+need a model turn. The typed conversation endpoint is an explicit exception path,
+not the default router for every work action.
+
+| Work | Normal executor | Herma's role |
+| --- | --- | --- |
+| Clarify or decompose a brief | Authorized worker; park or create bounded dependent verbs | Supply configured context and the missing-field contract |
+| Research, coding and self-check | Worker harness and deterministic local tools | Inject only scoped, relevant nouns and verified reusable context |
+| Extra judgment before shared publication | Separate capable reviewer claiming its review verb | Optional permitted context; no automatic approval |
+| Private infrastructure diagnosis | A specifically authorized private worker | Scoped context; server reasoning only when explicitly selected and budgeted |
+| Credential, CAS, lease or receipt acceptance | Deterministic fabric handlers | No authority override or model judgment |
+
+This is an orchestration pattern on existing interfaces, not a new claim that
+every provider or external action has an implemented adapter. A worker must name
+its required capabilities and effect class, validate its output and preserve
+actual failure/receipt evidence. A server exception needs a concrete reason,
+configured credentials and budget; it must not silently follow every retry.
+
+`visibility_scope=private` means owner-key-only in Tessera. A team-private pool
+uses a dedicated namespace plus authenticated surface-only or allowlisted access
+and explicit grants to separate keys. A shared account, category or private tag
+does not grant a worker access. Herma's `hmk_` scope remains separate from Tessera
+authority, and shimming cannot create either permission. See the central
+[work routing contract](https://github.com/ta-amps/tessera/blob/main/docs/work-routing.md).
+
 ## Observations, not a reliability benchmark
 
 The following observations were recorded on 2026-10-28. Local regression commands
@@ -43,6 +74,7 @@ reported usage and receipt hashes without credentials or private transcripts.
 | Add candidate instructions to the prompt only | No actual native tool calls in the bounded attempt | Text resembling calls is not execution |
 | Select a typed validating connector, OpenCode/Ollama | Native put/get and independent object readback passed | One fixture passed with that schema and transport |
 | Same typed fixture, Muse Code 1.4.14/Meta Spark 1.3 | Native put/get and independent readback passed | Native Responses and ordinary approval/sandbox paths worked for that fixture |
+| Hosted typed connector, OpenCode 2.1.2/Ollama Muse Spark Open | Nine native MCP calls completed anonymous claim, heartbeat, typed CAS, readback, submit and audit; independent HTTP checks passed | One complete hosted anonymous work loop, with worker reasoning and no server LLM reviewer |
 | Initial Meta Spark tool probe with 512 output tokens | Length finish, no usable tool call | Reasoning consumed almost all the output allowance |
 | Meta Wonder typed tool probe | Valid typed call | A different model worked for one case, not every harness |
 | Initial live Ollama conversation | Invalid proposal; explicit follow-up recovered | Retain the failure and use precise missing-field feedback |
@@ -57,9 +89,13 @@ the provider gateway's complete observations when accounting for that run.
 These experiments changed catalog size, schema and transport together, so they
 are not a controlled causal estimate of a prompt's benefit. No universal success
 rate, complete personal-assistant compatibility or quality improvement is claimed.
-Full hosted native claim/heartbeat/write/submit loops for both principal modes,
+The hosted OpenCode run is summarized in
+[the native observation receipt](evidence/native-hosted-observation.json). Its two
+earlier attempts stopped before inference on test-recorder and overly literal
+resolved-policy comparison bugs. They were fixed with offline controls without
+loosening the client permissions. Native keyed and native Muse hosted full loops,
 repeated-run reliability, Grokbot and other personal-assistant clients remain
-separate validation work. A passing proposal has `executed:false`.
+separate validation work. A passing Herma proposal still has `executed:false`.
 
 ## Remaining operational differences
 
