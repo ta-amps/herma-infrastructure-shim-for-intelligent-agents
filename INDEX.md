@@ -102,7 +102,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [herma/profiles.py](herma/profiles.py) | Adaptive CallerProfile shimming lenses, deterministic strategy ranking, and budget enforcement. |
 | [herma/provider_diagnostics.py](herma/provider_diagnostics.py) | Bounded provider-reported error categories, never raw messages or identifiers. |
 | [herma/provider_health.py](herma/provider_health.py) | Deterministic operator availability inside the existing provider allowance lifecycle. |
-| [herma/provider_plan.py](herma/provider_plan.py) | Explicit provider-plan nouns; deterministic selection grants no new work authority. |
+| [herma/provider_plan.py](herma/provider_plan.py) | Explicit provider-plan nouns and per-caller operator grants; selection adds no work authority. |
 | [herma/proxy.py](herma/proxy.py) | Context-shimming interception, direct-response short-circuiting, and upstream LLM forwarding. |
 | [herma/schemas.py](herma/schemas.py) | Strict Pydantic schemas for provisions, context entries, triggers, memory, outcomes, and receipts. |
 | [herma/store.py](herma/store.py) | SQLite WAL caller-isolated store, atomic CAS, governance lens, entity memory, and outcome telemetry. |
@@ -121,19 +121,21 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/check_architecture.py](scripts/check_architecture.py) | Check that architecture.json still describes this repo truthfully. |
 | [scripts/check_public.py](scripts/check_public.py) | Fail if a file headed for a public repo holds a secret or a private name. |
 
-## test/ (4)
+## test/ (5)
 
 | File | What it is |
 |---|---|
 | [test/conversation.test.js](test/conversation.test.js) |  |
 | [test/provider_diagnostics.test.js](test/provider_diagnostics.test.js) |  |
+| [test/provider_grants.test.js](test/provider_grants.test.js) |  |
 | [test/provider_health.test.js](test/provider_health.test.js) |  |
 | [test/triggers.test.js](test/triggers.test.js) |  |
 
-## tests/ (15)
+## tests/ (17)
 
 | File | What it is |
 |---|---|
+| [tests/conftest.py](tests/conftest.py) | Synthetic operator grants for managed conversation tests; no provider is ever contacted. |
 | [tests/test_api_and_proxy.py](tests/test_api_and_proxy.py) | Tests for multi-protocol payload augmentation, deduplication, edge lockdown, and HTTP endpoints. |
 | [tests/test_cli_demo.py](tests/test_cli_demo.py) | The CI demo verifies the supported client policy and its real provision pipeline. |
 | [tests/test_conversation.py](tests/test_conversation.py) | Typed proposals, caller isolation, budget fencing and real HTTP provider contracts. |
@@ -146,6 +148,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [tests/test_provider_accounting.py](tests/test_provider_accounting.py) | Known skips do not spend allowance; nonfinal provider outcomes keep reservations. |
 | [tests/test_provider_contracts.py](tests/test_provider_contracts.py) | Provider selection, native generation and exception allowance stay explicit. |
 | [tests/test_provider_diagnostics.py](tests/test_provider_diagnostics.py) | Provider error evidence is bounded, private and never a raw response echo. |
+| [tests/test_provider_grants.py](tests/test_provider_grants.py) | Operator spending grants name exact callers, and one upstream model is one identity. |
 | [tests/test_provider_health.py](tests/test_provider_health.py) | Shared operator limits admit one funded, explicitly authorized recovery probe. |
 | [tests/test_provider_plan.py](tests/test_provider_plan.py) | Explicit private plans may advance providers without losing charged attempts. |
 | [tests/test_triggers.py](tests/test_triggers.py) | Tests for Tier-1 (keyword/regex/path/tool), Tier-2 (semantic), and Tier-3 (micromodel) triggers. |

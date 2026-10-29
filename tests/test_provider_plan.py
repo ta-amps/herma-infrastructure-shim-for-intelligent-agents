@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 import pytest
+from conftest import grant
 from test_conversation import contract, seed, tool_reply, turn
 
 from herma.conversation import ConversationEngine, parse_proposal
@@ -18,6 +19,11 @@ from herma.conversation_provider import ProviderConfig, ProviderFailure, request
 from herma.errors import HermaError
 from herma.schemas import ContextEntry
 from herma.store import ProvisionStore
+
+PLAN_CHOICES: list[dict[str, Any]] = [
+    {"provider": "meta", "model": "muse-spark-1.3"},
+    {"provider": "ollama", "model": "muse-spark-open"},
+]
 
 
 def plan_entry(scope: str = "key:alice", *, uncertain: bool = False) -> ContextEntry:
@@ -34,10 +40,7 @@ def plan_entry(scope: str = "key:alice", *, uncertain: bool = False) -> ContextE
                 "context_refs": ["work.observation"],
                 "allow_failover": True,
                 "allow_uncertain_outcome": uncertain,
-                "providers": [
-                    {"provider": "meta", "model": "muse-spark-1.3"},
-                    {"provider": "ollama", "model": "muse-spark-open"},
-                ],
+                "providers": [dict(choice) for choice in PLAN_CHOICES],
             }
         },
     )
@@ -53,11 +56,8 @@ def prepared(
     monkeypatch.setenv("HERMA_CONVERSATION_MAX_OUTPUT", "16384")
     monkeypatch.setenv("META_API_KEY", "synthetic-provider-key")
     monkeypatch.setenv("OLLAMA_API_KEY", "synthetic-provider-key")
-    body = entry.schema_or_body
-    assert isinstance(body, dict)
-    monkeypatch.setenv(
-        "HERMA_CONVERSATION_PROVIDER_PLAN_ALLOWLIST", json.dumps(body["provider_plan"]["providers"])
-    )
+    # Alice's own operator grant names exactly the plan's choices; Bob holds no grant.
+    grant(monkeypatch, "key:alice", choices=PLAN_CHOICES, uncertain=uncertain)
     return store
 
 
@@ -111,7 +111,6 @@ def test_unknown_outcome_only_advances_under_both_explicit_grants(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, uncertain: bool
 ) -> None:
     store = prepared(tmp_path, monkeypatch, uncertain=uncertain)
-    monkeypatch.setenv("HERMA_CONVERSATION_ALLOW_UNCERTAIN_FAILOVER", "true")
     called = []
 
     async def call(config: ProviderConfig, _body: dict[str, Any]) -> dict[str, Any]:
@@ -138,16 +137,31 @@ def test_plan_scope_data_payer_model_and_operator_grant_are_required(
         pytest.fail("unauthorized plan cannot dispatch")
 
     engine = ConversationEngine(store, call=forbidden)
+    # Bob owns no plan; Alice's plan asks for uncertain failover her grant does not carry.
+    grant(monkeypatch, "key:alice", "key:bob", choices=PLAN_CHOICES)
     for scope in ("key:bob", "key:alice"):
         with pytest.raises(HermaError) as denied:
             asyncio.run(engine.turn(scope, planned_turn()))
         assert denied.value.code == "provider_plan_not_authorized"
-    monkeypatch.setenv("HERMA_CONVERSATION_ALLOW_UNCERTAIN_FAILOVER", "true")
+    # Another caller's uncertainty grant cannot lend Alice permission to pay twice.
     monkeypatch.setenv(
-        "HERMA_CONVERSATION_PROVIDER_PLAN_ALLOWLIST",
-        '[{"provider":"meta","model":"different-model"}]',
+        "HERMA_CONVERSATION_PROVIDER_GRANTS",
+        json.dumps(
+            [
+                {"caller_scope": "key:alice", "providers": PLAN_CHOICES},
+                {
+                    "caller_scope": "key:bob",
+                    "providers": PLAN_CHOICES,
+                    "allow_uncertain_failover": True,
+                },
+            ]
+        ),
     )
-    with pytest.raises(HermaError, match="caller-owned provider plan"):
+    with pytest.raises(HermaError) as borrowed:
+        asyncio.run(engine.turn("key:alice", planned_turn()))
+    assert borrowed.value.code == "provider_plan_not_authorized"
+    grant(monkeypatch, "key:alice", choices=[{"provider": "meta", "model": "different-model"}])
+    with pytest.raises(HermaError, match="within your operator provider grant"):
         asyncio.run(engine.turn("key:alice", planned_turn()))
     assert engine.state.snapshot("key:alice", "conversation-one")["attempts"] == []
 
@@ -173,7 +187,6 @@ def test_failed_coordination_never_rotates_into_a_paid_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = prepared(tmp_path, monkeypatch, uncertain=True)
-    monkeypatch.setenv("HERMA_CONVERSATION_ALLOW_UNCERTAIN_FAILOVER", "true")
 
     async def forbidden(_config: ProviderConfig, _body: dict[str, Any]) -> dict[str, Any]:
         pytest.fail("failed coordination must never dispatch a provider")

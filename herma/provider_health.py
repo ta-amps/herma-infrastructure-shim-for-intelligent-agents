@@ -14,6 +14,10 @@ from herma.errors import HermaError
 
 PROVIDERS = {"meta", "ollama", "openai", "anthropic", "openrouter"}
 PROBE_LEASE_SECONDS = 120
+# Limits that belong to the paying account rather than one model.
+ACCOUNT_LIMITS = frozenset({"credit_or_quota_exhausted", "payment_required"})
+# Rate and quota limits also hold the upstream model identity against every other route.
+IDENTITY_LIMITS = frozenset({"rate_limited", *ACCOUNT_LIMITS})
 
 
 def provider_for_host(host: str | None) -> str | None:
@@ -101,8 +105,25 @@ def fresh_health() -> dict[str, Any]:
 
 
 def cooldown_seconds(failures: int, reason: str | None) -> int:
-    initial = 300 if reason in {"credit_or_quota_exhausted", "payment_required"} else 30
+    initial = 300 if reason in ACCOUNT_LIMITS else 30
     return int(min(3600, initial * 2 ** min(max(failures - 1, 0), 7)))
+
+
+def limit_reason(
+    *, outcome: str, error_code: str | None, reason: str | None, http_status: int | None
+) -> str | None:
+    """The shared limit an attempt's outcome demonstrates, if any."""
+    return (
+        "credit_or_quota_exhausted"
+        if reason == "credit_or_quota_exhausted"
+        else "payment_required"
+        if http_status == 402 or reason == "payment_required"
+        else "rate_limited"
+        if error_code == "provider_rate_limited" or reason == "rate_limited"
+        else "provider_unavailable"
+        if error_code == "provider_unavailable" or outcome == "unknown"
+        else None
+    )
 
 
 def health_view(state: dict[str, Any], *, probe: bool = False) -> dict[str, Any]:
@@ -169,18 +190,10 @@ def settle_health(
     retry_seconds: float | None,
     http_status: int | None = None,
 ) -> dict[str, Any]:
-    limited = (
-        "credit_or_quota_exhausted"
-        if reason == "credit_or_quota_exhausted"
-        else "payment_required"
-        if http_status == 402 or reason == "payment_required"
-        else "rate_limited"
-        if error_code == "provider_rate_limited" or reason == "rate_limited"
-        else "provider_unavailable"
-        if error_code == "provider_unavailable" or outcome == "unknown"
-        else None
+    limited = limit_reason(
+        outcome=outcome, error_code=error_code, reason=reason, http_status=http_status
     )
-    target = "*" if limited in {"credit_or_quota_exhausted", "payment_required"} else model
+    target = "*" if limited in ACCOUNT_LIMITS else model
     for key, state in states.items():
         same = state["generation"] == ticket.get(key)
         owns_probe = state["probe_id"] == attempt

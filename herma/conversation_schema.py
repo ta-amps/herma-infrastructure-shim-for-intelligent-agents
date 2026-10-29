@@ -28,6 +28,23 @@ KEYWORDS = {
 }
 
 
+def strict_json(raw: str) -> Any:
+    """Parse JSON like the Worker's strictJson: duplicate fields and non-finite numbers fail."""
+
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in items:
+            if key in result:
+                raise ValueError("duplicate JSON field")
+            result[key] = value
+        return result
+
+    def invalid(_value: str) -> None:
+        raise ValueError("non-finite number")
+
+    return json.loads(raw, object_pairs_hook=pairs, parse_constant=invalid)
+
+
 def validate_portable_schema(schema: dict[str, Any]) -> None:
     """Exclude remote references, regular expressions and unbounded schema expansion."""
     nodes = 0

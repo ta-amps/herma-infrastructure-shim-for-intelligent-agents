@@ -3,6 +3,7 @@ import { runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { WorkConversation } from "../deploy/cloudflare/conversation_state.js";
 import { hash, checkSchema, parseProposal, providerConfig, strictJson, buildRequest, loadProviderPlan } from "../deploy/cloudflare/conversation.js";
+import { ensureSchema, sha256Hex } from "../deploy/cloudflare/herma_engine.js";
 
 const contract = {
   operation_id: "record_observation", category_id: "noun.eval_run", description: "Record one SYNTHETIC capability observation.",
@@ -10,8 +11,13 @@ const contract = {
 };
 const entry = { entry_id: "work.observation", kind: "noun", title: "Observation", summary: "SYNTHETIC capability observation", schema_or_body: { work_contract: contract } };
 const turn = patch => ({ conversation_id: "conversation-one", request_id: "request-one", expected_version: 0, message: "SYNTHETIC hello", context_refs: [entry.entry_id], provider: "ollama", ...patch });
+// A random scope holds no operator grant; pooled callers each hold their own exact grant.
 const scope = () => "key:" + crypto.randomUUID();
-const caller = () => { const id = scope(); return { id, stub: env.WORK_CONVERSATIONS.getByName(id) }; };
+const pooled = { regular: 0, uncertain: 0 };
+const caller = (uncertain = false) => {
+  const id = uncertain ? `key:synthetic-conversation-uncertain-${pooled.uncertain++}` : `key:synthetic-conversation-${pooled.regular++}`;
+  return { id, stub: env.WORK_CONVERSATIONS.getByName(id) };
+};
 const providerPlan = (id, uncertain = false) => ({ entry_id: "plan.providers", kind: "noun", title: "Provider plan", summary: "SYNTHETIC private provider plan", _provider_plan_scope: id, schema_or_body: { provider_plan: {
   caller_scope: id, purpose: "caller_requested_typed_proposal", payer: "operator", context_refs: [entry.entry_id], allow_failover: true, allow_uncertain_outcome: uncertain,
   providers: [{ provider: "meta", model: "muse-spark-1.3" }, { provider: "ollama", model: "muse-spark-open" }]
@@ -23,6 +29,16 @@ async function key(scopes = ["route", "configure"]) {
   expect(res.status).toBe(201);
   const issued = await res.json();
   return { "Authorization": "Bearer " + issued.key, "X-Herma-Harness": "opencode" };
+}
+// Issued keys get random IDs, so the operator cannot have granted them. This test-only key
+// reuses an ID from the vitest grant pool, the way an operator grants a known key.
+let httpKeys = 0;
+async function grantedKey(scopes = ["configure", "route"]) {
+  await ensureSchema(env.HERMA_DB);
+  const id = `synthetic-http-${httpKeys++}`, secret = "synthetic-secret-" + crypto.randomUUID();
+  await env.HERMA_DB.prepare("INSERT INTO harness_keys (key_id, label, harness_kind, scopes_json, secret_sha256, created_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?, NULL)")
+    .bind(id, "SYNTHETIC granted", "opencode", JSON.stringify(scopes), await sha256Hex(secret), Date.now() / 1000).run();
+  return { "Authorization": `Bearer hmk_${id}.${secret}`, "X-Herma-Harness": "opencode" };
 }
 
 describe("typed conversation in the Workers runtime", () => {
@@ -40,8 +56,13 @@ describe("typed conversation in the Workers runtime", () => {
   });
   it("authenticates route scope and resolves only caller-visible contracts", async () => {
     expect((await http("/v1/conversations/turn", turn())).status).toBe(403);
-    const a = await key(), b = await key(), configureOnly = await key(["configure"]);
+    const a = await grantedKey(), b = await grantedKey(), configureOnly = await key(["configure"]), ungranted = await key();
     expect((await http("/v1/context", entry, a)).status).toBe(200);
+    expect((await http("/v1/context", entry, ungranted)).status).toBe(200);
+    // A route key alone is not permission to spend operator funds on server inference.
+    const refused = await http("/v1/conversations/turn", turn(), ungranted);
+    expect(refused.status).toBe(403);
+    expect((await refused.json()).code).toBe("provider_grant_required");
     expect((await http("/v1/conversations/turn", turn(), b)).status).toBe(422);
     expect((await http("/v1/conversations/turn", turn(), configureOnly)).status).toBe(403);
     expect((await http("/v1/admin/conversation-budget", undefined, a)).status).toBe(403);
@@ -92,7 +113,7 @@ describe("typed conversation in the Workers runtime", () => {
   });
 
   it.each([false, true])("retains unknown charges and requires explicit unknown-outcome permission: %s", async uncertain => {
-    const { id, stub } = caller();
+    const { id, stub } = caller(uncertain);
     const result = await stub.turn(id, plannedTurn({ message: "unknown-rotate-test" }), [entry, providerPlan(id, uncertain)]);
     expect(result.body.attempts).toHaveLength(uncertain ? 2 : 1);
     expect(result.body.attempts[0].outcome).toBe("unknown");
@@ -107,12 +128,13 @@ describe("typed conversation in the Workers runtime", () => {
       const plan = providerPlan(id); Object.assign(plan.schema_or_body.provider_plan, patch);
       expect((await stub.turn(id, input, [entry, plan])).body.code).toBe("provider_plan_not_authorized");
     }
-    expect(() => loadProviderPlan({ ...env, HERMA_CONVERSATION_ALLOW_UNCERTAIN_FAILOVER: "false" }, id, input, [entry, providerPlan(id, true)])).toThrow("provider_plan_not_authorized");
+    // The plan's uncertainty opt-in needs this caller's own operator grant, which it lacks.
+    expect(() => loadProviderPlan(env, id, input, [entry, providerPlan(id, true)])).toThrow("provider_plan_not_authorized");
     expect((await stub.snapshot(id, input.conversation_id)).body.attempts).toEqual([]);
   });
 
   it("isolates provider-plan nouns and attempt records through authenticated HTTP", async () => {
-    const a = await key(), b = await key();
+    const a = await grantedKey(), b = await grantedKey();
     const id = "key:" + a.Authorization.split("hmk_")[1].split(".")[0];
     const plan = providerPlan(id); delete plan._provider_plan_scope;
     expect((await http("/v1/context", entry, a)).status).toBe(200);
@@ -129,7 +151,7 @@ describe("typed conversation in the Workers runtime", () => {
   });
 
   it("stops before model dispatch when budget coordination fails, even with an uncertain-outcome grant", async () => {
-    const { id, stub } = caller();
+    const { id, stub } = caller(true);
     await runInDurableObject(stub, async (_instance, state) => {
       let reservations = 0;
       const fresh = new WorkConversation(state, { ...env, WORK_REASONING_BUDGET: { getByName: () => ({ reserve: async () => { reservations++; throw new Error("SYNTHETIC storage unavailable"); } }) } });
@@ -203,7 +225,7 @@ describe("typed conversation in the Workers runtime", () => {
   });
 
   it.each([201, 202, 204, 206].flatMap(status => [false, true].map(uncertain => [status, uncertain])))("keeps nonfinal HTTP%s outcomes unknown with uncertainty grant=%s", async (status, uncertain) => {
-    const target = caller();
+    const target = caller(uncertain);
     await runInDurableObject(target.stub, async (_instance, state) => {
       const budget = env.WORK_REASONING_BUDGET.getByName(crypto.randomUUID());
       const fresh = new WorkConversation(state, { ...env, WORK_REASONING_BUDGET: { getByName: () => budget } });

@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 import pytest
+from conftest import grant
 from test_conversation import contract, seed, tool_reply, turn
 from test_provider_plan import planned_turn, prepared
 
@@ -136,7 +137,6 @@ def test_nonfinal_success_preserves_unknown_outcome_and_requires_uncertain_grant
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: int, uncertain: bool
 ) -> None:
     store = prepared(tmp_path, monkeypatch, uncertain=uncertain)
-    monkeypatch.setenv("HERMA_CONVERSATION_ALLOW_UNCERTAIN_FAILOVER", "true")
     requests = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -175,7 +175,8 @@ def test_nonfinal_failover_plan_cannot_grant_itself_operator_uncertainty_permiss
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = prepared(tmp_path, monkeypatch, uncertain=True)
-    monkeypatch.setenv("HERMA_CONVERSATION_ALLOW_UNCERTAIN_FAILOVER", "false")
+    # The plan opts in, but Alice's operator grant does not carry uncertain failover.
+    grant(monkeypatch, "key:alice")
 
     async def forbidden(_config: ProviderConfig, _body: dict[str, Any]) -> dict[str, Any]:
         pytest.fail("both uncertainty grants are required before a plan may dispatch")

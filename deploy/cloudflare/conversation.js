@@ -105,21 +105,88 @@ export async function loadContracts(entries, refs) {
   return contracts.sort((a, b) => a.operation_id.localeCompare(b.operation_id));
 }
 
-export function loadProviderPlan(env, scope, turn, entries) {
+const PROVIDERS = ["meta", "ollama", "openai", "anthropic", "openrouter"];
+const MAX_GRANTS = 1000, MAX_GRANT_CHOICES = 16;
+// Deployment-wide grants let any caller spend on the operator's behalf; they are refused.
+const LEGACY_GRANT_SETTINGS = ["HERMA_CONVERSATION_PROVIDER_PLAN_ALLOWLIST", "HERMA_CONVERSATION_ALLOW_UNCERTAIN_FAILOVER"];
+// OpenRouter author slugs that name the same vendor as a direct provider.
+const VENDOR_ALIASES = { "meta-llama": "meta" };
+
+// Operator settings: empty or whitespace-only values are unset, as in Python.
+export const setting = (env, name) => { const value = env[name]; return typeof value === "string" && value.trim() ? value.trim() : undefined; };
+// Canonical vendor/model shared by direct and gateway routes to one upstream model (Python's
+// upstream_identity). It deliberately over-matches: one identity only prevents failover.
+export function upstreamIdentity(provider, model) {
+  const value = String(model).trim().toLowerCase();
+  let vendor = provider, name = value;
+  if (provider === "openrouter") {
+    const slash = value.indexOf("/");
+    const author = slash < 0 ? value : value.slice(0, slash);
+    vendor = VENDOR_ALIASES[author] ?? author;
+    name = (slash < 0 ? "" : value.slice(slash + 1)).split(":")[0];
+  }
+  name = name.replace(/[._]/g, "-").replace(/-(?:[0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{8}|latest)$/, "");
+  return `${vendor}/${name}`;
+}
+
+// Contributor models are refused before any other check of a choice list, as in Python.
+const refuseContributorChoices = choices => { if (Array.isArray(choices)) for (const item of choices) if (object(item) && typeof item.model === "string" && /contributor/i.test(item.model)) fail(403, "contributor_tier_refused"); };
+
+// One explicit provider/model route: OpenRouter alone names, and must name, its underlying provider.
+function checkChoice(item) {
+  if (!object(item) || Object.keys(item).some(k => !["provider", "model", "routing_provider"].includes(k))) fail(503, "invalid_provider_configuration");
+  const routed = item.routing_provider !== undefined && item.routing_provider !== null;
+  if (!PROVIDERS.includes(item.provider) || typeof item.model !== "string" || !item.model.length || item.model.length > 100 || ["", "*"].includes(item.model.trim()) ||
+      (item.provider === "openrouter") !== routed || (routed && (typeof item.routing_provider !== "string" || !item.routing_provider.length || item.routing_provider.length > 100))) fail(503, "invalid_provider_configuration");
+  return { provider: item.provider, model: item.model, routing_provider: routed ? item.routing_provider : null };
+}
+const sameChoice = (a, b) => a.provider === b.provider && a.model === b.model && (a.routing_provider ?? null) === (b.routing_provider ?? null);
+
+// The operator's caller-scoped purchase grants; absent or empty means no caller is granted.
+export function operatorGrants(env) {
+  if (LEGACY_GRANT_SETTINGS.some(name => setting(env, name) !== undefined)) fail(503, "invalid_provider_configuration");
+  let items;
+  try { items = strictJson(setting(env, "HERMA_CONVERSATION_PROVIDER_GRANTS") ?? "[]"); } catch { fail(503, "invalid_provider_configuration"); }
+  if (!Array.isArray(items) || items.length > MAX_GRANTS) fail(503, "invalid_provider_configuration");
+  const grants = new Map();
+  for (const item of items) {
+    refuseContributorChoices(item?.providers);
+    if (!object(item) || Object.keys(item).some(k => !["caller_scope", "providers", "allow_uncertain_failover"].includes(k)) ||
+        typeof item.caller_scope !== "string" || !/^key:[A-Za-z0-9_.:-]{1,120}$/.test(item.caller_scope) || grants.has(item.caller_scope) ||
+        !Array.isArray(item.providers) || !item.providers.length || item.providers.length > MAX_GRANT_CHOICES ||
+        (item.allow_uncertain_failover !== undefined && typeof item.allow_uncertain_failover !== "boolean")) fail(503, "invalid_provider_configuration");
+    const providers = item.providers.map(checkChoice);
+    if (providers.some((choice, index) => providers.findIndex(other => sameChoice(choice, other)) !== index)) fail(503, "invalid_provider_configuration");
+    grants.set(item.caller_scope, { caller_scope: item.caller_scope, providers, allow_uncertain_failover: item.allow_uncertain_failover === true });
+  }
+  return grants;
+}
+export const operatorGrant = (env, scope) => operatorGrants(env).get(scope) ?? null;
+export const grantPermits = (grant, choice) => grant !== null && grant.providers.some(item => sameChoice(item, choice));
+export const choiceFor = config => ({ provider: config.provider, model: config.model, routing_provider: config.provider === "openrouter" ? config.openrouter_provider : null });
+
+export function loadProviderPlan(env, scope, turn, entries, grant = operatorGrant(env, scope)) {
   if (!turn.provider_plan_ref) return null;
   const entry = entries.find(item => item.entry_id === turn.provider_plan_ref);
   const plan = entry?.schema_or_body?.provider_plan;
-  let allowed;
-  try { allowed = JSON.parse(env.HERMA_CONVERSATION_PROVIDER_PLAN_ALLOWLIST || "[]"); } catch { fail(503, "invalid_provider_configuration"); }
-  if (entry?._provider_plan_scope !== scope || entry?.kind !== "noun" || !object(plan) ||
-      !new Validator(data.schemas.provider_plan, "2020-12", false).validate(plan).valid ||
-      plan.caller_scope !== scope || !Array.isArray(allowed) ||
-      new Set(plan.providers.map(item => item.provider)).size !== plan.providers.length ||
-      plan.providers.some(item => (item.provider === "openrouter" && !item.routing_provider) || /contributor/i.test(item.model) || !allowed.some(grant => grant?.provider === item.provider && grant?.model === item.model && (grant?.routing_provider ?? null) === (item.routing_provider ?? null))) ||
+  if (entry?._provider_plan_scope !== scope || entry?.kind !== "noun" || !object(plan)) fail(403, "provider_plan_not_authorized");
+  refuseContributorChoices(plan.providers);
+  const valid = new Validator(data.schemas.provider_plan, "2020-12", false).validate(plan).valid;
+  let choices = [];
+  if (valid) { try { choices = plan.providers.map(checkChoice); } catch { choices = null; } }
+  if (!valid || choices === null || grant === null || plan.caller_scope !== scope ||
+      new Set(choices.map(item => item.provider)).size !== choices.length ||
+      // A second credential for the same upstream model would rotate keys around a limit.
+      new Set(choices.map(item => upstreamIdentity(item.provider, item.model))).size !== choices.length ||
+      !choices.every(item => grantPermits(grant, item)) ||
       plan.providers[0].provider !== turn.provider || !turn.context_refs.includes(turn.provider_plan_ref) ||
       JSON.stringify([...new Set(plan.context_refs)].sort()) !== JSON.stringify([...new Set(turn.context_refs.filter(ref => ref !== turn.provider_plan_ref))].sort()) ||
-      (plan.allow_uncertain_outcome && env.HERMA_CONVERSATION_ALLOW_UNCERTAIN_FAILOVER !== "true")) fail(403, "provider_plan_not_authorized");
+      (plan.allow_uncertain_outcome && !grant.allow_uncertain_failover)) fail(403, "provider_plan_not_authorized");
   return plan;
+}
+
+export function requireDirectGrant(grant, config) {
+  if (!grantPermits(grant, choiceFor(config))) fail(403, "provider_grant_required");
 }
 
 export function providerConfig(env, provider) {

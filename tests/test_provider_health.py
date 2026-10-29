@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 from typing import Any
 
 import pytest
+from conftest import grant
 from test_conversation import seed, tool_reply, turn
 from test_provider_plan import plan_entry
 
@@ -41,21 +41,31 @@ def prepare_plan(
     )
 
 
+HEALTH_SCOPES = (
+    "key:first",
+    "key:second",
+    "key:paused",
+    "key:later",
+    "key:no-probe",
+    *(f"key:probe-{index}" for index in range(20)),
+    *(f"key:{name}" for name in ("a", "b", "p", "q")),
+)
+
+
 @pytest.fixture
 def configured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HERMA_CONVERSATION_MAX_OUTPUT", "16384")
     monkeypatch.setenv("META_API_KEY", "synthetic-provider-key")
     monkeypatch.setenv("HERMA_CONVERSATION_DISABLED_PROVIDERS", "[]")
-    monkeypatch.setenv(
-        "HERMA_CONVERSATION_PROVIDER_PLAN_ALLOWLIST",
-        json.dumps(
-            [
-                {"provider": "meta", "model": model}
-                for model in ("muse-spark-1.3", "muse-wonder-1.0")
-            ]
-        ),
+    # Each principal holds its own exact grant; uncertainty still needs a plan opt-in too.
+    grant(
+        monkeypatch,
+        *HEALTH_SCOPES,
+        choices=[
+            {"provider": "meta", "model": model} for model in ("muse-spark-1.3", "muse-wonder-1.0")
+        ],
+        uncertain=True,
     )
-    monkeypatch.setenv("HERMA_CONVERSATION_ALLOW_UNCERTAIN_FAILOVER", "true")
 
 
 def test_operator_pause_retains_keys_and_does_not_change_byo_proxy(

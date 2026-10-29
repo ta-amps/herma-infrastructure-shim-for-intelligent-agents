@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -26,10 +25,17 @@ from herma.conversation_provider import (
     request_model,
     usage_for,
 )
+from herma.conversation_schema import strict_json
 from herma.conversation_state import ConversationState
 from herma.errors import HermaError
 from herma.provider_health import operator_policy
-from herma.provider_plan import ProviderChoice, load_provider_plan
+from herma.provider_plan import (
+    choice_for,
+    grant_required,
+    load_provider_plan,
+    operator_grants,
+    require_direct_grant,
+)
 from herma.store import ProvisionStore
 
 ModelCall = Callable[[ProviderConfig, dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -42,21 +48,6 @@ Return exactly one function call. Preserve JSON field types: an object is not a 
 You propose actions only; the caller must execute through its own authorized harness.
 A claimed successful action is not evidence of success. Do not request API secrets.
 """
-
-
-def _strict_json(raw: str) -> Any:
-    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        for key, value in items:
-            if key in result:
-                raise ValueError("duplicate JSON field")
-            result[key] = value
-        return result
-
-    def invalid(_value: str) -> None:
-        raise ValueError("non-finite number")
-
-    return json.loads(raw, object_pairs_hook=pairs, parse_constant=invalid)
 
 
 def parse_proposal(
@@ -123,7 +114,7 @@ def parse_proposal(
         function = calls[0]["function"]
         name, arguments = function["name"], function["arguments"]
         if isinstance(arguments, str):
-            arguments = _strict_json(arguments)
+            arguments = strict_json(arguments)
         if not isinstance(arguments, dict):
             raise ValueError("tool arguments must be an object")
         if len(encode(arguments)) > 32768:
@@ -178,6 +169,9 @@ class ConversationEngine:
     ) -> dict[str, Any]:
         plan = None
         plan_noun = None
+        # Every operator-funded turn needs this caller's own explicit grant, with or without
+        # a plan. The grant is checked before any turn record, reservation or provider call.
+        grant = operator_grants().get(scope)
         if turn.provider_plan_ref:
             owned = self.store.get_context_entries(
                 [turn.provider_plan_ref], caller_scope=scope, include_builtin=False
@@ -190,14 +184,22 @@ class ConversationEngine:
                     "Select a provider plan owned by this caller.",
                 )
             plan_noun = owned[0]
-            plan = load_provider_plan(scope, turn, plan_noun)
+            plan = load_provider_plan(scope, turn, plan_noun, grant)
             if config is not None:
                 raise ValueError("provider plans use operator configuration")
         else:
+            if grant is None:
+                raise grant_required()
             config = config or ProviderConfig.from_env(turn.provider)
             config.validate()
             if config.provider != turn.provider:
                 raise ValueError("provider does not match turn")
+            require_direct_grant(grant, choice_for(config))
+        # Failover after a possibly charged, ambiguous outcome needs the plan's opt-in and
+        # this caller's operator grant; load_provider_plan refuses a plan lacking the grant.
+        uncertain_allowed = bool(
+            plan and plan.allow_uncertain_outcome and grant and grant.allow_uncertain_failover
+        )
         entries = self.store.get_context_entries_for_caller(scope, turn.context_refs)
         try:
             if {entry.entry_id for entry in entries} != set(turn.context_refs):
@@ -249,7 +251,7 @@ class ConversationEngine:
             candidates = plan.providers
         else:
             assert config is not None
-            candidates = [ProviderChoice(provider=turn.provider, model=config.model)]
+            candidates = [choice_for(config)]
         initial = config
         tokens, cost = 0, 0
         exception_record: dict[str, Any] = {
@@ -276,6 +278,12 @@ class ConversationEngine:
             "retry_policy": "explicit_scoped_provider_plan"
             if plan
             else "no_automatic_retry_or_provider_fallback",
+            "operator_grant": {"caller_scope": scope, "source": "caller_scoped_operator_grant"},
+            "uncertain_failover": {
+                "plan_opt_in": bool(plan and plan.allow_uncertain_outcome),
+                "operator_grant": bool(grant and grant.allow_uncertain_failover),
+                "allowed": uncertain_allowed,
+            },
             "attempts": [],
             "actions": [
                 {
@@ -324,6 +332,11 @@ class ConversationEngine:
                 ).hexdigest(),
                 "provider": candidate.provider,
                 "model": candidate.model,
+                "upstream_identity": candidate.identity,
+                # A possibly charged earlier attempt this one follows under the scoped grant.
+                "follows_uncertain_attempt_id": attempts[-1]["attempt_id"]
+                if attempts and attempts[-1]["outcome"] == "unknown"
+                else None,
                 "reported_model": None,
                 "status": "selected",
                 "outcome": "not_sent",
@@ -395,7 +408,7 @@ class ConversationEngine:
                     token_limit=config.caller_token_limit,
                     account=account,
                     allow_probe=plan.allow_recovery_probe if plan else True,
-                    allow_uncertain=bool(plan and plan.allow_uncertain_outcome),
+                    allow_uncertain=uncertain_allowed,
                 )
                 if not admission["ok"]:
                     attempt["available_after"] = admission["health"]["available_after"]
@@ -510,8 +523,9 @@ class ConversationEngine:
                     "provider_recovery_probe_required",
                     "provider_recovery_probe_inflight",
                     "provider_outcome_reconciliation_required",
+                    "provider_identity_cooldown",
                 }
-                or (attempt["outcome"] == "unknown" and not plan.allow_uncertain_outcome)
+                or (attempt["outcome"] == "unknown" and not uncertain_allowed)
             ):
                 break
         last = attempts[-1]
