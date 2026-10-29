@@ -27,6 +27,9 @@ def conflict(code: str, detail: str) -> HermaError:
 
 
 class ConversationState:
+    # Seconds to wait for a competing SQLite writer before reporting a storage failure.
+    busy_timeout: float = 10
+
     def __init__(self, path: Path) -> None:
         self.path = path
         with self.connect() as conn:
@@ -67,7 +70,7 @@ class ConversationState:
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.path, timeout=10)
+        conn = sqlite3.connect(self.path, timeout=self.busy_timeout)
         conn.row_factory = sqlite3.Row
         try:
             with conn:

@@ -131,7 +131,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/provider_health.test.js](test/provider_health.test.js) |  |
 | [test/triggers.test.js](test/triggers.test.js) |  |
 
-## tests/ (18)
+## tests/ (19)
 
 | File | What it is |
 |---|---|
@@ -140,6 +140,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [tests/test_cli_demo.py](tests/test_cli_demo.py) | The CI demo verifies the supported client policy and its real provision pipeline. |
 | [tests/test_conversation.py](tests/test_conversation.py) | Typed proposals, caller isolation, budget fencing and real HTTP provider contracts. |
 | [tests/test_conversation_schema_parity.py](tests/test_conversation_schema_parity.py) | Cross-runtime fixtures for the portable conversation schema boundary. |
+| [tests/test_conversation_storage.py](tests/test_conversation_storage.py) | Real SQLite failures stop paid rotation, seal the turn and keep evidence for reconciliation. |
 | [tests/test_decision_provider.py](tests/test_decision_provider.py) | Jev is a typed worker decision protocol, not a generative fallback. |
 | [tests/test_external_access_security.py](tests/test_external_access_security.py) | Regression proofs for scoped personal-assistant access and fail-closed fabric imports. |
 | [tests/test_harness_gate_and_store.py](tests/test_harness_gate_and_store.py) | Tests for configurable-harness access gate, CAS store, Tessera sync, and remote handshake sync. |
