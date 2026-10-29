@@ -3,6 +3,7 @@ import { Validator } from "@cfworker/json-schema";
 import data from "./conversation_data.json" with { type: "json" };
 import { canonicalJson, sha256Hex } from "./herma_engine.js";
 import { readProviderError } from "./provider_diagnostics.js";
+import { operatorPolicy, retryGuidance } from "./provider_health.js";
 
 export class ConversationError extends Error {
   constructor(status, code) { super(code); this.status = status; this.code = code; }
@@ -141,7 +142,7 @@ export function providerConfig(env, provider) {
   try { generation = JSON.parse(env[`${prefix}_GENERATION`] || "{}"); } catch { fail(503, "invalid_provider_configuration"); }
   const reserved = ["model", "input", "messages", "instructions", "system", "tools", "stream", "store", "background", "conversation", "previous_response_id", "parallel_tool_calls", "max_tokens", "max_completion_tokens", "max_output_tokens", "models", "provider", "route", "plugins", "preset", "presets", "web_search_options", "mcp_servers", "container", "server_tools"];
   if (!["meta", "ollama", "openai", "anthropic", "openrouter"].includes(provider) || typeof model !== "string" || !model.length || /contributor/i.test(model) ||
-      model.length > 100 || (provider === "meta" && !has(RATES, model)) ||
+      model === "*" || model.length > 100 || (provider === "meta" && !has(RATES, model)) ||
       !isInt(max_output) || max_output < 1 ||
       (reasoning_effort !== null && (typeof reasoning_effort !== "string" || !reasoning_effort.length || reasoning_effort.length > 40)) ||
       !Number.isFinite(meta_budget_usd) || meta_budget_usd <= 0 ||
@@ -229,6 +230,9 @@ export function parseProposal(reply, provider, contracts) {
 }
 
 export async function requestModel(env, config, body, timeoutMs = 25000) {
+  let policy;
+  try { policy = operatorPolicy(env, config.provider); } catch { fail(503, "invalid_provider_configuration"); }
+  if (policy.disabled) { const error = new ConversationError(503, "provider_operator_disabled"); error.outcome = "not_sent"; throw error; }
   const key = env[{ meta: "META_API_KEY", ollama: "OLLAMA_API_KEY", openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY", openrouter: "OPENROUTER_API_KEY" }[config.provider]];
   if (!key) fail(503, "provider_not_configured");
   const url = config.url;
@@ -242,9 +246,9 @@ export async function requestModel(env, config, body, timeoutMs = 25000) {
       const error = new ConversationError(502, code);
       error.http_status = response.status;
       error.outcome = response.status >= 500 || response.status === 408 ? "unknown" : "rejected";
-      const rawRetry = response.headers.get("retry-after");
-      const retry = rawRetry && Number.isFinite(Number(rawRetry)) ? Number(rawRetry) : rawRetry ? Math.max(0, (Date.parse(rawRetry) - Date.now()) / 1000) : NaN;
-      error.retry_after_seconds = Number.isFinite(retry) && retry >= 0 ? retry : null;
+      const retry = retryGuidance(response.headers, Date.now() / 1000);
+      error.retry_after_seconds = retry.seconds;
+      error.retry_guidance_source = retry.source;
       error.diagnostics = await readProviderError(response);
       throw error;
     }

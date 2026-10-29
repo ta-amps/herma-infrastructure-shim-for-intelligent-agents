@@ -30,6 +30,7 @@ class ProviderPlan(BaseModel):
     providers: list[ProviderChoice] = Field(min_length=1)
     allow_failover: Literal[True]
     allow_uncertain_outcome: bool = False
+    allow_recovery_probe: bool = True
 
     @model_validator(mode="after")
     def unique_providers(self) -> ProviderPlan:

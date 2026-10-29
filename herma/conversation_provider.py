@@ -8,7 +8,6 @@ import math
 import os
 import time
 from dataclasses import dataclass, field
-from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -16,6 +15,7 @@ import httpx
 from herma.errors import HermaError
 from herma.harness_gate import refuse_contributor_model
 from herma.provider_diagnostics import ERROR_BODY_BYTES, normalize_provider_error
+from herma.provider_health import operator_policy, retry_guidance
 
 # Microdollars per token, from the standard-mode provider tariff.
 META_RATES = {"muse-spark-1.3": (1.25, 4.25), "muse-wonder-1.0": (4.0, 20.0)}
@@ -104,7 +104,7 @@ class ProviderConfig:
         refuse_contributor_model(self.model)
         if self.provider not in {"meta", "ollama", "openai", "anthropic", "openrouter"}:
             raise ValueError("unsupported provider")
-        if not self.model or len(self.model) > 100:
+        if not self.model or self.model == "*" or len(self.model) > 100:
             raise ValueError("configure an explicit provider model")
         if self.provider == "meta" and self.model not in META_RATES:
             raise ValueError("model needs a configured standard-mode price ceiling")
@@ -322,12 +322,14 @@ class ProviderFailure(Exception):
         retry_after_seconds: float | None = None,
         http_status: int | None = None,
         diagnostics: dict[str, Any] | None = None,
+        retry_guidance_source: str | None = None,
     ) -> None:
         super().__init__(code)
         self.outcome = outcome
         self.retry_after_seconds = retry_after_seconds
         self.http_status = http_status
         self.diagnostics = diagnostics
+        self.retry_guidance_source = retry_guidance_source
 
 
 async def request_model(
@@ -338,6 +340,8 @@ async def request_model(
 ) -> dict[str, Any]:
     config.validate()
     config.reservation(body)
+    if operator_policy(config.provider)[0]:
+        raise ProviderFailure("provider_operator_disabled", outcome="not_sent")
     key = os.environ.get(
         {
             "meta": "META_API_KEY",
@@ -374,20 +378,7 @@ async def request_model(
             ) as response,
         ):
             if response.status_code != 200:
-                retry = response.headers.get("retry-after", "")
-                retry_seconds = None
-                if retry:
-                    try:
-                        parsed_retry = float(retry)
-                    except ValueError:
-                        try:
-                            parsed_retry = max(
-                                0, parsedate_to_datetime(retry).timestamp() - time.time()
-                            )
-                        except (TypeError, ValueError, OverflowError):
-                            parsed_retry = float("nan")
-                    if math.isfinite(parsed_retry) and parsed_retry >= 0:
-                        retry_seconds = parsed_retry
+                retry_seconds, retry_source = retry_guidance(response.headers, time.time())
                 code = (
                     "provider_rate_limited"
                     if response.status_code == 429
@@ -403,6 +394,7 @@ async def request_model(
                     if response.status_code >= 500 or response.status_code == 408
                     else "rejected",
                     retry_after_seconds=retry_seconds,
+                    retry_guidance_source=retry_source,
                     http_status=response.status_code,
                     diagnostics=normalize_provider_error(b"", body_state="unavailable"),
                 )

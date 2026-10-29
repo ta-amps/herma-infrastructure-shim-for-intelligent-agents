@@ -795,6 +795,11 @@
           "title": "Allow Failover",
           "type": "boolean"
         },
+        "allow_recovery_probe": {
+          "default": true,
+          "title": "Allow Recovery Probe",
+          "type": "boolean"
+        },
         "allow_uncertain_outcome": {
           "default": false,
           "title": "Allow Uncertain Outcome",

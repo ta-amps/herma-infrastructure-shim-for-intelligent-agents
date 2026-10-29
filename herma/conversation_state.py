@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from herma.errors import HermaError
+from herma.provider_health import admit_health, fresh_health, settle_health
 
 
 def conflict(code: str, detail: str) -> HermaError:
@@ -45,6 +46,13 @@ class ConversationState:
             if "exception_record" not in columns:
                 conn.execute(
                     "ALTER TABLE work_turns ADD COLUMN exception_record TEXT NOT NULL DEFAULT '{}'"
+                )
+            health_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(work_provider_health)")
+            }
+            if "state" not in health_columns:
+                conn.execute(
+                    "ALTER TABLE work_provider_health ADD COLUMN state TEXT NOT NULL DEFAULT '{}'"
                 )
 
     @contextmanager
@@ -242,7 +250,7 @@ class ConversationState:
                 attempt = record["attempts"][-1]
                 if attempt.get("available_after") is not None:
                     conn.execute(
-                        "INSERT INTO work_provider_health VALUES (?,?,?,?) ON CONFLICT(scope,provider,model) DO UPDATE SET available_after=excluded.available_after",
+                        "INSERT INTO work_provider_health (scope,provider,model,available_after) VALUES (?,?,?,?) ON CONFLICT(scope,provider,model) DO UPDATE SET available_after=excluded.available_after",
                         (scope, attempt["provider"], attempt["model"], attempt["available_after"]),
                     )
 
@@ -259,7 +267,10 @@ class ConversationState:
         cost: int,
         budget: int,
         token_limit: int | None,
-    ) -> None:
+        account: str = "operator",
+        allow_probe: bool = False,
+        allow_uncertain: bool = False,
+    ) -> dict[str, Any]:
         with self.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
@@ -279,6 +290,23 @@ class ConversationState:
                     "attempt_already_reserved",
                     "Reconcile this attempt without calling the model again.",
                 )
+            states = self._health_states(conn, account, provider, attempt["model"])
+            admission = admit_health(
+                states,
+                attempt["attempt_id"],
+                time.time(),
+                allow_probe=allow_probe,
+                allow_uncertain=allow_uncertain,
+            )
+            self._write_health(conn, account, provider, states)
+            attempt["provider_health"] = admission["health"]
+            if not admission["ok"]:
+                attempt.update(
+                    reservation_status="denied",
+                    reservation_ceiling_tokens=tokens,
+                    reserved_tokens=0,
+                )
+                return admission
             spent = conn.execute(
                 "SELECT reserved_microusd FROM work_provider_budget WHERE provider=?", (provider,)
             ).fetchone()
@@ -309,6 +337,90 @@ class ConversationState:
                 (scope, hour, tokens),
             )
             attempt["reservation_status"] = "reserved"
+            attempt["health_ticket"] = admission["ticket"]
+            conn.execute(
+                "UPDATE work_turns SET exception_record=? WHERE scope=? AND conversation=? AND request=? AND version=?",
+                (json.dumps(record, allow_nan=False), scope, conversation, request, version),
+            )
+            return admission
+
+    @staticmethod
+    def _health_states(
+        conn: sqlite3.Connection, account: str, provider: str, model: str
+    ) -> dict[str, dict[str, Any]]:
+        states = {}
+        for key in ("*", model):
+            row = conn.execute(
+                "SELECT state FROM work_provider_health WHERE scope=? AND provider=? AND model=?",
+                ("operator:" + account, provider, key),
+            ).fetchone()
+            states[key] = {**fresh_health(), **json.loads(row[0])} if row else fresh_health()
+        return states
+
+    @staticmethod
+    def _write_health(
+        conn: sqlite3.Connection, account: str, provider: str, states: dict[str, dict[str, Any]]
+    ) -> None:
+        for model, state in states.items():
+            if state["generation"] or state["probe_id"]:
+                conn.execute(
+                    "INSERT INTO work_provider_health (scope,provider,model,available_after,state) VALUES (?,?,?,?,?) ON CONFLICT(scope,provider,model) DO UPDATE SET available_after=excluded.available_after,state=excluded.state",
+                    (
+                        "operator:" + account,
+                        provider,
+                        model,
+                        state["available_after"],
+                        json.dumps(state, allow_nan=False),
+                    ),
+                )
+
+    def settle_provider_health(
+        self,
+        scope: str,
+        conversation: str,
+        request: str,
+        version: int,
+        record: dict[str, Any],
+        account: str,
+    ) -> None:
+        attempt = record["attempts"][-1]
+        if "health_ticket" not in attempt:
+            return
+        with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT exception_record FROM work_turns WHERE scope=? AND conversation=? AND request=? AND version=? AND response IS NULL",
+                (scope, conversation, request, version),
+            ).fetchone()
+            if not row:
+                raise conflict("turn_fence_conflict", "The turn is no longer active.")
+            previous = next(
+                (
+                    a
+                    for a in json.loads(row[0]).get("attempts", [])
+                    if a["attempt_id"] == attempt["attempt_id"]
+                ),
+                None,
+            )
+            if previous and previous.get("health_settled"):
+                attempt["provider_health"] = previous["provider_health"]
+                attempt["health_settled"] = True
+                return
+            states = self._health_states(conn, account, attempt["provider"], attempt["model"])
+            attempt["provider_health"] = settle_health(
+                states,
+                attempt["health_ticket"],
+                attempt["attempt_id"],
+                attempt["model"],
+                time.time(),
+                outcome=attempt["outcome"],
+                error_code=attempt["error_code"],
+                reason=(attempt.get("provider_diagnostics") or {}).get("reason"),
+                retry_seconds=attempt.get("retry_after_seconds"),
+                http_status=attempt.get("upstream_http_status"),
+            )
+            self._write_health(conn, account, attempt["provider"], states)
+            attempt["health_settled"] = True
             conn.execute(
                 "UPDATE work_turns SET exception_record=? WHERE scope=? AND conversation=? AND request=? AND version=?",
                 (json.dumps(record, allow_nan=False), scope, conversation, request, version),

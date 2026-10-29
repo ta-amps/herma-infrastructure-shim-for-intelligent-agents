@@ -129,6 +129,8 @@ def normalize_provider_error(raw: bytes, *, body_state: str | None = None) -> di
         result["reason"] = "credit_or_quota_exhausted"
     elif kind == "authentication_error" or code == "invalid_api_key":
         result["reason"] = "authentication_failed"
+    elif code == 402:
+        result["reason"] = "payment_required"
     elif kind == "permission_error":
         result["reason"] = "permission_denied"
     elif code == "context_length_exceeded":

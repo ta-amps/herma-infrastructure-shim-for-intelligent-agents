@@ -1,6 +1,7 @@
 // Context-shimming 3-tier trigger engine, multi-caller isolation, governance lens,
 // deterministic Anti-RAG entity memory, direct-response formatter, and HTML console
 // for Herma Cloud on Cloudflare Workers + D1.
+import { operatorPolicy, providerForHost } from "./provider_health.js";
 
 export const HERMA_VERSION = "0.1.0";
 export const SYSTEM_BUILTIN_SCOPE = "system_builtin";
@@ -2071,6 +2072,14 @@ export function resolveUpstream(request, env, path) {
   const callerKey = request.headers.get("x-upstream-api-key") || "";
   const operatorKey = env.UPSTREAM_LLM_API_KEY || "";
   if (operatorKey && !callerKey && (!configured || target.origin !== new URL(configured).origin)) throw new HermaErr(403, "upstream_credential_origin_mismatch", "Credential Origin Mismatch", "Server credentials are bound to the configured provider origin. Supply your own key for an alternate provider.");
+  if (operatorKey && !callerKey) {
+    const provider = providerForHost(target.hostname);
+    if (provider) {
+      let policy;
+      try { policy = operatorPolicy(env, provider); } catch { throw new HermaErr(503, "invalid_provider_configuration", "Invalid Provider Availability", "Configure the operator provider pause list."); }
+      if (policy.disabled) throw new HermaErr(503, "provider_operator_disabled", "Operator Provider Paused", "The selected operator-funded provider is paused; caller-owned upstream credentials remain supported.");
+    }
+  }
   const base = target.pathname.replace(/\/+$/, "");
   if (base === "" || base === "/v1") target.pathname = path;
   return {url: target.toString(), key: callerKey || operatorKey};

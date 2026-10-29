@@ -24,6 +24,7 @@ from herma.profiles import (
     CallerProfile,
     get_caller_profile,
 )
+from herma.provider_health import operator_policy, provider_for_host
 from herma.schemas import (
     SYSTEM_BUILTIN_SCOPE,
     CallerProfileId,
@@ -208,6 +209,15 @@ def _resolve_upstream_headers(
             "Supply your own upstream key for an allowlisted alternate provider.",
         )
     out: dict[str, str] = {"Content-Type": "application/json"}
+    if operator_key and not caller_key:
+        provider = provider_for_host(target.hostname)
+        if provider and operator_policy(provider)[0]:
+            raise HermaError(
+                503,
+                "provider_operator_disabled",
+                "Operator provider paused",
+                "The selected operator-funded provider is paused; caller-owned upstream credentials remain supported.",
+            )
     upstream_key = (
         lower.get("x-upstream-api-key", "").strip()
         or os.environ.get("HERMA_UPSTREAM_API_KEY", "").strip()

@@ -27,6 +27,7 @@ from herma.conversation_provider import (
 )
 from herma.conversation_state import ConversationState
 from herma.errors import HermaError
+from herma.provider_health import operator_policy
 from herma.provider_plan import ProviderChoice, load_provider_plan
 from herma.store import ProvisionStore
 
@@ -334,6 +335,7 @@ class ConversationEngine:
                 "error_code": None,
                 "upstream_http_status": None,
                 "provider_diagnostics": None,
+                "provider_health": None,
                 "available_after": None,
             }
             attempts.append(attempt)
@@ -341,7 +343,17 @@ class ConversationEngine:
                 scope, turn.conversation_id, turn.request_id, version, exception_record
             )
             reply = {}
+            account = "operator"
             try:
+                disabled, account = operator_policy(candidate.provider)
+                if disabled:
+                    attempt["provider_health"] = {
+                        "state": "operator_disabled",
+                        "reason": "provider_operator_disabled",
+                        "available_after": None,
+                        "requires_operator_enable": True,
+                    }
+                    raise ProviderFailure("provider_operator_disabled", outcome="not_sent")
                 config = initial or ProviderConfig.from_env(candidate.provider)
                 if config.model != candidate.model:
                     raise ProviderFailure("provider_model_not_configured", outcome="not_sent")
@@ -351,10 +363,6 @@ class ConversationEngine:
                     and candidate.routing_provider != config.openrouter_provider
                 ):
                     raise ProviderFailure("provider_model_not_configured", outcome="not_sent")
-                available_after = self.state.cooldown(scope, candidate.provider, candidate.model)
-                if available_after > time.time():
-                    attempt["available_after"] = available_after
-                    raise ProviderFailure("provider_cooldown", outcome="not_sent")
                 body = config.build_request(messages, tools_for(contracts))
                 attempt_tokens, attempt_cost = config.reservation(body)
                 attempt.update(
@@ -372,7 +380,7 @@ class ConversationEngine:
                     if config.provider != "ollama"
                     else None,
                 )
-                self.state.reserve_attempt(
+                admission = self.state.reserve_attempt(
                     scope=scope,
                     conversation=turn.conversation_id,
                     request=turn.request_id,
@@ -383,7 +391,13 @@ class ConversationEngine:
                     cost=attempt_cost,
                     budget=int(config.budget_usd * 1000000),
                     token_limit=config.caller_token_limit,
+                    account=account,
+                    allow_probe=plan.allow_recovery_probe if plan else True,
+                    allow_uncertain=bool(plan and plan.allow_uncertain_outcome),
                 )
+                if not admission["ok"]:
+                    attempt["available_after"] = admission["health"]["available_after"]
+                    raise ProviderFailure(admission["code"], outcome="not_sent")
                 tokens += attempt_tokens
                 cost += attempt_cost
                 attempt["reserved_usd"] = (
@@ -452,6 +466,8 @@ class ConversationEngine:
                     attempt.update(
                         upstream_http_status=exc.http_status,
                         provider_diagnostics=exc.diagnostics,
+                        retry_after_seconds=exc.retry_after_seconds,
+                        retry_guidance_source=exc.retry_guidance_source,
                     )
                 if isinstance(exc, ProviderFailure) and error in {
                     "provider_rate_limited",
@@ -461,6 +477,11 @@ class ConversationEngine:
                         exc.retry_after_seconds if exc.retry_after_seconds is not None else 30
                     )
                 issues = [{"path": "/", "rule": error}]
+            self.state.settle_provider_health(
+                scope, turn.conversation_id, turn.request_id, version, exception_record, account
+            )
+            if attempt.get("health_settled"):
+                attempt["available_after"] = attempt["provider_health"]["available_after"]
             self.state.update_attempts(
                 scope, turn.conversation_id, turn.request_id, version, exception_record
             )
@@ -480,6 +501,11 @@ class ConversationEngine:
                     "provider_budget_exhausted",
                     "provider_call_budget_exhausted",
                     "provider_cooldown",
+                    "provider_operator_disabled",
+                    "provider_backpressure",
+                    "provider_recovery_probe_required",
+                    "provider_recovery_probe_inflight",
+                    "provider_outcome_reconciliation_required",
                 }
                 or (attempt["outcome"] == "unknown" and not plan.allow_uncertain_outcome)
             ):

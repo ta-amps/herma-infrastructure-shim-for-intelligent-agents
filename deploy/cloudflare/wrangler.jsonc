@@ -32,6 +32,7 @@
   // "routes": [{ "pattern": "herma.<your-domain>", "custom_domain": true }],
   "vars": {
     "HERMA_CONVERSATION_ENABLED": "true",
+    "HERMA_CONVERSATION_DISABLED_PROVIDERS": "[\"anthropic\",\"openrouter\"]",
     "HERMA_META_BUDGET_USD": "5",
     "HERMA_OLLAMA_CALLS_PER_DAY": "30",
     "STORAGE_MODE": "cloud",

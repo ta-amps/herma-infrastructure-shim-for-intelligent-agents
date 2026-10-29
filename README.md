@@ -10,6 +10,10 @@ The default agentic executor is the worker's own harness holding a Tessera verb.
 Inputs, contracts, artifacts and evidence remain scoped nouns. Herma supplies
 configured context when useful; server model turns are explicit bounded exceptions.
 
+Operator-funded conversation providers can be paused independently of worker-owned
+providers. Shared cooldowns follow provider retry guidance and admit one funded
+recovery request after a limit; see [provider availability](docs/conversations.md#operator-availability-and-automatic-backpressure).
+
 Optional [typed work conversations](docs/conversations.md) let authenticated harnesses ask for clarification and receive one schema-checked noun/verb proposal at a time. Muse, Ollama Cloud, OpenAI, Anthropic and OpenRouter use explicit provider protocols, server credentials, output allowances, durable budget reservations and caller-scoped state. An optional private provider-plan noun permits controlled failover. The existing turn receipt records every attempt and its server exception. A proposed domain action is never executed by the conversation endpoint.
 
 Workers may use their own local or cloud providers through the ordinary shim.
