@@ -1,3 +1,4 @@
+import { agentStartAsset, withAgentStart } from "./agent_start.js";
 import { agentFetch } from "./agent_access.js";
 import { ConversationError, conversationSchemas, strictJson, validateTurn } from "./conversation.js";
 // Cloudflare Cloud Worker for Herma: 24/7 caller-isolated context-shimming AI middleware backed by
@@ -2177,4 +2178,11 @@ const application = {
   },
 };
 
-export default { fetch(request, env) { return agentFetch(request, env, (req, bindings) => application.fetch(req, bindings)); } };
+const onboardingApplication = { fetch(request, env) { return agentFetch(request, env, (req, bindings) => application.fetch(req, bindings)); } };
+
+export default {
+  ...onboardingApplication,
+  async fetch(request, env, ctx) {
+    return agentStartAsset(request) || withAgentStart(request, await onboardingApplication.fetch(request, env, ctx));
+  },
+};
