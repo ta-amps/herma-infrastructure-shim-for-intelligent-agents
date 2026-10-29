@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.base import RequestResponseEndpoint
 
 from herma import __version__
+from herma.agent_access import ACCESS_INFO, AgentAccessMiddleware
 from herma.api.pages import (
     FAVICON_SVG,
     MCP_TOOLS_SPEC,
@@ -272,6 +273,7 @@ def create_app() -> FastAPI:
             status_code=exc.status_code,
             media_type="application/problem+json",
             content=exc.to_problem(),
+            headers={"Retry-After": "3600"} if exc.status_code == 429 else None,
         )
 
     @application.middleware("http")
@@ -580,6 +582,7 @@ def create_app() -> FastAPI:
             principal=principal,
             wire_format=body.wire_format,
             payload=body.payload,
+            offline_only=True,
             workspace_paths=body.workspace_paths,
             project_tag=project_tag,
             cohort=cohort,
@@ -610,6 +613,7 @@ def create_app() -> FastAPI:
         payload = await req.json()
         if not isinstance(payload, dict):
             raise HermaError(400, "invalid_json", "Invalid Request Body", "Expected JSON object.")
+        store.reserve_route_request(principal.caller_scope)
         mw = HermaMiddleware(store)
         outcome = await mw.intercept(
             principal=principal,
@@ -879,6 +883,11 @@ def create_app() -> FastAPI:
         )
         return {"synced": [s.provision.prov_id for s in synced], "count": len(synced)}
 
+    @application.get("/connect.json")
+    async def access_modes() -> dict[str, object]:
+        return ACCESS_INFO
+
+    application.add_middleware(AgentAccessMiddleware)
     return application
 
 

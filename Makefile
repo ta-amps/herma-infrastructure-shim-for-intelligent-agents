@@ -1,4 +1,4 @@
-# Herma. Run `make help` for the list. Tessera must be cloned next to this repo (../tessera).
+# Herma. Run `make help` for the list. Tessera installs from an immutable Git commit.
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
 API_PORT ?= 7730

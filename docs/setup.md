@@ -4,6 +4,11 @@
 
 ## Local Development
 
+Clone this repository alone. Tessera is installed from the immutable commit
+`ecca97deb88b82e627df66c98400b3a302e2bdb0` through a standard PEP 508 Git dependency.
+`uv.lock` records the resolution; no local sibling checkout is required.
+The installer needs Python 3.12+, Git, uv and network access to the public repository.
+
 ```bash
 make setup
 make check

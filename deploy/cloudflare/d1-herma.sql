@@ -79,3 +79,5 @@ CREATE TABLE IF NOT EXISTS rule_outcomes (
   UNIQUE (caller_scope, receipt_id, prov_id)
 );
 CREATE INDEX IF NOT EXISTS idx_rule_outcomes_scope ON rule_outcomes (caller_scope, project_tag, prov_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS route_quotas (caller_scope TEXT NOT NULL, hour INTEGER NOT NULL, used INTEGER NOT NULL, PRIMARY KEY (caller_scope, hour));

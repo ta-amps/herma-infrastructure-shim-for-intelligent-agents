@@ -37,7 +37,7 @@ def _sample_provision(prov_id: str = "PROV-SAMPLE-01", max_chars: int = 2000) ->
     )
 
 
-def test_consumer_assistant_and_browser_navigation_refused(tmp_path: Path) -> None:
+def test_personal_assistant_credentials_and_browser_navigation(tmp_path: Path) -> None:
     store = ProvisionStore(tmp_path / "herma.db")
     raw_key, _ = store.issue_key(
         label="laptop",
@@ -46,11 +46,12 @@ def test_consumer_assistant_and_browser_navigation_refused(tmp_path: Path) -> No
     )
     principal = store.authenticate_headers({"X-Herma-Key": raw_key})
 
-    with pytest.raises(HarnessRequiredError):
-        enforce_not_consumer_assistant({"User-Agent": "Muse-Personal-Assistant/2.0"})
+    assert enforce_not_consumer_assistant({"User-Agent": "Muse-Personal-Assistant/2.0"}) is None
 
-    with pytest.raises(HarnessRequiredError):
-        enforce_not_consumer_assistant({"X-Herma-Harness": "muse-personal-assistant"})
+    assert (
+        enforce_not_consumer_assistant({"X-Herma-Harness": "personal-assistant"})
+        == "personal-assistant"
+    )
 
     with pytest.raises(HarnessRequiredError):
         enforce_not_consumer_assistant({"Sec-Fetch-Mode": "navigate"})
@@ -125,9 +126,8 @@ def test_cas_conflict_and_tessera_blob_sync(tmp_path: Path) -> None:
 
     fresh = ProvisionStore(tmp_path / "fresh.db")
     synced = fresh.sync_from_tessera_store(t_store)
-    assert len(synced) == 1
-    blob_uri = synced[0].provision.uris[1]
-    assert "Authoritative excerpt resolved" in blob_uri.inline_excerpt
+    # Legacy ungoverned records and raw blob digests are not public authority.
+    assert synced == []
 
 
 @pytest.mark.anyio
@@ -136,6 +136,14 @@ async def test_remote_handshake_clamps_max_chars(
 ) -> None:
     seen_headers: list[dict[str, str]] = []
     prov_dict = _sample_provision(max_chars=5000).model_dump(mode="json")
+    prov_dict["governance"] = {
+        "namespace": "main",
+        "producer_surface": "surface:herma",
+        "visibility_scope": "public_commons",
+        "allowed_surfaces": [],
+        "target_cohorts": ["all"],
+        "tags": ["status:verified"],
+    }
 
     def _handler(request: httpx.Request) -> httpx.Response:
         seen_headers.append(dict(request.headers))

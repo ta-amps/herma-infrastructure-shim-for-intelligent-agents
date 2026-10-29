@@ -423,7 +423,7 @@ def render_overview_page(
       intercepts requests via <strong>keyword</strong>, <strong>semantic</strong>, or
       <strong>micromodel</strong> rules to <strong>respond directly</strong> or shim atomic
       <strong>noun, verb, and URI context</strong> from a user-configured database before LLM execution.
-      Generic consumer assistants and contributor-tier models remain deterministically refused.
+      Personal assistants with scoped credentials are supported. Contributor-tier models remain refused.
     </p>
     <section class="grid">
       <div class="card">
@@ -531,12 +531,11 @@ def render_connect_page(public_url: str) -> str:
 <body>
 {_render_header()}
   <main>
-    <span class="pill">Configurable Harnesses Only</span>
-    <h1>Connect Muse Code, OpenCode, Claude Code, or Codex</h1>
+    <span class="pill">Scoped Agent Access</span>
+    <h1>Connect a coding harness or personal assistant</h1>
     <p class="lead">
-      Only fully configurable agentic coding harnesses that control custom base URLs, headers, and scoped
-      <code>hmk_</code> credentials can route through or configure Herma. Generic consumer chat clients
-      (such as Muse Personal Assistant) are deterministically refused with <code>HTTP 403 harness_required</code>.
+      Coding harnesses and personal assistants that control custom base URLs, headers, and scoped
+      <code>hmk_</code> credentials can route through or configure Herma. Public previews require no key; missing private-route credentials return <code>HTTP 403 harness_required</code>.
     </p>
     <div class="card" style="margin-bottom:1.2rem;">
       <h3>1. Issue a Scoped Harness Key</h3>

@@ -271,13 +271,8 @@ async def test_store_context_entries_and_tessera_noun_verb_resolution(
     resolved = store.get_context_entries(
         ["noun:tessera.nouns/fencing", "verb:tessera.verbs/claim", "noun:local.keep"]
     )
-    assert [e.entry_id for e in resolved] == [
-        "noun:tessera.nouns/fencing",
-        "verb:tessera.verbs/claim",
-        "noun:local.keep",
-    ]
-    assert resolved[0].source_uri == "tessera://stores/tessera.nouns/fencing"
-    assert resolved[1].kind == "verb"
+    assert [e.entry_id for e in resolved] == ["noun:local.keep"]
+    # Local records without canonical governance cannot cross the fabric import boundary.
 
     # 2. Resolve noun:<store>/<key> and verb:<store>/<key> over HTTP via sync_from_tessera_http:
     def _http_handler(request: httpx.Request) -> httpx.Response:
@@ -312,7 +307,26 @@ async def test_store_context_entries_and_tessera_noun_verb_resolution(
             )
         return httpx.Response(404)
 
-    transport = httpx.MockTransport(_http_handler)
+    def governed_fixture(request: httpx.Request) -> httpx.Response:
+        response = _http_handler(request)
+        if response.status_code != 200 or "application/json" not in response.headers.get(
+            "content-type", ""
+        ):
+            return response
+        body = response.json()
+        if "value" in body:
+            body = {
+                "namespace": "main",
+                "producer_surface": "surface:tessera",
+                "visibility_scope": "public_commons",
+                "allowed_surfaces": [],
+                "target_cohorts": ["all"],
+                "tags": ["status:verified"],
+                **body,
+            }
+        return httpx.Response(response.status_code, json=body)
+
+    transport = httpx.MockTransport(governed_fixture)
     orig_init = httpx.AsyncClient.__init__
 
     def _patched_init(self: Any, *args: Any, **kwargs: Any) -> None:
@@ -696,7 +710,7 @@ async def test_herma_handshake_endpoint_and_peer_sync(
             },
             json={"protocol_version": "1.0", "surface_id": "kothar"},
         )
-        assert r_consumer.status_code == 403
+        assert r_consumer.status_code == 200
 
         r_hs = tc.post(
             "/v1/handshake",
@@ -771,8 +785,8 @@ async def test_herma_handshake_endpoint_and_peer_sync(
             handshake_path="/v1/handshake",
             provisions_path="/v1/provisions?include_context=true",
         )
-        assert len(synced) >= 1
-        assert len(downstream.list_context_entries()) >= 1
+        assert synced == []
+        assert downstream.list_context_entries() == []
 
     cf = _run_worker_node_script(
         """
@@ -1350,7 +1364,26 @@ async def test_governance_lens_blob_sha256_integrity_and_contributor_offline_ref
             )
         return httpx.Response(404)
 
-    transport = httpx.MockTransport(_gov_handler)
+    def governed_fixture(request: httpx.Request) -> httpx.Response:
+        response = _gov_handler(request)
+        if response.status_code != 200 or "application/json" not in response.headers.get(
+            "content-type", ""
+        ):
+            return response
+        body = response.json()
+        if "value" in body:
+            body = {
+                "namespace": "main",
+                "producer_surface": "surface:tessera",
+                "visibility_scope": "public_commons",
+                "allowed_surfaces": [],
+                "target_cohorts": ["all"],
+                "tags": ["status:verified"],
+                **body,
+            }
+        return httpx.Response(response.status_code, json=body)
+
+    transport = httpx.MockTransport(governed_fixture)
     orig_init = httpx.AsyncClient.__init__
 
     def _patched_init(self: Any, *args: Any, **kwargs: Any) -> None:
@@ -1376,11 +1409,15 @@ async def test_governance_lens_blob_sha256_integrity_and_contributor_offline_ref
     assert exc_bad_sha.value.code == "invalid_blob_sha"
 
     mode["case"] = "corrupt_blob"
+    synced_blob = await gov_store.sync_from_tessera_http(
+        "https://tessera.ta-amps.workers.dev", "tok", caller_scope=caller_scope, is_admin=False
+    )
+    assert synced_blob[0].provision.uris[0].inline_excerpt == ""
+    # A digest is not permission to read raw bytes; the integrity utility still rejects corruption.
+    from herma.store import verify_blob_bytes
+
     with pytest.raises(HermaError) as exc_corrupt:
-        await gov_store.sync_from_tessera_http(
-            "https://tessera.ta-amps.workers.dev", "tok", caller_scope=caller_scope, is_admin=False
-        )
-    assert exc_corrupt.value.status_code == 422
+        verify_blob_bytes(valid_sha, tampered_bytes)
     assert exc_corrupt.value.code == "blob_integrity_mismatch"
 
     # Sync with default cohort -> only PROV-VERIFIED-PUBLIC passes; then sync with cohort=ngo-helpline -> PROV-VERIFIED-COHORT also passes:
@@ -1394,10 +1431,7 @@ async def test_governance_lens_blob_sha256_integrity_and_contributor_offline_ref
         is_admin=False,
     )
     assert [s.provision.prov_id for s in synced_default] == ["PROV-VERIFIED-PUBLIC"]
-    assert (
-        synced_default[0].provision.uris[0].inline_excerpt
-        == "Verified immutable blob payload for Herma governance lens."
-    )
+    assert synced_default[0].provision.uris[0].inline_excerpt == ""
     ctx_ids = [
         e.entry_id
         for e in gov_store.list_context_entries(caller_scope=caller_scope, include_builtin=False)
@@ -1458,14 +1492,14 @@ const mockTessera = {
     const u = new URL(urlStr);
     if (u.pathname.endsWith(".context/records/index")) return new Response("not found", { status: 404 });
     if (u.pathname === "/v1/stores/badsha/records") {
-      return Response.json({ records: [{ key: "P1", value: {
+      return Response.json({ records: [{ namespace:"main",producer_surface:"surface:tessera",visibility_scope:"public_commons",allowed_surfaces:[],target_cohorts:["all"],tags:["status:verified"], key: "P1", value: {
         prov_id: "PROV-CF-BADSHA", title: "Bad SHA", summary: "Bad sha.", inject_text: "Invalid sha test.",
         uris: [{ uri: "tessera://blobs/xyz", label: "Bad", kind: "doc" }],
         triggers: { mode: "any", keyword: { any_keywords: ["x"] } },
       } }] });
     }
     if (u.pathname === "/v1/stores/tampered/records") {
-      return Response.json({ records: [{ key: "P2", value: {
+      return Response.json({ records: [{ namespace:"main",producer_surface:"surface:tessera",visibility_scope:"public_commons",allowed_surfaces:[],target_cohorts:["all"],tags:["status:verified"], key: "P2", value: {
         prov_id: "PROV-CF-TAMPER", title: "Tamper", summary: "Tampered bytes.", inject_text: "Tampered blob test.",
         uris: [{ uri: "tessera://blobs/" + validSha, label: "Tamper", kind: "doc" }],
         triggers: { mode: "any", keyword: { any_keywords: ["x"] } },
@@ -1476,11 +1510,11 @@ const mockTessera = {
     }
     if (u.pathname === "/v1/stores/gov/records") {
       return Response.json({ records: [
-        { key: "Q", tags: ["status:quarantined"], visibility_scope: "public_commons", value: {
+        { namespace:"main",producer_surface:"surface:tessera",allowed_surfaces:[],target_cohorts:["all"], key: "Q", tags: ["status:quarantined"], visibility_scope: "public_commons", value: {
           prov_id: "PROV-CF-QUAR", title: "Quarantined", summary: "Blocked.", inject_text: "Never ingest.",
           triggers: { mode: "any", keyword: { any_keywords: ["quar"] } },
         } },
-        { key: "C", tags: ["status:verified"], producer_surface: "surface:eranos", visibility_scope: "allowlist_surfaces",
+        { namespace:"main", key: "C", tags: ["status:verified"], producer_surface: "surface:eranos", visibility_scope: "allowlist_surfaces",
            allowed_surfaces: ["surface:herma"], target_cohorts: ["cohort:ngo-helpline"], value: {
           prov_id: "PROV-CF-COHORT", title: "Cohort", summary: "Allowed for ngo-helpline.", inject_text: "Helpline cohort rule.",
           triggers: { mode: "any", keyword: { any_keywords: ["safety plan"] } },
@@ -1536,7 +1570,7 @@ console.log(JSON.stringify({
     )
     assert cf["contribStatus"] == 403
     assert cf["badShaStatus"] == 400
-    assert cf["tamperStatus"] == 422
+    assert cf["tamperStatus"] == 200  # raw blobs are not inlined without their own governance
     assert cf["syncedGov"] == ["PROV-CF-COHORT"]
     assert cf["noCohortMatches"] == []
     assert cf["cohortMatches"] == ["PROV-CF-COHORT"]

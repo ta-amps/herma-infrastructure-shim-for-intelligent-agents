@@ -17,7 +17,7 @@ flowchart LR
 
 - `herma/errors.py` -- RFC 9457 `problem+json` error hierarchy (`403 harness_required`, `403 admin_required`, `403 builtin_protected`, `403 contributor_tier_refused`, `409 version_conflict`).
 - `herma/schemas.py` -- strict Pydantic v2 models for `Provision` (`shim_context` / `respond_directly` + `context_refs`), `ContextEntry` (`noun` / `verb` / `detail` + `version`), `WorkingEntity`, `RuleOutcomeRecord`, `InsightsResponse`, `DryRunResponse`, and `InjectionReceipt`.
-- `herma/harness_gate.py` -- constant-time `hmk_` verification, `caller_scope = key:<key_id>`, consumer-surface refusal, `configure` harness attestation, and `contributor` / `*-contributor` refusal.
+- `herma/harness_gate.py` -- constant-time `hmk_` verification, `caller_scope = key:<key_id>`, credentialed personal-assistant access, `configure` harness attestation, and `contributor` / `*-contributor` refusal.
 - `herma/triggers/` -- `keyword.py`, `semantic.py`, `micromodel.py`, and `engine.py`.
 - `herma/memory.py` -- zero-LLM deterministic entity extraction (`file_path`, `code_symbol`, `tessera_uri`, `statute_card_id`, `error_signature`) and reviewable `candidate_provisions` synthesis.
 - `herma/store.py` -- caller-partitioned SQLite WAL store (`provisions`, `context_entries`, `harness_keys`, `injection_receipts`, `working_entities`, `rule_outcomes`), single-statement atomic SQL CAS, Layer-1 Governance Lens + SHA-256 blob verification, Tessera store sync, and remote handshake sync.
@@ -30,8 +30,8 @@ flowchart LR
 
 | Id | Always true | Checked by |
 |---|---|---|
-| H01 | Generic consumer chat assistants, browser navigation requests, and cookie-authenticated calls are deterministically refused | `test_consumer_assistant_and_browser_navigation_refused`, `test_http_edge_lockdown_and_dry_run_across_wire_formats` |
-| H02 | Provision management and remote sync require both configure scope and explicit matching X-Herma-Harness attestation | `test_consumer_assistant_and_browser_navigation_refused`, `test_route_only_key_cannot_configure` |
+| H01 | Personal assistants with scoped keys are accepted; browser navigation and cookie authentication are refused | `test_personal_assistant_credentials_and_browser_navigation`, `test_http_edge_lockdown_and_dry_run_across_wire_formats` |
+| H02 | Provision management and remote sync require both configure scope and explicit matching X-Herma-Harness attestation | `test_personal_assistant_credentials_and_browser_navigation`, `test_route_only_key_cannot_configure` |
 | H03 | Contributor-tier models (contributor and -contributor) are refused across outbound LLM payloads and micromodel trigger classifiers before offline fallback | `test_tier3_micromodel_classifier_and_contributor_refusal`, `test_http_edge_lockdown_and_dry_run_across_wire_formats`, `test_governance_lens_blob_sha256_integrity_and_contributor_offline_refusal` |
 | H04 | Tier-1 keyword, bounded regex, path-glob, and tool-name triggers match deterministically without network calls | `test_tier1_keyword_regex_path_and_tool_triggers` |
 | H05 | Tier-2 semantic triggers match paraphrased intent without literal keyword overlap | `test_tier2_semantic_paraphrase_without_literal_id` |

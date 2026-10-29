@@ -42,7 +42,7 @@ def test_http_edge_lockdown_and_dry_run_across_wire_formats(
     assert r_home.status_code == 200
     assert "Programmable AI Request Middleware" in r_home.text
 
-    # Consumer assistant UA is refused even with a key:
+    # Personal-assistant product names do not override a valid scoped key:
     r_consumer = client.post(
         "/v1/dry-run",
         headers={
@@ -58,8 +58,7 @@ def test_http_edge_lockdown_and_dry_run_across_wire_formats(
             },
         },
     )
-    assert r_consumer.status_code == 403
-    assert r_consumer.json()["code"] == "harness_required"
+    assert r_consumer.status_code == 200
 
     # Valid configurable coding harness dry-run across chat_completions, responses, and messages:
     harness_hdr = {

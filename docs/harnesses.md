@@ -1,6 +1,6 @@
 # Connecting Configurable Agentic Coding Harnesses
 
-Herma accepts requests **only** from configurable agentic coding harnesses that support custom provider endpoints, custom headers, and scoped `hmk_` credentials. Matched requests either receive shimmed rule, URI, and `[NOUN/VERB CONTEXT]` entries from Herma's database or receive a zero-token direct response (`action: "respond_directly"`).
+Herma accepts model routing and configuration from coding harnesses and personal assistants with scoped `hmk_` credentials. Public deterministic previews require no key. Matched requests either receive shimmed rule, URI, and `[NOUN/VERB CONTEXT]` entries from Herma's database or receive a zero-token direct response (`action: "respond_directly"`).
 
 ## 1. Issue a Key
 
@@ -27,4 +27,4 @@ Set `ANTHROPIC_BASE_URL=https://herma.ta-amps.workers.dev` and pass `X-Herma-Key
 
 ## Why Generic Consumer Assistants Cannot Access Herma
 
-Locked consumer chat apps (such as a generic **Muse Personal Assistant** session on web/mobile) cannot set custom proxy base URLs, cannot attach `X-Herma-Key` / `X-Herma-Harness` headers, and are explicitly blocked by `herma/harness_gate.py` (`HTTP 403 harness_required`).
+Personal assistants that support tool or MCP connections can use the open preview. Private routing and configuration require `X-Herma-Key` and a matching `X-Herma-Harness` declaration; client names and user-agent strings are not authorization.

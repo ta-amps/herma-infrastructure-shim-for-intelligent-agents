@@ -2,7 +2,7 @@
   "$schema": "https://github.com/ta-amps/hackathon-context/blob/main/agents/schemas/architecture.schema.json",
   "schema_version": 1,
   "name": "herma",
-  "summary": "Herma: context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic noun, verb, and URI context from a caller-isolated database before LLM execution. Rules, deterministic entity memory, and atomic noun/verb entries load from SQLite/D1, governed Tessera stores and blobs, or remote handshake servers; generic consumer chat assistants and contributor-tier models are deterministically refused.",
+  "summary": "Herma: context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic noun, verb, and URI context from a caller-isolated database before LLM execution. Rules, deterministic entity memory, and atomic noun/verb entries load from SQLite/D1, governed Tessera stores and blobs, or remote handshake servers; personal assistants use the same scoped credentials as coding harnesses; contributor-tier models are refused.",
   "status": {
     "as_of": "2026-10-27",
     "stage": "prototype",
@@ -61,7 +61,7 @@
       "path": "herma/harness_gate.py",
       "kind": "library",
       "domain": "neutral",
-      "role": "Verifies constant-time hmk_ secrets, enforces route/configure/admin scopes, refuses generic consumer chat surfaces, and blocks contributor and -contributor models",
+      "role": "Verifies constant-time hmk_ secrets, enforces route/configure/admin scopes, allows credentialed personal assistants, and blocks contributor and -contributor models",
       "depends_on": [
         "errors",
         "schemas"
@@ -229,10 +229,10 @@
   "invariants": [
     {
       "id": "H01",
-      "statement": "Generic consumer chat assistants, browser navigation requests, and cookie-authenticated calls are deterministically refused",
+      "statement": "Personal assistants with scoped keys are accepted; browser navigation and cookie authentication are refused",
       "enforced_by": "harness_gate",
       "checked_by": [
-        "tests/test_harness_gate_and_store.py::test_consumer_assistant_and_browser_navigation_refused",
+        "tests/test_harness_gate_and_store.py::test_personal_assistant_credentials_and_browser_navigation",
         "tests/test_api_and_proxy.py::test_http_edge_lockdown_and_dry_run_across_wire_formats"
       ]
     },
@@ -241,7 +241,7 @@
       "statement": "Provision management and remote sync require both configure scope and explicit matching X-Herma-Harness attestation",
       "enforced_by": "harness_gate",
       "checked_by": [
-        "tests/test_harness_gate_and_store.py::test_consumer_assistant_and_browser_navigation_refused",
+        "tests/test_harness_gate_and_store.py::test_personal_assistant_credentials_and_browser_navigation",
         "tests/test_harness_gate_and_store.py::test_route_only_key_cannot_configure"
       ]
     },
@@ -411,7 +411,7 @@
   "claims": [
     {
       "id": "HC1",
-      "claim": "Herma evaluates keyword, semantic, and micromodel triggers to shim versioned provisions and URIs across chat_completions, responses, and messages while refusing generic consumer assistants",
+      "claim": "Herma evaluates keyword, semantic, and micromodel triggers to shim versioned provisions and URIs across chat_completions, responses, and messages while preserving caller-scoped access for coding harnesses and personal assistants",
       "status": "built",
       "evidence": [
         "tests/test_triggers.py::test_tier1_keyword_regex_path_and_tool_triggers",

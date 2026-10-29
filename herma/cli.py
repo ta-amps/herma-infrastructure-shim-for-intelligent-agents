@@ -13,12 +13,13 @@ from typing import Any, cast
 
 import httpx
 import uvicorn
+from tessera.models import RecordWrite
 from tessera.store import Store as TesseraStore
 
 from herma import __version__
 from herma.api.app import seed_examples_if_present
-from herma.errors import ContributorTierRefusedError, HarnessRequiredError
-from herma.harness_gate import enforce_not_consumer_assistant
+from herma.errors import ContributorTierRefusedError, HarnessRequiredError, HarnessScopeError
+from herma.harness_gate import require_scope
 from herma.proxy import HermaMiddleware
 from herma.schemas import HarnessKind, HarnessScope, Provision, ProvisionURI
 from herma.store import ProvisionStore
@@ -75,6 +76,25 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
         )
         h_store.put_provision(enriched, check_cas=False)
         published_ids = h_store.publish_to_tessera_store(t_store)
+        # The temporary demo operator approves bundled synthetic fixtures explicitly.
+        # Ordinary publication remains unverified until an authorized publisher approves it.
+        for store_name in ("tessera.nouns", "herma.provisions", "herma.provisions.context"):
+            fixtures = t_store.list_records(store_name)
+            t_store.put_records(
+                [
+                    RecordWrite(
+                        store=record.store,
+                        key=record.key,
+                        value=record.value,
+                        expected_version=record.version,
+                        producer_surface="surface:herma",
+                        visibility_scope="public_commons",
+                        target_cohorts=["all"],
+                        tags=["status:verified", "synthetic:true"],
+                    )
+                    for record in fixtures
+                ]
+            )
 
         # Sync into a clean Herma runtime store from Tessera, resolving blob + noun/verb context_refs:
         runtime_store = ProvisionStore(tmp_dir / "runtime.db")
@@ -87,19 +107,51 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
         )
         principal = runtime_store.authenticate_headers({"X-Herma-Key": raw_key})
 
-        # 1. Prove generic consumer assistant (Muse Personal Assistant) is deterministically refused:
-        consumer_refused = False
+        # 1. Personal assistants can route with a scoped credential, without gaining configure access.
+        assistant_key, assistant_info = runtime_store.issue_key(
+            label="demo-personal-assistant",
+            harness_kind="personal-assistant",
+            scopes=["route"],
+        )
+        assistant_headers = {
+            "User-Agent": "Muse-Personal-Assistant/1.0",
+            "X-Herma-Harness": "personal-assistant",
+            "X-Herma-Key": assistant_key,
+        }
+        assistant_principal = runtime_store.authenticate_headers(assistant_headers)
+        require_scope(assistant_principal, "route", assistant_headers)
+        assistant_configure_refused = False
         try:
-            enforce_not_consumer_assistant({"User-Agent": "Muse-Personal-Assistant/1.0"})
+            require_scope(assistant_principal, "configure", assistant_headers)
+        except HarnessScopeError:
+            assistant_configure_refused = True
+        uncredentialed_assistant_refused = False
+        try:
+            runtime_store.authenticate_headers({"User-Agent": "Muse-Personal-Assistant/1.0"})
         except HarnessRequiredError:
-            consumer_refused = True
-
-        # 2. Prove '-contributor' model tier is refused:
+            uncredentialed_assistant_refused = True
         mw = HermaMiddleware(runtime_store)
+        assistant_out = await mw.intercept(
+            principal=assistant_principal,
+            wire_format="chat_completions",
+            payload={
+                "model": "muse-spark-open",
+                "messages": [
+                    {"role": "user", "content": "Help organize this synthetic practice task."}
+                ],
+            },
+            offline_only=True,
+        )
+        personal_assistant_allowed = (
+            assistant_out.receipt.harness_kind == "personal-assistant"
+            and assistant_out.receipt.key_id == assistant_info.key_id
+        )
+
+        # 2. An allowed personal assistant still cannot use a contributor model tier.
         contributor_refused = False
         try:
             await mw.intercept(
-                principal=principal,
+                principal=assistant_principal,
                 wire_format="chat_completions",
                 payload={
                     "model": "muse-spark-1.3-contributor",
@@ -223,7 +275,9 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
                 r.raise_for_status()
                 live_completion_excerpt = r.json()["choices"][0]["message"]["content"][:280]
 
-        assert consumer_refused
+        assert personal_assistant_allowed
+        assert assistant_configure_refused
+        assert uncredentialed_assistant_refused
         assert contributor_refused
         assert "PROV-TESSERA-FENCING@v1" in out_kw.receipt.provisions_fired
         assert "noun:tessera.lease_fence" in out_kw.receipt.shimmed_context_refs
@@ -242,11 +296,14 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
             "ok": True,
             "version": __version__,
             "tessera_published": published_ids,
-            "tessera_blob_resolved_sha256": blob_sha,
+            "tessera_blob_stored_sha256": blob_sha,
             "synced_count": len(synced),
             "context_entries_synced": len(runtime_store.list_context_entries()),
             "harness_key_id": key_info.key_id,
-            "consumer_assistant_refused": consumer_refused,
+            "personal_assistant_allowed": personal_assistant_allowed,
+            "personal_assistant_configure_refused": assistant_configure_refused,
+            "uncredentialed_assistant_refused": uncredentialed_assistant_refused,
+            "personal_assistant_receipt": assistant_out.receipt.receipt_sha256,
             "contributor_tier_refused": contributor_refused,
             "tier1_keyword_receipt": out_kw.receipt.receipt_sha256,
             "tier1_shimmed_context_refs": out_kw.receipt.shimmed_context_refs,
