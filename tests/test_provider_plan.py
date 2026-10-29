@@ -54,6 +54,7 @@ def prepared(
     entry = plan_entry(uncertain=uncertain)
     store.upsert_context_entry(entry, caller_scope="key:alice", is_admin=False)
     monkeypatch.setenv("HERMA_CONVERSATION_MAX_OUTPUT", "16384")
+    monkeypatch.setenv("HERMA_META_BUDGET_USD", "5")
     monkeypatch.setenv("META_API_KEY", "synthetic-provider-key")
     monkeypatch.setenv("OLLAMA_API_KEY", "synthetic-provider-key")
     # Alice's own operator grant names exactly the plan's choices; Bob holds no grant.
@@ -170,7 +171,10 @@ def test_config_missing_can_advance_without_claiming_a_model_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = prepared(tmp_path, monkeypatch)
-    monkeypatch.setenv("HERMA_CONVERSATION_META_MAX_OUTPUT", "")
+    # Only Ollama has an explicit allowance; an empty Meta value is unset, not a fallback.
+    monkeypatch.delenv("HERMA_CONVERSATION_MAX_OUTPUT")
+    monkeypatch.setenv("HERMA_CONVERSATION_META_MAX_OUTPUT", " ")
+    monkeypatch.setenv("HERMA_CONVERSATION_OLLAMA_MAX_OUTPUT", "16384")
     called = []
 
     async def call(config: ProviderConfig, _body: dict[str, Any]) -> dict[str, Any]:

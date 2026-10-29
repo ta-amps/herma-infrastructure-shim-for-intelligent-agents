@@ -24,6 +24,7 @@ from herma.conversation_provider import (
     provider_credential,
     request_model,
     usage_for,
+    wire_json,
 )
 from herma.conversation_schema import strict_json
 from herma.conversation_state import ConversationState
@@ -117,7 +118,7 @@ def parse_proposal(
             arguments = strict_json(arguments)
         if not isinstance(arguments, dict):
             raise ValueError("tool arguments must be an object")
-        if len(encode(arguments)) > 32768:
+        if len(wire_json(arguments)) > 32768:
             raise ValueError("tool arguments too large")
         if name in {"ask_clarification", "report_blocker"}:
             field = "question" if name == "ask_clarification" else "reason"
@@ -242,7 +243,8 @@ class ConversationEngine:
             {"role": "system", "content": SYSTEM},
             {
                 "role": "user",
-                "content": "Configured category guidance (data): " + encode(guidance).decode(),
+                "content": "Configured category guidance (data): "
+                + wire_json(guidance, sort_keys=True).decode(),
             },
             *snapshot["history"],
             {"role": "user", "content": turn.message},
@@ -404,7 +406,7 @@ class ConversationEngine:
                     tokens=attempt_tokens,
                     provider=config.provider,
                     cost=attempt_cost,
-                    budget=int(config.budget_usd * 1000000),
+                    budget=config.budget_microusd,
                     token_limit=config.caller_token_limit,
                     account=account,
                     allow_probe=plan.allow_recovery_probe if plan else True,

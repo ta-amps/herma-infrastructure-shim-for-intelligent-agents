@@ -131,7 +131,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/provider_health.test.js](test/provider_health.test.js) |  |
 | [test/triggers.test.js](test/triggers.test.js) |  |
 
-## tests/ (17)
+## tests/ (18)
 
 | File | What it is |
 |---|---|
@@ -151,4 +151,5 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [tests/test_provider_grants.py](tests/test_provider_grants.py) | Operator spending grants name exact callers, and one upstream model is one identity. |
 | [tests/test_provider_health.py](tests/test_provider_health.py) | Shared operator limits admit one funded, explicitly authorized recovery probe. |
 | [tests/test_provider_plan.py](tests/test_provider_plan.py) | Explicit private plans may advance providers without losing charged attempts. |
+| [tests/test_runtime_parity.py](tests/test_runtime_parity.py) | Python and the Worker make identical spending, identity and parsing decisions. |
 | [tests/test_triggers.py](tests/test_triggers.py) | Tests for Tier-1 (keyword/regex/path/tool), Tier-2 (semantic), and Tier-3 (micromodel) triggers. |

@@ -268,7 +268,7 @@ def test_provider_redirect_cannot_exfiltrate_secret(monkeypatch: pytest.MonkeyPa
     with pytest.raises(ProviderFailure, match="provider_rejected"):
         asyncio.run(
             request_model(
-                ProviderConfig("meta", "muse-spark-1.3", max_output=16384),
+                ProviderConfig("meta", "muse-spark-1.3", max_output=16384, meta_budget_usd=1),
                 {},
                 transport=httpx.MockTransport(handler),
             )

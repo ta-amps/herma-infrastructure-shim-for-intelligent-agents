@@ -1,7 +1,7 @@
 // Typed proposals only. These helpers never execute generated code or Tessera actions.
 import { Validator } from "@cfworker/json-schema";
 import data from "./conversation_data.json" with { type: "json" };
-import { canonicalJson, sha256Hex } from "./herma_engine.js";
+import { canonicalJson, isContributorModel, sha256Hex } from "./herma_engine.js";
 import { readProviderError } from "./provider_diagnostics.js";
 import { operatorPolicy, retryGuidance } from "./provider_health.js";
 
@@ -112,8 +112,28 @@ const LEGACY_GRANT_SETTINGS = ["HERMA_CONVERSATION_PROVIDER_PLAN_ALLOWLIST", "HE
 // OpenRouter author slugs that name the same vendor as a direct provider.
 const VENDOR_ALIASES = { "meta-llama": "meta" };
 
-// Operator settings: empty or whitespace-only values are unset, as in Python.
+// Operator settings: empty or whitespace-only values are unset, exactly as in Python.
 export const setting = (env, name) => { const value = env[name]; return typeof value === "string" && value.trim() ? value.trim() : undefined; };
+const integerSetting = (env, name) => { const value = setting(env, name); return value === undefined ? undefined : /^[0-9]+$/.test(value) ? Number(value) : NaN; };
+const decimalSetting = (env, name) => { const value = setting(env, name); return value === undefined ? undefined : /^[0-9]+(?:\.[0-9]+)?$/.test(value) ? Number(value) : NaN; };
+
+// Exact non-negative decimal as an integer count of 10^-scale units (shared with Python's
+// scaled_integer): 2.01 dollars is exactly 2,010,000 microdollars. Remainders below one unit
+// round down for allowances and up for tariffs. NaN when the result is not exactly representable.
+export function scaledInteger(value, scale, ceil = false) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return NaN;
+  const [mantissa, exponent] = value.toExponential().split("e");
+  const [whole, fraction = ""] = mantissa.split(".");
+  const digits = BigInt(whole + fraction), shift = Number(exponent) - fraction.length + scale;
+  let result;
+  if (shift >= 0) result = digits * 10n ** BigInt(shift);
+  else {
+    const divisor = 10n ** BigInt(-shift);
+    result = digits / divisor + (ceil && digits % divisor !== 0n ? 1n : 0n);
+  }
+  return result <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(result) : NaN;
+}
+
 // Canonical vendor/model shared by direct and gateway routes to one upstream model (Python's
 // upstream_identity). It deliberately over-matches: one identity only prevents failover.
 export function upstreamIdentity(provider, model) {
@@ -130,7 +150,7 @@ export function upstreamIdentity(provider, model) {
 }
 
 // Contributor models are refused before any other check of a choice list, as in Python.
-const refuseContributorChoices = choices => { if (Array.isArray(choices)) for (const item of choices) if (object(item) && typeof item.model === "string" && /contributor/i.test(item.model)) fail(403, "contributor_tier_refused"); };
+const refuseContributorChoices = choices => { if (Array.isArray(choices)) for (const item of choices) if (object(item) && typeof item.model === "string" && isContributorModel(item.model)) fail(403, "contributor_tier_refused"); };
 
 // One explicit provider/model route: OpenRouter alone names, and must name, its underlying provider.
 function checkChoice(item) {
@@ -189,44 +209,46 @@ export function requireDirectGrant(grant, config) {
   if (!grantPermits(grant, choiceFor(config))) fail(403, "provider_grant_required");
 }
 
+// Reads only the selected provider's settings, in the same order and with the same outcome
+// codes as Python's ProviderConfig.from_env and validate.
 export function providerConfig(env, provider) {
   const prefix = `HERMA_CONVERSATION_${provider.toUpperCase()}`;
-  const model = env[`${prefix}_MODEL`] || ({ meta: "muse-spark-1.3", ollama: "muse-spark-open" }[provider] ?? "");
-  const output = env[`${prefix}_MAX_OUTPUT`] ?? env.HERMA_CONVERSATION_MAX_OUTPUT;
-  if (output === undefined || output === null || output === "") fail(503, "output_allowance_required");
-  const max_output = Number(output);
-  const reasoning_effort = env[`${prefix}_REASONING`] ?? (!["ollama", "anthropic"].includes(provider) ? env.HERMA_CONVERSATION_REASONING : null) ?? null;
-  const meta_budget_usd = Number(env.HERMA_META_BUDGET_USD || 5);
-  const ollama_calls_per_day = Number(env.HERMA_OLLAMA_CALLS_PER_DAY || 30);
-  const openai_budget_usd = Number(env.HERMA_OPENAI_BUDGET_USD || 0);
-  const anthropic_budget_usd = Number(env.HERMA_ANTHROPIC_BUDGET_USD || 0);
-  const openrouter_budget_usd = Number(env.HERMA_OPENROUTER_BUDGET_USD || 0);
-  const openrouter_provider = env.HERMA_CONVERSATION_OPENROUTER_PROVIDER || null;
-  const anthropic_version = env.HERMA_CONVERSATION_ANTHROPIC_VERSION || "2026-10-21";
-  const rates = provider === "meta" ? RATES[model] : ["openai", "anthropic", "openrouter"].includes(provider) ? [env[`${prefix}_INPUT_USD_PER_MILLION`], env[`${prefix}_OUTPUT_USD_PER_MILLION`]].map(v => v === undefined || v === "" ? NaN : Number(v)) : null;
-  const caller_token_limit = env.HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR === undefined ? null : Number(env.HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR);
+  const model = setting(env, `${prefix}_MODEL`) ?? ({ meta: "muse-spark-1.3", ollama: "muse-spark-open" }[provider] ?? "");
+  if (isContributorModel(model)) fail(403, "contributor_tier_refused");
+  const max_output = integerSetting(env, `${prefix}_MAX_OUTPUT`) ?? integerSetting(env, "HERMA_CONVERSATION_MAX_OUTPUT");
+  if (max_output === undefined) fail(503, "output_allowance_required");
+  const invalid = () => fail(503, "invalid_provider_configuration");
+  const paid = ["meta", "openai", "anthropic", "openrouter"].includes(provider);
+  const budget_usd = paid ? decimalSetting(env, `HERMA_${provider.toUpperCase()}_BUDGET_USD`) ?? 0 : 0;
+  const rates = provider === "meta" ? RATES[model] ?? null : ["openai", "anthropic", "openrouter"].includes(provider) ? [decimalSetting(env, `${prefix}_INPUT_USD_PER_MILLION`), decimalSetting(env, `${prefix}_OUTPUT_USD_PER_MILLION`)] : null;
+  const reasoning_effort = setting(env, `${prefix}_REASONING`) ?? (!["ollama", "anthropic"].includes(provider) ? setting(env, "HERMA_CONVERSATION_REASONING") : undefined) ?? null;
+  const anthropic_version = setting(env, "HERMA_CONVERSATION_ANTHROPIC_VERSION") ?? "2026-10-21";
+  const openrouter_provider = setting(env, "HERMA_CONVERSATION_OPENROUTER_PROVIDER") ?? null;
+  const caller_token_limit = integerSetting(env, "HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR") ?? null;
+  const ollama_calls_per_day = provider === "ollama" ? integerSetting(env, "HERMA_OLLAMA_CALLS_PER_DAY") ?? 30 : null;
   let generation;
-  try { generation = JSON.parse(env[`${prefix}_GENERATION`] || "{}"); } catch { fail(503, "invalid_provider_configuration"); }
+  try { generation = strictJson(setting(env, `${prefix}_GENERATION`) ?? "{}"); } catch { invalid(); }
   const reserved = ["model", "input", "messages", "instructions", "system", "tools", "stream", "store", "background", "conversation", "previous_response_id", "parallel_tool_calls", "max_tokens", "max_completion_tokens", "max_output_tokens", "models", "provider", "route", "plugins", "preset", "presets", "web_search_options", "mcp_servers", "container", "server_tools"];
-  if (!["meta", "ollama", "openai", "anthropic", "openrouter"].includes(provider) || typeof model !== "string" || !model.length || /contributor/i.test(model) ||
-      model === "*" || model.length > 100 || (provider === "meta" && !has(RATES, model)) ||
+  if (!PROVIDERS.includes(provider) || !model.length || model === "*" || model.length > 100 || (provider === "meta" && !has(RATES, model)) ||
       !isInt(max_output) || max_output < 1 ||
-      (reasoning_effort !== null && (typeof reasoning_effort !== "string" || !reasoning_effort.length || reasoning_effort.length > 40)) ||
-      !Number.isFinite(meta_budget_usd) || meta_budget_usd <= 0 ||
-      (provider === "openai" && (!Number.isFinite(openai_budget_usd) || openai_budget_usd <= 0 || rates.some(rate => !Number.isFinite(rate) || rate < 0))) ||
-      (provider === "anthropic" && (!Number.isFinite(anthropic_budget_usd) || anthropic_budget_usd <= 0 || rates.some(rate => !Number.isFinite(rate) || rate < 0) || !["2023-06-01", "2026-10-21"].includes(anthropic_version) || reasoning_effort !== null)) ||
-      (provider === "openrouter" && (!Number.isFinite(openrouter_budget_usd) || openrouter_budget_usd <= 0 || rates.some(rate => !Number.isFinite(rate) || rate < 0) || typeof openrouter_provider !== "string" || !openrouter_provider.length || openrouter_provider.length > 100 || !model.includes("/") || model.startsWith("openrouter/") || model.toLowerCase().includes("@preset") || model.toLowerCase().split(":").slice(1).includes("online"))) ||
+      (provider === "meta" && (!Number.isFinite(budget_usd) || budget_usd <= 0)) ||
+      (reasoning_effort !== null && reasoning_effort.length > 40) ||
       (caller_token_limit !== null && (!isInt(caller_token_limit) || caller_token_limit < 1)) ||
-      !object(generation) || Object.keys(generation).some(k => reserved.includes(k)) ||
-      (provider === "ollama" && (!object(generation.options ?? {}) || has(generation.options ?? {}, "num_predict"))) ||
-      (provider === "openai" && has(generation, "reasoning") && !object(generation.reasoning)) ||
-      !isInt(ollama_calls_per_day) || ollama_calls_per_day < 1 || ollama_calls_per_day > 1000) fail(503, "invalid_provider_configuration");
+      (["openai", "anthropic", "openrouter"].includes(provider) && (!Number.isFinite(budget_usd) || budget_usd <= 0 || rates.some(rate => !Number.isFinite(rate) || rate < 0))) ||
+      (provider === "anthropic" && !["2023-06-01", "2026-10-21"].includes(anthropic_version)) ||
+      (provider === "openrouter" && (openrouter_provider === null || openrouter_provider.length > 100 || !model.includes("/") || model.startsWith("openrouter/") || model.toLowerCase().includes("@preset") || model.toLowerCase().split(":").slice(1).includes("online"))) ||
+      (provider === "ollama" && (!isInt(ollama_calls_per_day) || ollama_calls_per_day < 1 || ollama_calls_per_day > 1000)) ||
+      !object(generation) || Object.keys(generation).some(k => reserved.includes(k))) invalid();
   if (["prompt", "prompt_id", "best_of", "speed", "inference_geo"].some(k => has(generation, k)) ||
       (has(generation, "n") && (!["meta", "openrouter"].includes(provider) || generation.n !== 1)) ||
       (has(generation, "service_tier") && (!["openai", "anthropic"].includes(provider) || generation.service_tier !== (provider === "openai" ? "default" : "standard_only")))) fail(503, "unsupported_generation_configuration");
+  if ((provider === "ollama" && (!object(generation.options ?? {}) || has(generation.options ?? {}, "num_predict"))) ||
+      (provider === "openai" && has(generation, "reasoning") && !object(generation.reasoning)) ||
+      (provider === "anthropic" && reasoning_effort !== null)) invalid();
+  const budget_microusd = scaledInteger(budget_usd, 6);
+  if (Number.isNaN(budget_microusd)) invalid();
   const url = { meta: "https://api.meta.ai/v1/chat/completions", ollama: "https://ollama.com/api/chat", openai: "https://api.openai.com/v1/responses", anthropic: "https://api.anthropic.com/v1/messages", openrouter: "https://openrouter.ai/api/v1/chat/completions" }[provider];
-  const budget_usd = provider === "openrouter" ? openrouter_budget_usd : provider === "anthropic" ? anthropic_budget_usd : provider === "openai" ? openai_budget_usd : provider === "meta" ? meta_budget_usd : 0;
-  return { provider, model, max_output, reasoning_effort, meta_budget_usd, ollama_calls_per_day, openai_budget_usd, anthropic_budget_usd, anthropic_version, openrouter_budget_usd, openrouter_provider, rates, generation, caller_token_limit, budget_usd, url };
+  return { provider, model, max_output, reasoning_effort, ollama_calls_per_day, anthropic_version, openrouter_provider, rates, generation, caller_token_limit, budget_usd, budget_microusd, url };
 }
 
 export function buildRequest(config, turn, contracts, history) {
@@ -257,7 +279,15 @@ export function buildRequest(config, turn, contracts, history) {
   const size = bytes(body);
   if (size > 32768) fail(413, "context_too_large");
   const input = size + 4096, rate = config.rates;
-  const tokens = input + config.max_output, microusd = rate ? Math.ceil(input * rate[0] + config.max_output * rate[1]) : 0;
+  let microusd = 0;
+  if (rate) {
+    // Tariffs in picodollars per token keep the whole ceiling in exact integers, as in Python.
+    const pico = rate.map(value => scaledInteger(value, 6, true));
+    if (pico.some(Number.isNaN)) fail(503, "invalid_provider_configuration");
+    const ceiling = (BigInt(input) * BigInt(pico[0]) + BigInt(config.max_output) * BigInt(pico[1]) + 999999n) / 1000000n;
+    microusd = ceiling <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(ceiling) : NaN;
+  }
+  const tokens = input + config.max_output;
   if (!isInt(tokens) || !isInt(microusd)) fail(503, "invalid_provider_configuration");
   return { body, tokens, microusd };
 }
@@ -337,7 +367,9 @@ export async function requestModel(env, config, body, timeoutMs = 25000) {
     }
     const raw = new Uint8Array(size); let at = 0;
     for (const chunk of chunks) { raw.set(chunk, at); at += chunk.byteLength; }
-    const parsed = strictJson(new TextDecoder("utf-8", { fatal: true }).decode(raw));
+    let parsed;
+    // Undecodable, malformed or duplicate-field replies are one possibly charged outcome, as in Python.
+    try { parsed = strictJson(new TextDecoder("utf-8", { fatal: true }).decode(raw)); } catch { fail(502, "provider_invalid_response"); }
     if (!object(parsed)) fail(502, "provider_invalid_response");
     if (config.provider === "openai" && ["queued", "in_progress"].includes(parsed.status)) {
       const error = new ConversationError(502, "provider_outcome_uncertain"); error.outcome = "unknown"; error.http_status = 200; throw error;

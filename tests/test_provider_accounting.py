@@ -36,6 +36,7 @@ def provider_config(provider: str, **patch: Any) -> ProviderConfig:
                 provider, "synthetic/model"
             ),
             "max_output": 16384,
+            "meta_budget_usd": 2,
             "openai_budget_usd": 2,
             "openai_rates": (1, 3),
             "anthropic_budget_usd": 2,

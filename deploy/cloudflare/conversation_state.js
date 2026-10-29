@@ -49,7 +49,7 @@ export class WorkReasoningBudget extends DurableObject {
       if (!admission.ok) { writeHealth(sql, policy.account, provider, states); return admission; }
       const day = Math.floor(Date.now() / DAY);
       const total = first(sql, "SELECT microusd FROM totals WHERE provider=?", provider)?.microusd || 0;
-      if (provider !== "ollama" && total + microusd > Math.floor(config.budget_usd * 1000000)) return { ok: false, code: "provider_budget_exhausted" };
+      if (provider !== "ollama" && total + microusd > config.budget_microusd) return { ok: false, code: "provider_budget_exhausted" };
       if (provider === "ollama" && first(sql, "SELECT COUNT(*) AS n FROM reservations WHERE provider=? AND day=?", provider, day).n >= config.ollama_calls_per_day) return { ok: false, code: "provider_call_budget_exhausted" };
       writeHealth(sql, policy.account, provider, states);
       sql.exec("INSERT INTO reservations (id,provider,fingerprint,microusd,day,health) VALUES (?,?,?,?,?,?)", id, provider, fingerprint, microusd, day, JSON.stringify({ account: policy.account, model: config.model, admission, settled: false }));

@@ -66,6 +66,7 @@ export default defineConfig({
           return new Response(status === 204 ? null : '{"status":"queued","id":"private-job"}', { status, headers: { Location: "https://example.com/private-job", "Retry-After": "60" } });
         }
         if (openai && ["openai-queued", "openai-in_progress"].includes(text)) return Response.json({ status: text.slice("openai-".length), output: [], id: "private-job" });
+        if (text === "duplicate-reply-test") return new Response('{"choices":[{"message":{}}],"choices":[{"message":{}}]}', { headers: { "Content-Type": "application/json" } });
         if (text === "redirect-test") return new Response(null, { status: 302, headers: { Location: "https://example.com/forbidden" } });
         if (text === "too-large-test") return new Response("x".repeat(1048577));
         if (text === "failure-test") return new Response("private upstream body", { status: 429 });

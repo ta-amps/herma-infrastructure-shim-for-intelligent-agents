@@ -55,6 +55,7 @@ HEALTH_SCOPES = (
 @pytest.fixture
 def configured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HERMA_CONVERSATION_MAX_OUTPUT", "16384")
+    monkeypatch.setenv("HERMA_META_BUDGET_USD", "5")
     monkeypatch.setenv("META_API_KEY", "synthetic-provider-key")
     monkeypatch.setenv("HERMA_CONVERSATION_DISABLED_PROVIDERS", "[]")
     # Each principal holds its own exact grant; uncertainty still needs a plan opt-in too.

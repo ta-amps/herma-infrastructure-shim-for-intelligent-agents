@@ -32,8 +32,14 @@ def provider_for_host(host: str | None) -> str | None:
 
 def operator_policy(provider: str) -> tuple[bool, str]:
     try:
-        disabled = json.loads(os.environ.get("HERMA_CONVERSATION_DISABLED_PROVIDERS", "[]"))
-        account = os.environ.get(f"HERMA_CONVERSATION_{provider.upper()}_ACCOUNT_SCOPE", "operator")
+        # Empty or whitespace-only settings are unset, as in the Worker.
+        disabled = json.loads(
+            os.environ.get("HERMA_CONVERSATION_DISABLED_PROVIDERS", "").strip() or "[]"
+        )
+        account = (
+            os.environ.get(f"HERMA_CONVERSATION_{provider.upper()}_ACCOUNT_SCOPE", "").strip()
+            or "operator"
+        )
         if (
             not isinstance(disabled, list)
             or any(not isinstance(p, str) or p not in PROVIDERS for p in disabled)

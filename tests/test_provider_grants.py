@@ -15,6 +15,7 @@ from test_provider_plan import PLAN_CHOICES, plan_entry, planned_turn, prepared
 from herma.conversation import ConversationEngine
 from herma.conversation_provider import ProviderConfig, ProviderFailure
 from herma.errors import HermaError
+from herma.harness_gate import is_contributor_model
 from herma.provider_plan import operator_grants, upstream_identity
 from herma.store import ProvisionStore
 
@@ -360,3 +361,44 @@ def test_identity_cooldown_skip_lets_an_explicit_plan_continue(
     )
     assert called == ["ollama"] and result["proposal"]["status"] == "ready"
     assert result["attempts"][0]["error_code"] == "provider_identity_cooldown"
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "contributor",
+        "muse-spark-1.3-contributor",
+        "synthetic/contributor",
+        "synthetic:contributor",
+        "Muse-CONTRIBUTOR-preview",
+    ],
+)
+def test_contributor_models_are_refused_in_plans_grants_and_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, model: str
+) -> None:
+    assert is_contributor_model(model)
+    store = prepared(tmp_path, monkeypatch)
+    entry = plan_entry()
+    assert isinstance(entry.schema_or_body, dict)
+    entry.schema_or_body["provider_plan"]["providers"][1] = {"provider": "ollama", "model": model}
+    store.upsert_context_entry(entry, caller_scope="key:alice", is_admin=False)
+
+    async def forbidden(_config: ProviderConfig, _body: dict[str, Any]) -> dict[str, Any]:
+        pytest.fail("contributor models must never dispatch")
+
+    engine = ConversationEngine(store, call=forbidden)
+    # Otherwise valid and granted inputs, so the refusal is the contributor rule itself.
+    assert refused(engine, "key:alice", planned_turn()) == "contributor_tier_refused"
+    assert engine.state.snapshot("key:alice", "conversation-one")["version"] == 0
+    grant(monkeypatch, "key:alice", choices=[*PLAN_CHOICES, {"provider": "ollama", "model": model}])
+    assert refused(engine, "key:alice", turn()) == "contributor_tier_refused"
+    grant(monkeypatch, "key:alice")
+    monkeypatch.setenv("HERMA_CONVERSATION_OLLAMA_MODEL", model)
+    monkeypatch.delenv("HERMA_CONVERSATION_MAX_OUTPUT")
+    # The contributor refusal precedes even a missing output allowance, as in the Worker.
+    assert refused(engine, "key:alice", turn()) == "contributor_tier_refused"
+
+
+@pytest.mark.parametrize("model", ["muse-spark-1.3", "synthetic/model", "contrib-utor"])
+def test_standard_model_names_are_not_contributor_models(model: str) -> None:
+    assert not is_contributor_model(model)

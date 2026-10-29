@@ -143,8 +143,16 @@ def parse_cohort_header(headers: Mapping[str, str]) -> str:
     return lower.get("x-herma-cohort", "").strip()
 
 
+def is_contributor_model(model: str) -> bool:
+    """One classifier shared with the Worker: any case-insensitive `contributor` in the ID.
+
+    Separators vary by protocol (`-contributor`, `/contributor`, `:contributor`), so the
+    check deliberately over-matches rather than trusting one naming convention.
+    """
+    return "contributor" in model.lower()
+
+
 def refuse_contributor_model(model: str) -> None:
     """Enforce Standard-mode-only upstream LLM execution."""
-    cleaned = model.strip().lower()
-    if cleaned == "contributor" or "-contributor" in cleaned:
+    if is_contributor_model(model):
         raise ContributorTierRefusedError(model)

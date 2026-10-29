@@ -421,7 +421,11 @@ describe("typed conversation in the Workers runtime", () => {
     expect((await stub.turn(id, turn({ expected_version: 1, request_id: "request-two" }), [entry])).status).toBe(429);
     expect(() => checkSchema({ type: "object", properties: { unsafe: { type: "string", pattern: "(a+)+$" } } })).toThrow();
     expect(() => checkSchema({ type: "object", properties: { value: {} } })).toThrow();
-    expect(() => providerConfig({ HERMA_CONVERSATION_META_MODEL: "muse-spark-1.3-contributor" }, "meta")).toThrow();
+    // Otherwise valid settings, so the refusal comes from the contributor rule itself; it also
+    // precedes a missing output allowance, exactly as in Python.
+    expect(() => providerConfig({ ...env, HERMA_CONVERSATION_META_MODEL: "muse-spark-1.3-contributor" }, "meta")).toThrow("contributor_tier_refused");
+    expect(() => providerConfig({ HERMA_CONVERSATION_META_MODEL: "muse-spark-1.3-contributor" }, "meta")).toThrow("contributor_tier_refused");
+    expect(providerConfig({ ...env, HERMA_CONVERSATION_META_MODEL: "muse-spark-1.3" }, "meta").model).toBe("muse-spark-1.3");
     expect(() => strictJson('{"a":1,"a":2}')).toThrow();
     expect(parseProposal({ choices: [null] }, "meta", []).proposal.status).toBe("blocked");
   });

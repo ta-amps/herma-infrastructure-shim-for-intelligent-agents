@@ -6,9 +6,12 @@ export const providerForHost = host => HOST_PROVIDERS.get(String(host || "").toL
 export const ACCOUNT_LIMITS = new Set(["credit_or_quota_exhausted", "payment_required"]);
 // Rate and quota limits also hold the upstream model identity against every other route.
 export const IDENTITY_LIMITS = new Set(["rate_limited", ...ACCOUNT_LIMITS]);
+// Empty or whitespace-only settings are unset, as in Python.
+const unset = value => typeof value !== "string" || !value.trim();
 export function operatorPolicy(env, provider) {
-  const disabled = JSON.parse(env.HERMA_CONVERSATION_DISABLED_PROVIDERS || "[]");
-  const account = env[`HERMA_CONVERSATION_${provider.toUpperCase()}_ACCOUNT_SCOPE`] || "operator";
+  const disabledSetting = env.HERMA_CONVERSATION_DISABLED_PROVIDERS, accountSetting = env[`HERMA_CONVERSATION_${provider.toUpperCase()}_ACCOUNT_SCOPE`];
+  const disabled = JSON.parse(unset(disabledSetting) ? "[]" : disabledSetting);
+  const account = unset(accountSetting) ? "operator" : accountSetting.trim();
   if (!Array.isArray(disabled) || disabled.some(p => !PROVIDERS.includes(p)) || !/^[A-Za-z0-9_-]{1,64}$/.test(account)) throw new Error("invalid_provider_configuration");
   return { disabled: disabled.includes(provider), account };
 }

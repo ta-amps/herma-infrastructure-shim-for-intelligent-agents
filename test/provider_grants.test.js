@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { WorkConversation, WorkReasoningBudget } from "../deploy/cloudflare/conversation_state.js";
-import { loadProviderPlan, operatorGrants, upstreamIdentity } from "../deploy/cloudflare/conversation.js";
+import { buildRequest, loadProviderPlan, operatorGrants, providerConfig, scaledInteger, upstreamIdentity } from "../deploy/cloudflare/conversation.js";
 
 const entry = { entry_id: "work.observation", kind: "noun", title: "Observation", summary: "SYNTHETIC", schema_or_body: { work_contract: {
   operation_id: "record_observation", category_id: "noun.eval_run", description: "Record SYNTHETIC evidence.", input_schema: { type: "object", properties: { value: { type: "object", properties: { message: { type: "string" }, synthetic: { type: "boolean", const: true } }, required: ["message", "synthetic"], additionalProperties: false } }, required: ["value"], additionalProperties: false }
@@ -142,5 +142,47 @@ describe("caller-scoped operator grants and upstream model identity", () => {
       expect(result.body.attempts.map(a => [a.provider, a.error_code, a.reservation_status])).toEqual([["meta", "provider_identity_cooldown", "denied"], ["ollama", null, "reserved"]]);
       expect(result.body.attempts[0].reserved_tokens).toBe(0);
     });
+  });
+
+  it.each(["contributor", "muse-spark-1.3-contributor", "synthetic/contributor", "synthetic:contributor", "Muse-CONTRIBUTOR-preview"])("refuses contributor model %s in an otherwise valid granted plan and in grants", async model => {
+    const target = caller(), plan = providerPlan(target.id);
+    plan.schema_or_body.provider_plan.providers[1] = { provider: "ollama", model };
+    expect(await target.stub.turn(target.id, plannedTurn(), [entry, plan])).toEqual({ status: 403, body: { code: "contributor_tier_refused" } });
+    expect(() => operatorGrants({ HERMA_CONVERSATION_PROVIDER_GRANTS: JSON.stringify([{ caller_scope: "*", providers: [{ provider: "ollama", model }] }]) })).toThrow("contributor_tier_refused");
+    expect(() => providerConfig({ ...env, HERMA_CONVERSATION_OLLAMA_MODEL: model }, "ollama")).toThrow("contributor_tier_refused");
+  });
+
+  it("admits a reservation of exactly the decimal dollar allowance", async () => {
+    expect(Math.floor(2.01 * 1000000)).toBe(2009999);
+    expect(scaledInteger(2.01, 6)).toBe(2010000);
+    const budget = freshBudget(), [a, b] = ["e", "f"].map(x => x.repeat(64));
+    await runInDurableObject(budget, (_instance, state) => {
+      const exact = new WorkReasoningBudget(state, { ...env, HERMA_OPENAI_BUDGET_USD: "2.01" });
+      expect(exact.reserve(a, "openai", a, 2010000).ok).toBe(true);
+      expect(exact.reserve(b, "openai", b, 1).code).toBe("provider_budget_exhausted");
+    });
+  });
+
+  it("prices reservations with exact integer picodollars", () => {
+    const config = providerConfig({ ...env, HERMA_CONVERSATION_OPENAI_INPUT_USD_PER_MILLION: "0.1", HERMA_CONVERSATION_OPENAI_OUTPUT_USD_PER_MILLION: "0.3", HERMA_CONVERSATION_OPENAI_MAX_OUTPUT: "3" }, "openai");
+    const { body, tokens, microusd } = buildRequest(config, turn({ provider: "openai", message: "日本語" }), [], []);
+    const size = new TextEncoder().encode(JSON.stringify(body)).byteLength;
+    expect(tokens).toBe(size + 4096 + 3);
+    expect(microusd).toBe(Math.ceil(((size + 4096) * 100000 + 3 * 300000) / 1000000));
+  });
+
+  it("treats empty settings as unset, as in Python", () => {
+    const config = providerConfig({ ...env, HERMA_CONVERSATION_OLLAMA_MODEL: " ", HERMA_CONVERSATION_OLLAMA_GENERATION: "", HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR: "" }, "ollama");
+    expect([config.model, config.generation, config.caller_token_limit]).toEqual(["muse-spark-open", {}, null]);
+    expect(() => providerConfig({ ...env, HERMA_META_BUDGET_USD: "" }, "meta")).toThrow("invalid_provider_configuration");
+    expect(() => providerConfig({ ...env, HERMA_CONVERSATION_MAX_OUTPUT: "1e3" }, "ollama")).toThrow("invalid_provider_configuration");
+  });
+
+  it("records a duplicate-field reply as a possibly charged unknown outcome", async () => {
+    const target = caller();
+    const result = await target.stub.turn(target.id, turn({ provider: "meta", message: "duplicate-reply-test" }), [entry]);
+    expect(result.body.error_code).toBe("provider_invalid_response");
+    expect(result.body.attempts[0]).toMatchObject({ outcome: "unknown", reservation_status: "reserved" });
+    expect(result.body.attempts[0].reserved_usd).toBeGreaterThan(0);
   });
 });

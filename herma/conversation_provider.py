@@ -6,25 +6,79 @@ import asyncio
 import json
 import math
 import os
+import re
 import time
 from dataclasses import dataclass, field
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import Any
 
 import httpx
 
+from herma.conversation_schema import strict_json
 from herma.errors import HermaError
 from herma.harness_gate import refuse_contributor_model
 from herma.provider_diagnostics import ERROR_BODY_BYTES, normalize_provider_error
 from herma.provider_health import operator_policy, retry_guidance
 
-# Microdollars per token, from the standard-mode provider tariff.
+# Dollars per million tokens (= microdollars per token), from the standard-mode tariff.
 META_RATES = {"muse-spark-1.3": (1.25, 4.25), "muse-wonder-1.0": (4.0, 20.0)}
 MAX_REQUEST_BYTES = 32768
 MAX_RESPONSE_BYTES = 1048576
+MAX_SAFE_INTEGER = 2**53 - 1
+INTEGER = re.compile(r"[0-9]+")
+DECIMAL = re.compile(r"[0-9]+(?:\.[0-9]+)?")
 
 
 def encode(value: Any) -> bytes:
+    """Canonical hashing encoding for fingerprints and IDs; never changes for stored receipts."""
     return json.dumps(value, ensure_ascii=True, sort_keys=True, allow_nan=False).encode()
+
+
+def wire_json(value: Any, *, sort_keys: bool = False) -> bytes:
+    """Compact UTF-8 JSON, byte-compatible with the Worker's JSON.stringify for these payloads.
+
+    Lone surrogates are escaped exactly as JSON.stringify escapes them.
+    """
+    text = json.dumps(
+        value, ensure_ascii=False, separators=(",", ":"), sort_keys=sort_keys, allow_nan=False
+    )
+    return text.encode("utf-8", errors="backslashreplace")
+
+
+def scaled_integer(value: float, scale: int, *, ceil: bool = False) -> int:
+    """Exact non-negative decimal value as an integer count of 10**-scale units.
+
+    The shortest round-trip decimal (Python repr, JavaScript toExponential) is the operator's
+    configured number, so 2.01 dollars is exactly 2,010,000 microdollars. Remainders below
+    one unit round down for allowances and up for tariffs.
+    """
+    if not math.isfinite(value) or value < 0:
+        raise ValueError("amounts must be finite and non-negative")
+    scaled = Decimal(repr(float(value))).scaleb(scale)
+    result = int(scaled.to_integral_value(rounding=ROUND_CEILING if ceil else ROUND_FLOOR))
+    if result > MAX_SAFE_INTEGER:
+        raise ValueError("amount exceeds exact ledger integer representation")
+    return result
+
+
+def setting(name: str) -> str | None:
+    """An operator setting; empty or whitespace-only values are unset in both runtimes."""
+    value = os.environ.get(name, "").strip()
+    return value or None
+
+
+def integer_setting(name: str) -> int | None:
+    value = setting(name)
+    if value is not None and not INTEGER.fullmatch(value):
+        raise ValueError(f"{name} must be a non-negative integer")
+    return None if value is None else int(value)
+
+
+def decimal_setting(name: str) -> float | None:
+    value = setting(name)
+    if value is not None and not DECIMAL.fullmatch(value):
+        raise ValueError(f"{name} must be a non-negative decimal")
+    return None if value is None else float(value)
 
 
 @dataclass(frozen=True)
@@ -34,7 +88,7 @@ class ProviderConfig:
     max_output: int | None = None
     reasoning_effort: str | None = None
     timeout_seconds: float = 25
-    meta_budget_usd: float = 5
+    meta_budget_usd: float = 0
     openai_budget_usd: float = 0
     openai_rates: tuple[float, float] | None = None
     anthropic_budget_usd: float = 0
@@ -48,51 +102,59 @@ class ProviderConfig:
 
     @classmethod
     def from_env(cls, provider: str) -> ProviderConfig:
+        """Read only the selected provider's settings, in the same order as the Worker."""
+        prefix = "HERMA_CONVERSATION_" + provider.upper()
+        model = setting(prefix + "_MODEL") or {
+            "meta": "muse-spark-1.3",
+            "ollama": "muse-spark-open",
+        }.get(provider, "")
+        refuse_contributor_model(model)
         try:
-            prefix = "HERMA_CONVERSATION_" + provider.upper()
-            model = os.environ.get(
-                prefix + "_MODEL",
-                {"meta": "muse-spark-1.3", "ollama": "muse-spark-open"}.get(provider, ""),
-            )
-            output = os.environ.get(
-                prefix + "_MAX_OUTPUT", os.environ.get("HERMA_CONVERSATION_MAX_OUTPUT")
-            )
-            token_limit = os.environ.get("HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR")
-            input_rate = os.environ.get(prefix + "_INPUT_USD_PER_MILLION")
-            output_rate = os.environ.get(prefix + "_OUTPUT_USD_PER_MILLION")
+            output = integer_setting(prefix + "_MAX_OUTPUT")
+            if output is None:
+                output = integer_setting("HERMA_CONVERSATION_MAX_OUTPUT")
+            if output is None:
+                raise HermaError(
+                    503,
+                    "output_allowance_required",
+                    "Output allowance required",
+                    "Configure HERMA_CONVERSATION_<PROVIDER>_MAX_OUTPUT for this server exception; worker proxy output is not capped.",
+                )
+            paid = provider in {"meta", "openai", "anthropic", "openrouter"}
+            budget = (
+                decimal_setting(f"HERMA_{provider.upper()}_BUDGET_USD") if paid else None
+            ) or 0
+            rates = None
+            if provider in {"openai", "anthropic", "openrouter"}:
+                input_rate = decimal_setting(prefix + "_INPUT_USD_PER_MILLION")
+                output_rate = decimal_setting(prefix + "_OUTPUT_USD_PER_MILLION")
+                if input_rate is not None and output_rate is not None:
+                    rates = (input_rate, output_rate)
             config = cls(
                 provider=provider,
                 model=model,
-                max_output=int(output) if output else None,
-                reasoning_effort=os.environ.get(
-                    prefix + "_REASONING",
-                    os.environ.get("HERMA_CONVERSATION_REASONING")
+                max_output=output,
+                reasoning_effort=setting(prefix + "_REASONING")
+                or (
+                    setting("HERMA_CONVERSATION_REASONING")
                     if provider not in {"ollama", "anthropic"}
-                    else None,
+                    else None
                 ),
-                meta_budget_usd=float(os.environ.get("HERMA_META_BUDGET_USD", "5")),
-                openai_budget_usd=float(os.environ.get("HERMA_OPENAI_BUDGET_USD", "0")),
-                openai_rates=(float(input_rate), float(output_rate))
-                if provider == "openai" and input_rate and output_rate
-                else None,
-                anthropic_budget_usd=float(os.environ.get("HERMA_ANTHROPIC_BUDGET_USD", "0")),
-                anthropic_rates=(float(input_rate), float(output_rate))
-                if provider == "anthropic" and input_rate and output_rate
-                else None,
-                anthropic_version=os.environ.get(
-                    "HERMA_CONVERSATION_ANTHROPIC_VERSION", "2026-10-21"
-                ),
-                openrouter_budget_usd=float(os.environ.get("HERMA_OPENROUTER_BUDGET_USD", "0")),
-                openrouter_rates=(float(input_rate), float(output_rate))
-                if provider == "openrouter" and input_rate and output_rate
-                else None,
-                openrouter_provider=os.environ.get("HERMA_CONVERSATION_OPENROUTER_PROVIDER"),
-                generation=json.loads(os.environ.get(prefix + "_GENERATION", "{}")),
-                caller_token_limit=int(token_limit) if token_limit else None,
+                meta_budget_usd=budget if provider == "meta" else 0,
+                openai_budget_usd=budget if provider == "openai" else 0,
+                openai_rates=rates if provider == "openai" else None,
+                anthropic_budget_usd=budget if provider == "anthropic" else 0,
+                anthropic_rates=rates if provider == "anthropic" else None,
+                anthropic_version=setting("HERMA_CONVERSATION_ANTHROPIC_VERSION") or "2026-10-21",
+                openrouter_budget_usd=budget if provider == "openrouter" else 0,
+                openrouter_rates=rates if provider == "openrouter" else None,
+                openrouter_provider=setting("HERMA_CONVERSATION_OPENROUTER_PROVIDER"),
+                generation=strict_json(setting(prefix + "_GENERATION") or "{}"),
+                caller_token_limit=integer_setting("HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR"),
             )
             config.validate()
             return config
-        except ValueError as exc:
+        except (ValueError, RecursionError) as exc:
             raise HermaError(
                 503,
                 "invalid_provider_configuration",
@@ -117,12 +179,14 @@ class ProviderConfig:
             )
         if (
             type(self.max_output) is not int
-            or not 0 < self.max_output <= 2**53 - 1
+            or not 0 < self.max_output <= MAX_SAFE_INTEGER
             or not 1 <= self.timeout_seconds <= 60
         ):
             raise ValueError("invalid output or timeout limit")
-        if not math.isfinite(self.meta_budget_usd) or not self.meta_budget_usd > 0:
-            raise ValueError("invalid operator budget")
+        if self.provider == "meta" and (
+            not math.isfinite(self.meta_budget_usd) or not self.meta_budget_usd > 0
+        ):
+            raise ValueError("Meta requires an explicit positive operator budget")
         if self.reasoning_effort is not None and (
             not isinstance(self.reasoning_effort, str)
             or not self.reasoning_effort
@@ -130,7 +194,8 @@ class ProviderConfig:
         ):
             raise ValueError("invalid reasoning effort")
         if self.caller_token_limit is not None and (
-            type(self.caller_token_limit) is not int or self.caller_token_limit < 1
+            type(self.caller_token_limit) is not int
+            or not 1 <= self.caller_token_limit <= MAX_SAFE_INTEGER
         ):
             raise ValueError("invalid caller token allowance")
         if self.provider == "openai" and (
@@ -201,7 +266,8 @@ class ProviderConfig:
                 "n" in self.generation
                 and (
                     self.provider not in {"meta", "openrouter"}
-                    or type(self.generation["n"]) is not int
+                    # JSON 1 and 1.0 are one number in the Worker; booleans are not numbers.
+                    or type(self.generation["n"]) not in {int, float}
                     or self.generation["n"] != 1
                 )
             )
@@ -254,6 +320,11 @@ class ProviderConfig:
             if self.provider == "meta"
             else 0
         )
+
+    @property
+    def budget_microusd(self) -> int:
+        """The cumulative operator allowance in exact integer microdollars."""
+        return scaled_integer(self.budget_usd, 6)
 
     def build_request(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
@@ -310,7 +381,8 @@ class ProviderConfig:
     def reservation(self, body: dict[str, Any]) -> tuple[int, int]:
         self.validate()
         assert self.max_output is not None
-        size = len(encode(body))
+        # Measure the exact bytes sent, which match the Worker's UTF-8 JSON.stringify size.
+        size = len(wire_json(body))
         if size > MAX_REQUEST_BYTES:
             raise HermaError(
                 413,
@@ -331,9 +403,15 @@ class ProviderConfig:
             if self.provider == "openrouter"
             else None
         )
-        dollars = math.ceil(input_ceiling * rates[0] + self.max_output * rates[1]) if rates else 0
+        dollars = 0
+        if rates:
+            # Tariffs in picodollars per token keep the whole ceiling in exact integers.
+            picodollars = input_ceiling * scaled_integer(
+                rates[0], 6, ceil=True
+            ) + self.max_output * scaled_integer(rates[1], 6, ceil=True)
+            dollars = -(-picodollars // 1_000_000)
         tokens = input_ceiling + self.max_output
-        if tokens > 2**53 - 1 or dollars > 2**53 - 1:
+        if tokens > MAX_SAFE_INTEGER or dollars > MAX_SAFE_INTEGER:
             raise ValueError("allowance exceeds exact ledger integer representation")
         return tokens, dollars
 
@@ -406,7 +484,7 @@ async def request_model(
             client.stream(
                 "POST",
                 config.url,
-                content=encode(body),
+                content=wire_json(body),
                 headers=headers,
             ) as response,
         ):
@@ -451,7 +529,11 @@ async def request_model(
                 raw.extend(chunk)
                 if len(raw) > MAX_RESPONSE_BYTES:
                     raise ProviderFailure("provider_response_too_large")
-        parsed = json.loads(raw)
+        try:
+            # Same strict profile as the Worker: duplicate fields cannot pick a reply.
+            parsed = strict_json(raw.decode("utf-8"))
+        except (ValueError, RecursionError) as exc:
+            raise ProviderFailure("provider_invalid_response") from exc
         if not isinstance(parsed, dict):
             raise ProviderFailure("provider_invalid_response")
         if config.provider == "openai" and parsed.get("status") in ("queued", "in_progress"):
