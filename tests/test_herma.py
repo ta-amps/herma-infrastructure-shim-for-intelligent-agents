@@ -1938,7 +1938,16 @@ console.log(JSON.stringify({
     assert cf["rcptCnt"] == 0
 
     # 7. Typography guardrail: zero em-dashes (\u2014) anywhere in tracked repo files:
-    skip_dirs = {".git", ".venv", "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache"}
+    skip_dirs = {
+        ".git",
+        ".venv",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        "node_modules",
+        ".wrangler",
+    }
     offenders: list[str] = []
     for path in sorted(REPO_ROOT.rglob("*")):
         if not path.is_file() or (set(path.relative_to(REPO_ROOT).parts) & skip_dirs):

@@ -25,6 +25,8 @@ from herma.api.pages import (
     render_connect_page,
     render_overview_page,
 )
+from herma.conversation import ConversationEngine
+from herma.conversation_contracts import ConversationTurn
 from herma.errors import AdminRequiredError, HermaError
 from herma.harness_gate import (
     HarnessPrincipal,
@@ -549,6 +551,30 @@ def create_app() -> FastAPI:
 
     # --- Authenticated 'route' endpoints for configurable harnesses ---
 
+    @application.post("/v1/conversations/turn")
+    async def conversation_turn(req: Request, body: ConversationTurn) -> JSONResponse:
+        enforce_not_consumer_assistant(req.headers)
+        store = get_store()
+        principal = store.authenticate_headers(req.headers, is_admin=_is_admin_request(req.headers))
+        require_scope(principal, "route", req.headers)
+        if os.environ.get("HERMA_CONVERSATION_ENABLED", "").lower() != "true":
+            raise HermaError(
+                503,
+                "conversation_disabled",
+                "Conversation disabled",
+                "The operator has not enabled model-assisted work conversations.",
+            )
+        result = await ConversationEngine(store).turn(principal.caller_scope, body)
+        return JSONResponse(content=result, headers={"X-Request-Id": body.request_id})
+
+    @application.get("/v1/conversations/{conversation_id}")
+    def conversation_status(req: Request, conversation_id: str) -> dict[str, Any]:
+        enforce_not_consumer_assistant(req.headers)
+        store = get_store()
+        principal = store.authenticate_headers(req.headers, is_admin=_is_admin_request(req.headers))
+        require_scope(principal, "route", req.headers)
+        return ConversationEngine(store).state.snapshot(principal.caller_scope, conversation_id)
+
     @application.post("/v1/handshake")
     def handshake_api(req: Request, body: HandshakeRequest) -> JSONResponse:
         enforce_not_consumer_assistant(req.headers)
@@ -883,9 +909,33 @@ def create_app() -> FastAPI:
         )
         return {"synced": [s.provision.prov_id for s in synced], "count": len(synced)}
 
+    @application.get("/api/conversation-schema")
+    async def conversation_schemas() -> dict[str, object]:
+        from herma.conversation_contracts import ConversationTurn, Proposal, WorkContract
+
+        return {
+            "conversation_turn": ConversationTurn.model_json_schema(),
+            "work_contract": WorkContract.model_json_schema(),
+            "proposal": Proposal.model_json_schema(),
+        }
+
     @application.get("/connect.json")
     async def access_modes() -> dict[str, object]:
-        return ACCESS_INFO
+        return {
+            **ACCESS_INFO,
+            "work_conversations": {
+                "enabled": os.environ.get("HERMA_CONVERSATION_ENABLED") == "true",
+                "turn_endpoint": "/v1/conversations/turn",
+                "schema_endpoint": "/api/conversation-schema",
+                "snapshot_endpoint": "/v1/conversations/{id}",
+                "credential": "hmk_",
+                "scope": "route",
+                "providers": ["meta", "ollama"],
+                "executed": False,
+                "context": "Caller-visible context entries containing typed work_contract schemas.",
+                "documentation": "https://github.com/ta-amps/herma/blob/t/H15-work-conversation/docs/conversations.md",
+            },
+        }
 
     application.add_middleware(AgentAccessMiddleware)
     return application

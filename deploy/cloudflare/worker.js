@@ -1,4 +1,5 @@
 import { agentFetch } from "./agent_access.js";
+import { ConversationError, conversationSchemas, strictJson, validateTurn } from "./conversation.js";
 // Cloudflare Cloud Worker for Herma: 24/7 caller-isolated context-shimming AI middleware backed by
 // Cloudflare D1 (`ta-amps-herma`) + direct Service Binding to `tessera` Cloud (`env.TESSERA`),
 // with optional `STORAGE_MODE = "origin"` reverse-proxy fallback.
@@ -1456,6 +1457,10 @@ const application = {
 
     try {
       // 1. Public discovery, brand assets, read-only HTML & preview, and stateless MCP
+      if (path === "/api/conversation-schema") {
+        if (method !== "GET") return methodNotAllowed(["GET"]);
+        return jsonResp(conversationSchemas);
+      }
       if (path === "/favicon.svg") {
         if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
         return textResp(FAVICON_SVG, "image/svg+xml; charset=utf-8");
@@ -1536,6 +1541,12 @@ const application = {
       }
 
       // 2. Harness key bootstrap & administration (`/v1/admin/keys`) -- admin secret strictly required
+      if (path === "/v1/admin/conversation-budget") {
+        if (method !== "GET") return methodNotAllowed(["GET"]);
+        if (!isAdminRequest(request, env)) return problem(403, "admin_required", "Admin required", "This endpoint requires the operator's admin credential.");
+        if (!env.WORK_REASONING_BUDGET) return problem(503, "conversation_disabled", "Unavailable", "Conversation coordination is not configured.");
+        return jsonResp(await env.WORK_REASONING_BUDGET.getByName("provider-allowance-v1").summary());
+      }
       if (path === "/v1/admin/keys") {
         if (method !== "GET" && method !== "POST") return methodNotAllowed(["GET", "POST"]);
         await ensureSchema(db);
@@ -1596,6 +1607,28 @@ const application = {
       }
 
       // 3. Authenticated `route` endpoints (`/v1/handshake`, `/v1/dry-run`, wire endpoints, `/v1/receipts`, `/v1/memory`, `/v1/outcomes`, `/v1/insights`)
+      if (path === "/v1/conversations/turn" || /^\/v1\/conversations\/[^/]+$/.test(path)) {
+        const isTurn = path === "/v1/conversations/turn";
+        if (method !== (isTurn ? "POST" : "GET")) return methodNotAllowed([isTurn ? "POST" : "GET"]);
+        enforceNotConsumerAssistant(request);
+        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env) });
+        requireScope(principal, "route", request);
+        if (env.HERMA_CONVERSATION_ENABLED !== "true" || !env.WORK_CONVERSATIONS) {
+          return problem(503, "conversation_disabled", "Conversation unavailable", "The operator has not enabled the bounded conversation service.");
+        }
+        const stub = env.WORK_CONVERSATIONS.getByName(principal.caller_scope);
+        let result;
+        if (isTurn) {
+          let body;
+          try { body = strictJson(await request.text()); }
+          catch { return problem(400, "invalid_json", "Invalid JSON", "Use a bounded JSON object with unique fields."); }
+          const turn = validateTurn(body);
+          const entries = await getContextEntriesMapForCaller(db, turn.context_refs, principal.caller_scope);
+          result = await stub.turn(principal.caller_scope, turn, [...entries.values()]);
+        } else result = await stub.snapshot(principal.caller_scope, decodeURIComponent(path.split("/").at(-1)));
+        return jsonResp(result.body, result.status, result.status === 429 ? { "Retry-After": "3600" } : {});
+      }
+
       if (path === "/v1/handshake") {
         if (method !== "POST") return methodNotAllowed(["POST"]);
         enforceNotConsumerAssistant(request);
@@ -2133,6 +2166,7 @@ const application = {
 
       return problem(404, "not_found", "Not Found", `No route matches ${method} ${path}.`);
     } catch (err) {
+      if (err instanceof ConversationError) return problem(err.status, err.code, "Conversation request rejected", "Check the configured contract and conversation version.");
       if (err instanceof HermaErr) {
         const response = problem(err.status, err.code, err.title, err.detail);
         if (err.status === 429) response.headers.set("Retry-After", "3600");

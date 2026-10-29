@@ -4,9 +4,18 @@
 // Secret: npx wrangler@4.149.0 secret put BOOTSTRAP_SECRET --config deploy/cloudflare/wrangler.jsonc
 {
   "name": "herma",
-  "main": "worker.js",
+  "main": "entry.js",
   "compatibility_date": "2026-10-01",
   "workers_dev": true,
+  "durable_objects": {
+    "bindings": [
+      { "name": "WORK_CONVERSATIONS", "class_name": "WorkConversation" },
+      { "name": "WORK_REASONING_BUDGET", "class_name": "WorkReasoningBudget" }
+    ]
+  },
+  "migrations": [
+    { "tag": "work-conversation-v1", "new_sqlite_classes": ["WorkConversation", "WorkReasoningBudget"] }
+  ],
   "d1_databases": [
     {
       "binding": "HERMA_DB",
@@ -22,6 +31,9 @@
   ],
   // "routes": [{ "pattern": "herma.<your-domain>", "custom_domain": true }],
   "vars": {
+    "HERMA_CONVERSATION_ENABLED": "true",
+    "HERMA_META_BUDGET_USD": "5",
+    "HERMA_OLLAMA_CALLS_PER_DAY": "30",
     "STORAGE_MODE": "cloud",
     "PUBLIC_URL": "https://herma.ta-amps.workers.dev",
     "TESSERA_URL": "https://tessera.ta-amps.workers.dev",

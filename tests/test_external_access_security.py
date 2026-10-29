@@ -11,7 +11,7 @@ from test_herma import _run_worker_node_script
 
 from herma.api.app import create_app
 from herma.errors import HermaError
-from herma.proxy import _resolve_upstream_headers
+from herma.proxy import _resolve_upstream_headers, _resolve_upstream_url
 from herma.store import ProvisionStore, passes_governance_lens
 
 
@@ -39,6 +39,44 @@ def test_operator_provider_credential_is_bound_to_origin(monkeypatch: pytest.Mon
         )["Authorization"]
         == "Bearer caller-owned"
     )
+
+
+def test_meta_override_uses_caller_key_without_borrowing_operator_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("HERMA_ALLOWED_UPSTREAM_HOSTS", raising=False)
+    monkeypatch.setenv(
+        "HERMA_UPSTREAM_CHAT_URL", "https://provider.example.com/v1/chat/completions"
+    )
+    monkeypatch.setenv("HERMA_UPSTREAM_API_KEY", "synthetic-operator-key")
+    headers = {"x-upstream-base-url": "https://api.meta.ai/v1"}
+    assert (
+        _resolve_upstream_url("chat_completions", headers)
+        == "https://api.meta.ai/v1/chat/completions"
+    )
+    with pytest.raises(HermaError, match="bound"):
+        _resolve_upstream_headers("chat_completions", headers)
+    assert (
+        _resolve_upstream_headers(
+            "chat_completions", {**headers, "x-upstream-api-key": "synthetic-caller-key"}
+        )["Authorization"]
+        == "Bearer synthetic-caller-key"
+    )
+
+    result = _run_worker_node_script("""
+const {resolveUpstream} = await import('./deploy/cloudflare/herma_engine.js');
+const env={UPSTREAM_LLM_URL:'https://provider.example.com/v1',UPSTREAM_LLM_API_KEY:'synthetic-operator-key'};
+const headers={'x-upstream-base-url':'https://api.meta.ai/v1'};
+let code=null;
+try { resolveUpstream(new Request('https://herma.example',{headers}),env,'/v1/chat/completions'); } catch(error) {code=error.code;}
+const owned=resolveUpstream(new Request('https://herma.example',{headers:{...headers,'x-upstream-api-key':'synthetic-caller-key'}}),env,'/v1/chat/completions');
+console.log(JSON.stringify({code,url:owned.url,callerKeyUsed:owned.key==='synthetic-caller-key'}));
+""")
+    assert result == {
+        "code": "upstream_credential_origin_mismatch",
+        "url": "https://api.meta.ai/v1/chat/completions",
+        "callerKeyUsed": True,
+    }
 
 
 def test_canonical_fabric_visibility_cohorts_and_payload_cannot_override() -> None:

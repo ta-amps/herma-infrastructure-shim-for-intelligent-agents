@@ -8,10 +8,15 @@ API_PORT ?= 7730
 help: ## List the targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
 
-setup: ## Install Python dependencies (uv)
+setup: ## Install locked Python and Worker dependencies
 	uv sync --all-groups
+	npm ci --ignore-scripts
 
-check: lint types test public index-check architecture ## Lint, types, tests, leak scan, index and architecture checks
+check: lint types test worker-check public index-check architecture ## Lint, types, tests, leak scan, index and architecture checks
+
+worker-check: ## Worker runtime tests and generated category/prompt parity
+	uv run python scripts/build_conversation_data.py --check
+	npm run check
 
 lint: ## ruff lint and format check
 	uv run ruff check .
