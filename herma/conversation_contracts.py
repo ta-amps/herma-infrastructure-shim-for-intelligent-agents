@@ -53,7 +53,8 @@ class ConversationTurn(BaseModel):
     expected_version: int = Field(ge=0)
     message: str = Field(min_length=1, max_length=6000)
     context_refs: list[str] = Field(min_length=1, max_length=12)
-    provider: Literal["ollama", "meta", "openai"] = "ollama"
+    provider: Literal["ollama", "meta", "openai", "anthropic", "openrouter"] = "ollama"
+    provider_plan_ref: str | None = Field(default=None, min_length=2, max_length=160)
 
 
 class Proposal(BaseModel):

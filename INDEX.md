@@ -30,7 +30,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) |  |
 
-## deploy/ (13)
+## deploy/ (14)
 
 | File | What it is |
 |---|---|
@@ -43,6 +43,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/d1-herma.sql](deploy/cloudflare/d1-herma.sql) | Persistent Cloudflare D1 caller-isolated schema for Herma context-shimming AI middleware (ta-amps-herma). |
 | [deploy/cloudflare/entry.js](deploy/cloudflare/entry.js) |  |
 | [deploy/cloudflare/herma_engine.js](deploy/cloudflare/herma_engine.js) | Context-shimming 3-tier trigger engine, multi-caller isolation, governance lens, |
+| [deploy/cloudflare/provider_diagnostics.js](deploy/cloudflare/provider_diagnostics.js) | Fixed provider-reported categories only. |
 | [deploy/cloudflare/worker.js](deploy/cloudflare/worker.js) |  |
 | [deploy/cloudflare/wrangler.jsonc](deploy/cloudflare/wrangler.jsonc) | Herma Cloud Worker: 24/7 context-shimming AI middleware on Cloudflare Workers + D1 (ta-amps-herma) |
 | [deploy/fly/Dockerfile](deploy/fly/Dockerfile) |  |
@@ -77,7 +78,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [examples/provisions/README.md](examples/provisions/README.md) | Example Provisions & Atomic Noun/Verb Context |
 | [examples/provisions/context/CONTEXT-TESSERA-NOUNS-VERBS.json](examples/provisions/context/CONTEXT-TESSERA-NOUNS-VERBS.json) | JSON object: entries |
 
-## herma/ (24)
+## herma/ (27)
 
 | File | What it is |
 |---|---|
@@ -92,11 +93,14 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [herma/conversation_provider.py](herma/conversation_provider.py) | Bounded provider calls with fixed credential destinations and explicit tool schemas. |
 | [herma/conversation_schema.py](herma/conversation_schema.py) | Bounded JSON Schema profile shared with the Worker conversation validator. |
 | [herma/conversation_state.py](herma/conversation_state.py) | Durable caller isolation, per-turn CAS and pre-call conversation budgets. |
+| [herma/decision_provider.py](herma/decision_provider.py) | Pure Jev wire adapter for authorized workers; no transport or server fallback. |
 | [herma/errors.py](herma/errors.py) | Typed errors mapped deterministically to RFC 9457 problem+json HTTP responses. |
 | [herma/harness_gate.py](herma/harness_gate.py) | Configurable-harness access gate: authenticates scoped agent and personal-assistant clients. |
 | [herma/injector.py](herma/injector.py) | Extracts signals and deterministic entities from payloads and shims rules, URIs, and noun/verb context. |
 | [herma/memory.py](herma/memory.py) | Deterministic Anti-RAG top-of-mind entity extraction and candidate rule synthesis (0 LLM calls). |
 | [herma/profiles.py](herma/profiles.py) | Adaptive CallerProfile shimming lenses, deterministic strategy ranking, and budget enforcement. |
+| [herma/provider_diagnostics.py](herma/provider_diagnostics.py) | Bounded provider-reported error categories, never raw messages or identifiers. |
+| [herma/provider_plan.py](herma/provider_plan.py) | Explicit provider-plan nouns; deterministic selection grants no new work authority. |
 | [herma/proxy.py](herma/proxy.py) | Context-shimming interception, direct-response short-circuiting, and upstream LLM forwarding. |
 | [herma/schemas.py](herma/schemas.py) | Strict Pydantic schemas for provisions, context entries, triggers, memory, outcomes, and receipts. |
 | [herma/store.py](herma/store.py) | SQLite WAL caller-isolated store, atomic CAS, governance lens, entity memory, and outcome telemetry. |
@@ -115,14 +119,15 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/check_architecture.py](scripts/check_architecture.py) | Check that architecture.json still describes this repo truthfully. |
 | [scripts/check_public.py](scripts/check_public.py) | Fail if a file headed for a public repo holds a secret or a private name. |
 
-## test/ (2)
+## test/ (3)
 
 | File | What it is |
 |---|---|
 | [test/conversation.test.js](test/conversation.test.js) |  |
+| [test/provider_diagnostics.test.js](test/provider_diagnostics.test.js) |  |
 | [test/triggers.test.js](test/triggers.test.js) |  |
 
-## tests/ (9)
+## tests/ (12)
 
 | File | What it is |
 |---|---|
@@ -130,8 +135,11 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [tests/test_cli_demo.py](tests/test_cli_demo.py) | The CI demo verifies the supported client policy and its real provision pipeline. |
 | [tests/test_conversation.py](tests/test_conversation.py) | Typed proposals, caller isolation, budget fencing and real HTTP provider contracts. |
 | [tests/test_conversation_schema_parity.py](tests/test_conversation_schema_parity.py) | Cross-runtime fixtures for the portable conversation schema boundary. |
+| [tests/test_decision_provider.py](tests/test_decision_provider.py) | Jev is a typed worker decision protocol, not a generative fallback. |
 | [tests/test_external_access_security.py](tests/test_external_access_security.py) | Regression proofs for scoped personal-assistant access and fail-closed fabric imports. |
 | [tests/test_harness_gate_and_store.py](tests/test_harness_gate_and_store.py) | Tests for configurable-harness access gate, CAS store, Tessera sync, and remote handshake sync. |
 | [tests/test_herma.py](tests/test_herma.py) | Tests for multi-caller isolation, CAS, governance lens, entity memory, insights, preview, and MCP parity. |
 | [tests/test_provider_contracts.py](tests/test_provider_contracts.py) | Provider selection, native generation and exception allowance stay explicit. |
+| [tests/test_provider_diagnostics.py](tests/test_provider_diagnostics.py) | Provider error evidence is bounded, private and never a raw response echo. |
+| [tests/test_provider_plan.py](tests/test_provider_plan.py) | Explicit private plans may advance providers without losing charged attempts. |
 | [tests/test_triggers.py](tests/test_triggers.py) | Tests for Tier-1 (keyword/regex/path/tool), Tier-2 (semantic), and Tier-3 (micromodel) triggers. |

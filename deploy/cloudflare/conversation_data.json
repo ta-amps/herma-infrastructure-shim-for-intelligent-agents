@@ -625,10 +625,26 @@
           "enum": [
             "ollama",
             "meta",
-            "openai"
+            "openai",
+            "anthropic",
+            "openrouter"
           ],
           "title": "Provider",
           "type": "string"
+        },
+        "provider_plan_ref": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "minLength": 2,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Plan Ref"
         },
         "request_id": {
           "pattern": "^[A-Za-z0-9_.:-]{8,100}$",
@@ -725,6 +741,106 @@
         "reply"
       ],
       "title": "Proposal",
+      "type": "object"
+    },
+    "provider_plan": {
+      "$defs": {
+        "ProviderChoice": {
+          "additionalProperties": false,
+          "properties": {
+            "model": {
+              "maxLength": 100,
+              "minLength": 1,
+              "title": "Model",
+              "type": "string"
+            },
+            "provider": {
+              "enum": [
+                "meta",
+                "ollama",
+                "openai",
+                "anthropic",
+                "openrouter"
+              ],
+              "title": "Provider",
+              "type": "string"
+            },
+            "routing_provider": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Routing Provider"
+            }
+          },
+          "required": [
+            "provider",
+            "model"
+          ],
+          "title": "ProviderChoice",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "allow_failover": {
+          "const": true,
+          "title": "Allow Failover",
+          "type": "boolean"
+        },
+        "allow_uncertain_outcome": {
+          "default": false,
+          "title": "Allow Uncertain Outcome",
+          "type": "boolean"
+        },
+        "caller_scope": {
+          "title": "Caller Scope",
+          "type": "string"
+        },
+        "context_refs": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 12,
+          "minItems": 1,
+          "title": "Context Refs",
+          "type": "array"
+        },
+        "payer": {
+          "const": "operator",
+          "title": "Payer",
+          "type": "string"
+        },
+        "providers": {
+          "items": {
+            "$ref": "#/$defs/ProviderChoice"
+          },
+          "minItems": 1,
+          "title": "Providers",
+          "type": "array"
+        },
+        "purpose": {
+          "const": "caller_requested_typed_proposal",
+          "title": "Purpose",
+          "type": "string"
+        }
+      },
+      "required": [
+        "caller_scope",
+        "purpose",
+        "payer",
+        "context_refs",
+        "providers",
+        "allow_failover"
+      ],
+      "title": "ProviderPlan",
       "type": "object"
     },
     "work_contract": {

@@ -4,6 +4,8 @@
 
 Follow the [worker-first execution policy](docs/WORKER-FIRST-EXECUTION.md) when designing agentic work. Prefer claimed verbs and authorized workers, including private workers. Keep ordinary coordination deterministic; additional review is a verb when required. Distinguish required procedures from useful pointers and open-ended discovery. Tool preparation and separate-process execution follow the task workspace and execution contract. The policy does not widen effect, spending or publication authority.
 
+Nouns and verbs are the domain primitives, supported by limited infrastructure and surfaces. Projects are human groupings or surface metadata, not a third primitive. Seed packs contain nouns and verbs. Server management work retains scoped noun/verb contracts; its location grants no general reasoning exception.
+
 > Herma: context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic noun, verb, and URI context from a user-configured database before LLM execution.
 
 1. **Configurable Harnesses & Caller Isolation Only**: Never weaken `herma/harness_gate.py` or `caller_scope` isolation. Provision and context-database management (`configure` scope), request interception (`route` scope), and working-entity memory require scoped `hmk_` credentials, isolate state per `caller_scope = key:<key_id>`, protect `system_builtin` entries (`403 builtin_protected`), require admin secrets on `/v1/admin/keys` (`403 admin_required`), and accept personal assistants with the same scoped credentials while rejecting browser navigation and cookie auth.

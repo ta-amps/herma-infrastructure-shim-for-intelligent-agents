@@ -1,19 +1,22 @@
 # Herma
 
-Herma is the integration and context adapter project. A project is a public
-surface and purpose organizing nouns and verbs. Versioned nouns carry data and
-evidence; claimable verbs carry work. Tessera's storage and task contracts remain
-the shared authority. Herma adds no separate domain reasoning runtime.
+Herma is the integration and context adapter surface. Versioned nouns carry data
+and evidence; claimable verbs carry work. A project is a human grouping or surface
+label for those nouns and verbs, not a separate domain primitive. Seed packs
+contain nouns and verbs. Tessera's storage and task contracts remain the shared
+authority. Herma adds no separate domain reasoning runtime.
 
 The default agentic executor is the worker's own harness holding a Tessera verb.
 Inputs, contracts, artifacts and evidence remain scoped nouns. Herma supplies
 configured context when useful; server model turns are explicit bounded exceptions.
 
-Optional [typed work conversations](docs/conversations.md) let authenticated harnesses ask for clarification and receive one schema-checked noun/verb proposal at a time. Muse, Ollama Cloud and OpenAI use explicit provider protocols, server credentials, output allowances, durable budget reservations and caller-scoped state. The existing turn receipt records the server exception. A proposal is never executed by the conversation endpoint.
+Optional [typed work conversations](docs/conversations.md) let authenticated harnesses ask for clarification and receive one schema-checked noun/verb proposal at a time. Muse, Ollama Cloud, OpenAI, Anthropic and OpenRouter use explicit provider protocols, server credentials, output allowances, durable budget reservations and caller-scoped state. An optional private provider-plan noun permits controlled failover. The existing turn receipt records every attempt and its server exception. A proposed domain action is never executed by the conversation endpoint.
 
 Workers may use their own local or cloud providers through the ordinary shim.
 Herma preserves native generation settings without imposing a response-token
 default. See [provider selection and local resources](docs/conversations.md#worker-owned-providers).
+The [Jev worker adapter](docs/conversations.md#jev-typed-decisions) prepares and
+validates TypeSafe decision messages without network calls or activation.
 
 Read the [design decisions and experiment results](docs/design-and-evidence.md)
 and [agent troubleshooting guide](docs/agent-troubleshooting.md). Workers self-check;

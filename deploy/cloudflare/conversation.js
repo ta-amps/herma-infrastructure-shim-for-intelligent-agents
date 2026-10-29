@@ -2,6 +2,7 @@
 import { Validator } from "@cfworker/json-schema";
 import data from "./conversation_data.json" with { type: "json" };
 import { canonicalJson, sha256Hex } from "./herma_engine.js";
+import { readProviderError } from "./provider_diagnostics.js";
 
 export class ConversationError extends Error {
   constructor(status, code) { super(code); this.status = status; this.code = code; }
@@ -38,15 +39,16 @@ export function strictJson(raw) {
 }
 
 export function validateTurn(raw) {
-  const fields = ["conversation_id", "request_id", "expected_version", "message", "context_refs", "provider"];
+  const fields = ["conversation_id", "request_id", "expected_version", "message", "context_refs", "provider", "provider_plan_ref"];
   if (!object(raw) || Object.keys(raw).some(k => !fields.includes(k)) || bytes(raw) > 32768) fail(422, "invalid_conversation_turn");
   if (typeof raw.conversation_id !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(raw.conversation_id) ||
       typeof raw.request_id !== "string" || !/^[A-Za-z0-9_.:-]{8,100}$/.test(raw.request_id) ||
       !isInt(raw.expected_version) || typeof raw.message !== "string" || !raw.message.length || [...raw.message].length > 6000 ||
       !Array.isArray(raw.context_refs) || !raw.context_refs.length || raw.context_refs.length > 12 ||
       raw.context_refs.some(x => typeof x !== "string" || !x.length || x.length > 160) ||
-      !["meta", "ollama", "openai"].includes(raw.provider ?? "ollama")) fail(422, "invalid_conversation_turn");
-  return { ...raw, provider: raw.provider ?? "ollama" };
+      (raw.provider_plan_ref !== undefined && raw.provider_plan_ref !== null && (typeof raw.provider_plan_ref !== "string" || raw.provider_plan_ref.length < 2 || raw.provider_plan_ref.length > 160)) ||
+      !["meta", "ollama", "openai", "anthropic", "openrouter"].includes(raw.provider ?? "ollama")) fail(422, "invalid_conversation_turn");
+  return { ...raw, provider: raw.provider ?? "ollama", provider_plan_ref: raw.provider_plan_ref ?? null };
 }
 
 // Bounded portable schema profile. No regular expressions, remote references or coercion.
@@ -102,35 +104,58 @@ export async function loadContracts(entries, refs) {
   return contracts.sort((a, b) => a.operation_id.localeCompare(b.operation_id));
 }
 
+export function loadProviderPlan(env, scope, turn, entries) {
+  if (!turn.provider_plan_ref) return null;
+  const entry = entries.find(item => item.entry_id === turn.provider_plan_ref);
+  const plan = entry?.schema_or_body?.provider_plan;
+  let allowed;
+  try { allowed = JSON.parse(env.HERMA_CONVERSATION_PROVIDER_PLAN_ALLOWLIST || "[]"); } catch { fail(503, "invalid_provider_configuration"); }
+  if (entry?._provider_plan_scope !== scope || entry?.kind !== "noun" || !object(plan) ||
+      !new Validator(data.schemas.provider_plan, "2020-12", false).validate(plan).valid ||
+      plan.caller_scope !== scope || !Array.isArray(allowed) ||
+      new Set(plan.providers.map(item => item.provider)).size !== plan.providers.length ||
+      plan.providers.some(item => (item.provider === "openrouter" && !item.routing_provider) || /contributor/i.test(item.model) || !allowed.some(grant => grant?.provider === item.provider && grant?.model === item.model && (grant?.routing_provider ?? null) === (item.routing_provider ?? null))) ||
+      plan.providers[0].provider !== turn.provider || !turn.context_refs.includes(turn.provider_plan_ref) ||
+      JSON.stringify([...new Set(plan.context_refs)].sort()) !== JSON.stringify([...new Set(turn.context_refs.filter(ref => ref !== turn.provider_plan_ref))].sort()) ||
+      (plan.allow_uncertain_outcome && env.HERMA_CONVERSATION_ALLOW_UNCERTAIN_FAILOVER !== "true")) fail(403, "provider_plan_not_authorized");
+  return plan;
+}
+
 export function providerConfig(env, provider) {
   const prefix = `HERMA_CONVERSATION_${provider.toUpperCase()}`;
   const model = env[`${prefix}_MODEL`] || ({ meta: "muse-spark-1.3", ollama: "muse-spark-open" }[provider] ?? "");
   const output = env[`${prefix}_MAX_OUTPUT`] ?? env.HERMA_CONVERSATION_MAX_OUTPUT;
   if (output === undefined || output === null || output === "") fail(503, "output_allowance_required");
   const max_output = Number(output);
-  const reasoning_effort = env[`${prefix}_REASONING`] ?? env.HERMA_CONVERSATION_REASONING ?? null;
+  const reasoning_effort = env[`${prefix}_REASONING`] ?? (!["ollama", "anthropic"].includes(provider) ? env.HERMA_CONVERSATION_REASONING : null) ?? null;
   const meta_budget_usd = Number(env.HERMA_META_BUDGET_USD || 5);
   const ollama_calls_per_day = Number(env.HERMA_OLLAMA_CALLS_PER_DAY || 30);
   const openai_budget_usd = Number(env.HERMA_OPENAI_BUDGET_USD || 0);
-  const rates = provider === "meta" ? RATES[model] : provider === "openai" ? [env[`${prefix}_INPUT_USD_PER_MILLION`], env[`${prefix}_OUTPUT_USD_PER_MILLION`]].map(v => v === undefined || v === "" ? NaN : Number(v)) : null;
+  const anthropic_budget_usd = Number(env.HERMA_ANTHROPIC_BUDGET_USD || 0);
+  const openrouter_budget_usd = Number(env.HERMA_OPENROUTER_BUDGET_USD || 0);
+  const openrouter_provider = env.HERMA_CONVERSATION_OPENROUTER_PROVIDER || null;
+  const anthropic_version = env.HERMA_CONVERSATION_ANTHROPIC_VERSION || "2026-10-21";
+  const rates = provider === "meta" ? RATES[model] : ["openai", "anthropic", "openrouter"].includes(provider) ? [env[`${prefix}_INPUT_USD_PER_MILLION`], env[`${prefix}_OUTPUT_USD_PER_MILLION`]].map(v => v === undefined || v === "" ? NaN : Number(v)) : null;
   const caller_token_limit = env.HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR === undefined ? null : Number(env.HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR);
   let generation;
   try { generation = JSON.parse(env[`${prefix}_GENERATION`] || "{}"); } catch { fail(503, "invalid_provider_configuration"); }
-  const reserved = ["model", "input", "messages", "instructions", "tools", "stream", "store", "background", "conversation", "previous_response_id", "parallel_tool_calls", "max_tokens", "max_completion_tokens", "max_output_tokens"];
-  if (!["meta", "ollama", "openai"].includes(provider) || typeof model !== "string" || !model.length || /contributor/i.test(model) ||
+  const reserved = ["model", "input", "messages", "instructions", "system", "tools", "stream", "store", "background", "conversation", "previous_response_id", "parallel_tool_calls", "max_tokens", "max_completion_tokens", "max_output_tokens", "models", "provider", "route", "plugins", "preset", "presets", "web_search_options", "mcp_servers", "container", "server_tools"];
+  if (!["meta", "ollama", "openai", "anthropic", "openrouter"].includes(provider) || typeof model !== "string" || !model.length || /contributor/i.test(model) ||
       model.length > 100 || (provider === "meta" && !has(RATES, model)) ||
       !isInt(max_output) || max_output < 1 ||
       (reasoning_effort !== null && (typeof reasoning_effort !== "string" || !reasoning_effort.length || reasoning_effort.length > 40)) ||
       !Number.isFinite(meta_budget_usd) || meta_budget_usd <= 0 ||
       (provider === "openai" && (!Number.isFinite(openai_budget_usd) || openai_budget_usd <= 0 || rates.some(rate => !Number.isFinite(rate) || rate < 0))) ||
+      (provider === "anthropic" && (!Number.isFinite(anthropic_budget_usd) || anthropic_budget_usd <= 0 || rates.some(rate => !Number.isFinite(rate) || rate < 0) || !["2023-06-01", "2026-10-21"].includes(anthropic_version) || reasoning_effort !== null)) ||
+      (provider === "openrouter" && (!Number.isFinite(openrouter_budget_usd) || openrouter_budget_usd <= 0 || rates.some(rate => !Number.isFinite(rate) || rate < 0) || typeof openrouter_provider !== "string" || !openrouter_provider.length || openrouter_provider.length > 100 || !model.includes("/") || model.startsWith("openrouter/") || model.toLowerCase().includes("@preset") || model.toLowerCase().split(":").slice(1).includes("online"))) ||
       (caller_token_limit !== null && (!isInt(caller_token_limit) || caller_token_limit < 1)) ||
       !object(generation) || Object.keys(generation).some(k => reserved.includes(k)) ||
       (provider === "ollama" && (!object(generation.options ?? {}) || has(generation.options ?? {}, "num_predict"))) ||
       (provider === "openai" && has(generation, "reasoning") && !object(generation.reasoning)) ||
       !isInt(ollama_calls_per_day) || ollama_calls_per_day < 1 || ollama_calls_per_day > 1000) fail(503, "invalid_provider_configuration");
-  const url = { meta: "https://api.meta.ai/v1/chat/completions", ollama: "https://ollama.com/api/chat", openai: "https://api.openai.com/v1/responses" }[provider];
-  const budget_usd = provider === "openai" ? openai_budget_usd : provider === "meta" ? meta_budget_usd : 0;
-  return { provider, model, max_output, reasoning_effort, meta_budget_usd, ollama_calls_per_day, openai_budget_usd, rates, generation, caller_token_limit, budget_usd, url };
+  const url = { meta: "https://api.meta.ai/v1/chat/completions", ollama: "https://ollama.com/api/chat", openai: "https://api.openai.com/v1/responses", anthropic: "https://api.anthropic.com/v1/messages", openrouter: "https://openrouter.ai/api/v1/chat/completions" }[provider];
+  const budget_usd = provider === "openrouter" ? openrouter_budget_usd : provider === "anthropic" ? anthropic_budget_usd : provider === "openai" ? openai_budget_usd : provider === "meta" ? meta_budget_usd : 0;
+  return { provider, model, max_output, reasoning_effort, meta_budget_usd, ollama_calls_per_day, openai_budget_usd, anthropic_budget_usd, anthropic_version, openrouter_budget_usd, openrouter_provider, rates, generation, caller_token_limit, budget_usd, url };
 }
 
 export function buildRequest(config, turn, contracts, history) {
@@ -145,12 +170,15 @@ export function buildRequest(config, turn, contracts, history) {
     ...history, { role: "user", content: turn.message }
   ];
   const body = { ...config.generation, model: config.model, stream: false };
-  if (config.provider === "openai") {
+  if (config.provider === "anthropic") {
+    Object.assign(body, { system: messages.filter(m => m.role === "system").map(m => m.content).join("\n"), messages: messages.filter(m => m.role !== "system"), tools: tools.map(tool => ({ name: tool.function.name, description: tool.function.description, input_schema: tool.function.parameters })), max_tokens: config.max_output });
+  } else if (config.provider === "openai") {
     Object.assign(body, { input: messages, tools: tools.map(tool => ({ type: "function", ...tool.function, strict: false })), store: false, background: false, parallel_tool_calls: false, max_output_tokens: config.max_output });
     if (config.reasoning_effort !== null) body.reasoning = { ...body.reasoning, effort: config.reasoning_effort };
   } else {
     Object.assign(body, { messages, tools });
-    if (config.provider === "meta") {
+    if (["meta", "openrouter"].includes(config.provider)) {
+      if (config.provider === "openrouter") body.provider = { only: [config.openrouter_provider], order: [config.openrouter_provider], allow_fallbacks: false, require_parameters: true, data_collection: "deny" };
       Object.assign(body, { max_tokens: config.max_output, parallel_tool_calls: false });
       if (config.reasoning_effort !== null) body.reasoning_effort = config.reasoning_effort;
     } else body.options = { ...body.options, num_predict: config.max_output };
@@ -169,12 +197,16 @@ export function blocked(code, reply = "The provider could not produce a valid ne
 
 export function parseProposal(reply, provider, contracts) {
   try {
-    if (provider === "openai") {
+    if (provider === "anthropic") {
+      if (reply.stop_reason === "max_tokens") return blocked("output_budget_exhausted");
+      if (reply.stop_reason !== "tool_use" || !Array.isArray(reply.content)) return blocked("invalid_tool_call");
+      reply = { message: { tool_calls: reply.content.filter(item => object(item) && item.type === "tool_use").map(item => ({ function: { name: item.name, arguments: item.input } })) } };
+    } else if (provider === "openai") {
       if (reply.status === "incomplete" && reply.incomplete_details?.reason === "max_output_tokens") return blocked("output_budget_exhausted");
       if (reply.status !== "completed" || !Array.isArray(reply.output)) return blocked("invalid_tool_call");
       reply = { message: { tool_calls: reply.output.filter(item => object(item) && item.type === "function_call").map(item => ({ function: item })) } };
     }
-    const choice = provider === "meta" ? reply.choices?.[0] : reply;
+    const choice = ["meta", "openrouter"].includes(provider) ? reply.choices?.[0] : reply;
     if (!object(choice)) return blocked("invalid_tool_call");
     if ((choice.finish_reason || choice.done_reason) === "length") return blocked("output_budget_exhausted");
     const calls = choice.message?.tool_calls;
@@ -196,15 +228,26 @@ export function parseProposal(reply, provider, contracts) {
   } catch { return blocked("invalid_tool_call"); }
 }
 
-export async function requestModel(env, config, body) {
-  const key = env[{ meta: "META_API_KEY", ollama: "OLLAMA_API_KEY", openai: "OPENAI_API_KEY" }[config.provider]];
+export async function requestModel(env, config, body, timeoutMs = 25000) {
+  const key = env[{ meta: "META_API_KEY", ollama: "OLLAMA_API_KEY", openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY", openrouter: "OPENROUTER_API_KEY" }[config.provider]];
   if (!key) fail(503, "provider_not_configured");
   const url = config.url;
+  const headers = config.provider === "anthropic" ? { "x-api-key": key, "anthropic-version": config.anthropic_version, "Content-Type": "application/json" } : { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" };
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 25000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { method: "POST", headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify(body), redirect: "manual", signal: controller.signal });
-    if (response.status !== 200) { await response.body?.cancel(); fail(502, response.status === 429 ? "provider_rate_limited" : "provider_rejected"); }
+    const response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), redirect: "manual", signal: controller.signal });
+    if (response.status !== 200) {
+      const code = response.status === 429 ? "provider_rate_limited" : [401, 403].includes(response.status) ? "provider_unauthorized" : response.status >= 500 ? "provider_unavailable" : "provider_rejected";
+      const error = new ConversationError(502, code);
+      error.http_status = response.status;
+      error.outcome = response.status >= 500 || response.status === 408 ? "unknown" : "rejected";
+      const rawRetry = response.headers.get("retry-after");
+      const retry = rawRetry && Number.isFinite(Number(rawRetry)) ? Number(rawRetry) : rawRetry ? Math.max(0, (Date.parse(rawRetry) - Date.now()) / 1000) : NaN;
+      error.retry_after_seconds = Number.isFinite(retry) && retry >= 0 ? retry : null;
+      error.diagnostics = await readProviderError(response);
+      throw error;
+    }
     const reader = response.body.getReader(), chunks = []; let size = 0;
     while (true) {
       const { done, value } = await reader.read(); if (done) break;
@@ -225,6 +268,6 @@ export async function requestModel(env, config, body) {
 
 export function usageFor(provider, reply) {
   const source = provider === "ollama" ? reply : reply.usage;
-  const fields = provider === "meta" ? ["prompt_tokens", "completion_tokens"] : provider === "openai" ? ["input_tokens", "output_tokens"] : ["prompt_eval_count", "eval_count"];
+  const fields = ["meta", "openrouter"].includes(provider) ? ["prompt_tokens", "completion_tokens"] : ["openai", "anthropic", "jev"].includes(provider) ? ["input_tokens", "output_tokens"] : ["prompt_eval_count", "eval_count"];
   return Object.fromEntries(["input_tokens", "output_tokens"].map((k, i) => [k, isInt(source?.[fields[i]]) ? source[fields[i]] : null]));
 }

@@ -198,12 +198,15 @@
         "herma/conversation.py",
         "herma/conversation_contracts.py",
         "herma/conversation_provider.py",
+        "herma/provider_diagnostics.py",
         "herma/conversation_state.py",
-        "herma/conversation_schema.py"
+        "herma/conversation_schema.py",
+        "herma/provider_plan.py",
+        "herma/decision_provider.py"
       ],
       "kind": "library",
       "domain": "neutral",
-      "role": "Caller-scoped typed proposals, canonical category binding, atomic turn and spend reservations, bounded Meta/Ollama calls; no action execution",
+      "role": "Caller-scoped typed proposals, explicit provider-plan nouns, per-attempt spend reservations and private attribution; native Muse/Ollama/OpenAI/Anthropic adapters and pure Jev worker wire preparation; no generated action execution",
       "depends_on": [
         "errors",
         "harness_gate",
@@ -211,7 +214,11 @@
         "store"
       ],
       "tests": [
-        "tests/test_conversation.py"
+        "tests/test_conversation.py",
+        "tests/test_provider_contracts.py",
+        "tests/test_provider_plan.py",
+        "tests/test_provider_diagnostics.py",
+        "tests/test_decision_provider.py"
       ]
     },
     {
@@ -240,6 +247,7 @@
         "deploy/cloudflare/wrangler.jsonc",
         "deploy/cloudflare/entry.js",
         "deploy/cloudflare/conversation.js",
+        "deploy/cloudflare/provider_diagnostics.js",
         "deploy/cloudflare/conversation_state.js",
         "deploy/cloudflare/conversation_data.json"
       ],
@@ -251,7 +259,8 @@
       ],
       "tests": [
         "tests/test_herma.py",
-        "test/conversation.test.js"
+        "test/conversation.test.js",
+        "test/provider_diagnostics.test.js"
       ]
     }
   ],

@@ -2,7 +2,7 @@ import { env, exports } from "cloudflare:workers";
 import { runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { WorkConversation } from "../deploy/cloudflare/conversation_state.js";
-import { hash, checkSchema, parseProposal, providerConfig, strictJson, buildRequest } from "../deploy/cloudflare/conversation.js";
+import { hash, checkSchema, parseProposal, providerConfig, strictJson, buildRequest, loadProviderPlan } from "../deploy/cloudflare/conversation.js";
 
 const contract = {
   operation_id: "record_observation", category_id: "noun.eval_run", description: "Record one SYNTHETIC capability observation.",
@@ -12,6 +12,11 @@ const entry = { entry_id: "work.observation", kind: "noun", title: "Observation"
 const turn = patch => ({ conversation_id: "conversation-one", request_id: "request-one", expected_version: 0, message: "SYNTHETIC hello", context_refs: [entry.entry_id], provider: "ollama", ...patch });
 const scope = () => "key:" + crypto.randomUUID();
 const caller = () => { const id = scope(); return { id, stub: env.WORK_CONVERSATIONS.getByName(id) }; };
+const providerPlan = (id, uncertain = false) => ({ entry_id: "plan.providers", kind: "noun", title: "Provider plan", summary: "SYNTHETIC private provider plan", _provider_plan_scope: id, schema_or_body: { provider_plan: {
+  caller_scope: id, purpose: "caller_requested_typed_proposal", payer: "operator", context_refs: [entry.entry_id], allow_failover: true, allow_uncertain_outcome: uncertain,
+  providers: [{ provider: "meta", model: "muse-spark-1.3" }, { provider: "ollama", model: "muse-spark-open" }]
+} } });
+const plannedTurn = patch => turn({ provider: "meta", provider_plan_ref: "plan.providers", context_refs: [entry.entry_id, "plan.providers"], ...patch });
 const http = (path, body, headers = {}) => exports.default.fetch("https://example.com" + path, { method: body === undefined ? "GET" : "POST", headers: { "Content-Type": "application/json", ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
 async function key(scopes = ["route", "configure"]) {
   const res = await http("/v1/admin/keys", { label: "SYNTHETIC test", harness_kind: "opencode", scopes }, { "X-Bootstrap-Secret": "synthetic-bootstrap-value" });
@@ -44,7 +49,7 @@ describe("typed conversation in the Workers runtime", () => {
     expect((await http("/v1/conversations/turn", turn(), { ...a, Cookie: "session=fixture" })).status).toBe(403);
   });
 
-  it.each(["ollama", "meta", "openai"])("clarifies then proposes typed data with %s and replays exactly", async provider => {
+  it.each(["ollama", "meta", "openai", "anthropic", "openrouter"])("clarifies then proposes typed data with %s and replays exactly", async provider => {
     const { id, stub } = caller();
     const first = await stub.turn(id, turn({ message: "hi", provider }), [entry]);
     expect(first.body.proposal.status).toBe("clarify");
@@ -56,10 +61,109 @@ describe("typed conversation in the Workers runtime", () => {
     expect(second.body.max_output_tokens).toBe(16384);
     expect(second.body.server_exception).toMatchObject({ purpose: "caller_requested_typed_proposal", principal: id, payer: "operator", retry_policy: "no_automatic_retry_or_provider_fallback" });
     expect(second.body.usage).toEqual({ input_tokens: 100, output_tokens: 50 });
+    expect(second.body.attempts[0]).toMatchObject({ upstream_http_status: 200, provider_diagnostics: null });
     expect(second.body.receipt_hash).toMatch(/^[a-f0-9]{64}$/);
+    if (provider === "openrouter") expect(second.body.attempts[0]).toMatchObject({ destination: "https://openrouter.ai/api/v1/chat/completions", routing_provider: "synthetic-host", reported_provider: "synthetic-host" });
     await runInDurableObject(stub, (_instance, state) => state.storage.sql.exec("UPDATE conversations SET history=?", JSON.stringify([{ role: "user", content: "x".repeat(40000) }])));
     expect(await stub.turn(id, input, [entry])).toEqual(second);
     expect((await stub.turn(id, { ...input, message: "different" }, [entry])).body.code).toBe("request_id_conflict");
+  });
+
+  it("rotates only through a scoped explicit plan and preserves private attempts and cooldown", async () => {
+    const { id, stub } = caller(), plan = providerPlan(id), input = plannedTurn({ message: "rotate-test" });
+    const result = await stub.turn(id, input, [entry, plan]);
+    expect(result.body.proposal.status).toBe("ready");
+    expect(result.body.attempts.map(a => [a.provider, a.outcome])).toEqual([["meta", "rejected"], ["ollama", "completed"]]);
+    expect(result.body.attempts[0].usage).toEqual({ input_tokens: null, output_tokens: null });
+    expect(result.body.attempts[0].reserved_usd).toBeGreaterThan(0);
+    expect(result.body.attempts[0]).toMatchObject({ upstream_http_status: 429, provider_diagnostics: { body_state: "malformed", reason: "unknown" } });
+    expect(await stub.turn(id, input, [entry, plan])).toEqual(result);
+    expect((await stub.snapshot(id, input.conversation_id)).body.attempts).toEqual(result.body.attempts);
+    expect((await stub.snapshot(scope(), input.conversation_id)).status).toBe(403);
+    const next = await stub.turn(id, plannedTurn({ message: "rotate-test", request_id: "request-next", expected_version: 1 }), [entry, plan]);
+    expect(next.body.attempts[0].error_code).toBe("provider_cooldown");
+    expect(next.body.attempts[0].reservation_status).toBe("not_reserved");
+    expect(next.body.attempts[1].outcome).toBe("completed");
+    expect(next.body.server_exception.actions.filter(a => a.action !== "provider_request").every(a => a.model === null && a.provider === null)).toBe(true);
+  });
+
+  it.each([false, true])("retains unknown charges and requires explicit unknown-outcome permission: %s", async uncertain => {
+    const { id, stub } = caller();
+    const result = await stub.turn(id, plannedTurn({ message: "unknown-rotate-test" }), [entry, providerPlan(id, uncertain)]);
+    expect(result.body.attempts).toHaveLength(uncertain ? 2 : 1);
+    expect(result.body.attempts[0].outcome).toBe("unknown");
+    expect(result.body.attempts[0].reserved_usd).toBeGreaterThan(0);
+    if (!uncertain) expect(result.body.error_code).toBe("provider_unavailable");
+  });
+
+  it("refuses plan scope, model, data and payer widening before provider attempts", async () => {
+    const { id, stub } = caller(), input = plannedTurn();
+    expect((await stub.turn(id, input, [entry, providerPlan(scope())])).body.code).toBe("provider_plan_not_authorized");
+    for (const patch of [{ payer: "someone_else" }, { context_refs: ["other.ref"] }, { providers: [{ provider: "meta", model: "unapproved-model" }] }]) {
+      const plan = providerPlan(id); Object.assign(plan.schema_or_body.provider_plan, patch);
+      expect((await stub.turn(id, input, [entry, plan])).body.code).toBe("provider_plan_not_authorized");
+    }
+    expect(() => loadProviderPlan({ ...env, HERMA_CONVERSATION_ALLOW_UNCERTAIN_FAILOVER: "false" }, id, input, [entry, providerPlan(id, true)])).toThrow("provider_plan_not_authorized");
+    expect((await stub.snapshot(id, input.conversation_id)).body.attempts).toEqual([]);
+  });
+
+  it("isolates provider-plan nouns and attempt records through authenticated HTTP", async () => {
+    const a = await key(), b = await key();
+    const id = "key:" + a.Authorization.split("hmk_")[1].split(".")[0];
+    const plan = providerPlan(id); delete plan._provider_plan_scope;
+    expect((await http("/v1/context", entry, a)).status).toBe(200);
+    expect((await http("/v1/context", entry, b)).status).toBe(200);
+    expect((await http("/v1/context", plan, a)).status).toBe(200);
+    const input = plannedTurn({ message: "rotate-test" });
+    const result = await http("/v1/conversations/turn", input, a);
+    expect((await result.json()).attempts).toHaveLength(2);
+    const denied = await http("/v1/conversations/turn", input, b);
+    expect(denied.status).toBe(403);
+    expect((await denied.json()).code).toBe("provider_plan_not_authorized");
+    expect((await (await http("/v1/conversations/conversation-one", undefined, b)).json()).attempts).toEqual([]);
+    expect((await (await http("/v1/conversations/conversation-one", undefined, a)).json()).attempts).toHaveLength(2);
+  });
+
+  it("stops before model dispatch when budget coordination fails, even with an uncertain-outcome grant", async () => {
+    const { id, stub } = caller();
+    await runInDurableObject(stub, async (_instance, state) => {
+      let reservations = 0;
+      const fresh = new WorkConversation(state, { ...env, WORK_REASONING_BUDGET: { getByName: () => ({ reserve: async () => { reservations++; throw new Error("SYNTHETIC storage unavailable"); } }) } });
+      const result = await fresh.turn(id, plannedTurn(), [entry, providerPlan(id, true)]);
+      expect(result.body.error_code).toBe("storage_or_coordination_unavailable");
+      expect(reservations).toBe(1);
+      expect(result.body.attempts).toHaveLength(1);
+      expect(result.body.server_exception.actions.some(action => action.action === "provider_request")).toBe(false);
+    });
+  });
+
+  it("does not charge coordination tokens against an exact caller allowance", async () => {
+    const probe = caller();
+    const first = await probe.stub.turn(probe.id, turn(), [entry]);
+    const limit = first.body.reserved_tokens, bounded = caller();
+    await runInDurableObject(bounded.stub, async (_instance, state) => {
+      const fresh = new WorkConversation(state, { ...env, HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR: String(limit) });
+      const result = await fresh.turn(bounded.id, turn(), [entry]);
+      expect(result.body.proposal.status).toBe("ready");
+      expect(result.body.reserved_tokens).toBe(limit);
+      expect(state.storage.sql.exec("SELECT SUM(tokens) AS n FROM budgets").one().n).toBe(limit);
+    });
+  });
+
+  it("releases caller tokens only for a definite provider-budget denial before failover", async () => {
+    const meta = caller(), ollama = caller();
+    const a = await meta.stub.turn(meta.id, turn({ provider: "meta" }), [entry]);
+    const b = await ollama.stub.turn(ollama.id, turn(), [entry]);
+    const limit = Math.max(a.body.reserved_tokens, b.body.reserved_tokens), target = caller();
+    await runInDurableObject(target.stub, async (_instance, state) => {
+      const fresh = new WorkConversation(state, { ...env, HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR: String(limit), WORK_REASONING_BUDGET: { getByName: () => ({ reserve: async (_id, provider) => provider === "meta" ? { ok: false, code: "provider_budget_exhausted" } : { ok: true } }) } });
+      const result = await fresh.turn(target.id, plannedTurn(), [entry, providerPlan(target.id)]);
+      expect(result.body.proposal.status).toBe("ready");
+      expect(result.body.attempts[0].reservation_status).toBe("denied");
+      expect(result.body.attempts[0].reserved_tokens).toBe(0);
+      expect(result.body.reserved_tokens).toBe(b.body.reserved_tokens);
+      expect(state.storage.sql.exec("SELECT SUM(tokens) AS n FROM budgets").one().n).toBe(result.body.reserved_tokens);
+    });
   });
 
   it("fences a 20-way race before provider calls and budget reservations", async () => {
@@ -100,6 +204,9 @@ describe("typed conversation in the Workers runtime", () => {
     expect(tokens).toBeGreaterThan(300000);
     expect(() => providerConfig({ HERMA_CONVERSATION_OPENAI_MODEL: "synthetic", HERMA_CONVERSATION_MAX_OUTPUT: "300000" }, "openai")).toThrow("invalid_provider_configuration");
     expect(() => providerConfig({ HERMA_CONVERSATION_MAX_OUTPUT: "300000", HERMA_CONVERSATION_OLLAMA_GENERATION: '{"options":{"num_predict":-1}}' }, "ollama")).toThrow("invalid_provider_configuration");
+    expect(() => providerConfig({ ...env, HERMA_CONVERSATION_OPENROUTER_GENERATION: '{"provider":{"allow_fallbacks":true}}' }, "openrouter")).toThrow("invalid_provider_configuration");
+    for (const model of ["openrouter/auto", "@preset/synthetic-review", "synthetic/model@preset/synthetic-review", "synthetic/model:online", "synthetic/model:free:online"]) expect(() => providerConfig({ ...env, HERMA_CONVERSATION_OPENROUTER_MODEL: model }, "openrouter")).toThrow("invalid_provider_configuration");
+    expect(() => providerConfig({ ...env, HERMA_CONVERSATION_OPENROUTER_GENERATION: '{"preset":"@preset/review"}' }, "openrouter")).toThrow("invalid_provider_configuration");
   });
 
   it.each([
@@ -115,6 +222,25 @@ describe("typed conversation in the Workers runtime", () => {
     expect(result.body.executed).toBe(false);
     expect(JSON.stringify(result)).not.toContain("private upstream body");
     expect(await stub.turn(id, input, [entry])).toEqual(result);
+  });
+
+  it.each([
+    ["diagnostic-parameter", 400, "unsupported_parameter"],
+    ["diagnostic-credit", 400, "credit_or_quota_exhausted"],
+    ["diagnostic-model", 404, "model_unavailable"],
+    ["diagnostic-unknown", 503, "unknown"]
+  ])("persists only bounded %s diagnostics, preserving usage, reservation and replay", async (message, status, reason) => {
+    const { id, stub } = caller(), input = turn({ message, provider: "openai" });
+    const result = await stub.turn(id, input, [entry]), attempt = result.body.attempts[0];
+    expect(result.body.error_code).toBe(status === 503 ? "provider_unavailable" : "provider_rejected");
+    expect(attempt).toMatchObject({ upstream_http_status: status, outcome: status === 503 ? "unknown" : "rejected", reservation_status: "reserved", usage: { input_tokens: null, output_tokens: null }, provider_diagnostics: { source: "provider_reported", body_state: "parsed", reason } });
+    expect(attempt.reserved_usd).toBeGreaterThan(0);
+    expect(await stub.turn(id, input, [entry])).toEqual(result);
+    expect((await stub.snapshot(id, input.conversation_id)).body.attempts).toEqual(result.body.attempts);
+    expect((await stub.snapshot(scope(), input.conversation_id)).status).toBe(403);
+    const raw = JSON.stringify(result);
+    for (const value of ["sk-" + "synthetic".repeat(8), "acct_synthetic_private", "req_synthetic_private", "metadata"]) expect(raw).not.toContain(value);
+    if (reason === "unknown") expect(attempt.provider_diagnostics).toMatchObject({ type: null, code: null, parameter: null });
   });
 
   it("reconstructs from SQLite and seals an uncertain turn without another provider call", async () => {
