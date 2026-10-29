@@ -23,14 +23,14 @@ export class WorkReasoningBudget extends DurableObject {
 
   reserve(id, provider, fingerprint, microusd) {
     const config = providerConfig(this.env, provider);
-    if (!/^[a-f0-9]{64}$/.test(id) || !/^[a-f0-9]{64}$/.test(fingerprint) || !Number.isSafeInteger(microusd) || microusd < 0 || microusd > 1000000) return { ok: false, code: "invalid_budget_reservation" };
+    if (!/^[a-f0-9]{64}$/.test(id) || !/^[a-f0-9]{64}$/.test(fingerprint) || !Number.isSafeInteger(microusd) || microusd < 0) return { ok: false, code: "invalid_budget_reservation" };
     return this.ctx.storage.transactionSync(() => {
       const sql = this.ctx.storage.sql;
       const prior = first(sql, "SELECT * FROM reservations WHERE id=?", id);
       if (prior) return { ok: prior.provider === provider && prior.fingerprint === fingerprint && prior.microusd === microusd, code: "reservation_replay" };
       const day = Math.floor(Date.now() / DAY);
       const total = first(sql, "SELECT microusd FROM totals WHERE provider=?", provider)?.microusd || 0;
-      if (provider === "meta" && total + microusd > Math.floor(config.meta_budget_usd * 1000000)) return { ok: false, code: "provider_budget_exhausted" };
+      if (provider !== "ollama" && total + microusd > Math.floor(config.budget_usd * 1000000)) return { ok: false, code: "provider_budget_exhausted" };
       if (provider === "ollama" && first(sql, "SELECT COUNT(*) AS n FROM reservations WHERE provider=? AND day=?", provider, day).n >= config.ollama_calls_per_day) return { ok: false, code: "provider_call_budget_exhausted" };
       sql.exec("INSERT INTO reservations VALUES (?,?,?,?,?)", id, provider, fingerprint, microusd, day);
       sql.exec("INSERT INTO totals VALUES (?,?) ON CONFLICT(provider) DO UPDATE SET microusd=microusd+excluded.microusd", provider, microusd);
@@ -86,7 +86,7 @@ export class WorkConversation extends DurableObject {
     return JSON.parse(previous.response);
   }
 
-  #reserve(turn, fingerprint, contractHash, tokens, base) {
+  #reserve(turn, fingerprint, contractHash, tokens, base, config) {
     return this.ctx.storage.transactionSync(() => {
       const replay = this.#replay(turn, fingerprint);
       if (replay) return replay;
@@ -97,7 +97,7 @@ export class WorkConversation extends DurableObject {
       if (row && row.contract_hash !== contractHash) fail(409, "contract_changed");
       if (first(sql, "SELECT COUNT(*) AS n FROM conversations WHERE active IS NOT NULL").n >= 2) fail(429, "active_turn_limit");
       const budget = first(sql, "SELECT * FROM budgets WHERE hour=?", hour);
-      if ((budget?.turns || 0) >= 60 || (budget?.tokens || 0) + tokens > 200000) fail(429, "conversation_budget_exhausted");
+      if ((budget?.turns || 0) >= 60 || (config.caller_token_limit !== null && (budget?.tokens || 0) + tokens > config.caller_token_limit)) fail(429, "conversation_budget_exhausted");
       if (!row && first(sql, "SELECT COUNT(*) AS n FROM conversations").n >= 10000) fail(429, "conversation_storage_limit");
       if (!row) sql.exec("INSERT INTO conversations VALUES (?,0,NULL,'[]',?,?)", turn.conversation_id, contractHash, now);
       const updated = rows(sql, "UPDATE conversations SET version=version+1,active=? WHERE id=? AND version=? AND active IS NULL RETURNING version", turn.request_id, turn.conversation_id, turn.expected_version);
@@ -146,13 +146,17 @@ export class WorkConversation extends DurableObject {
       const { body, tokens, microusd } = buildRequest(config, turn, contracts, current ? JSON.parse(current.history) : []);
       const base = { conversation_id: turn.conversation_id, request_id: turn.request_id, version: turn.expected_version + 1,
         caller_scope: scope, contract_hash: contractHash, context_refs: turn.context_refs, provider: turn.provider, model: config.model,
-        reasoning_effort: turn.provider === "meta" ? config.reasoning_effort : null, max_output_tokens: config.max_output,
+        reasoning_effort: turn.provider !== "ollama" ? config.reasoning_effort : null, max_output_tokens: config.max_output,
         usage: { input_tokens: null, output_tokens: null }, cost_usd: null,
         cost_reason: "Provider invoice unavailable; reservations are conservative ceilings, not charges.",
         reserved_tokens: tokens, reserved_usd: null, reservation_status: "pending",
-        reservation_ceiling_usd: turn.provider === "meta" ? microusd / 1000000 : null,
+        reservation_ceiling_usd: turn.provider !== "ollama" ? microusd / 1000000 : null,
+        server_exception: { purpose: "caller_requested_typed_proposal", worker_path_reason: "Caller explicitly selected the interactive server capability.", principal: scope,
+          data_scope: { caller_scope: scope, context_refs: turn.context_refs, conversation_id: turn.conversation_id }, effects: "proposal_only", payer: "operator",
+          provider: config.provider, destination: config.url, max_output_tokens: config.max_output, reserved_tokens: tokens,
+          reservation_ceiling_usd: turn.provider !== "ollama" ? microusd / 1000000 : null, timeout_seconds: 25, deadline_policy: "timeout_from_provider_dispatch", retry_policy: "no_automatic_retry_or_provider_fallback" },
         latency_ms: null, error_code: null, executed: false, persisted: true };
-      const concurrentReplay = this.#reserve(turn, fingerprint, contractHash, tokens, base);
+      const concurrentReplay = this.#reserve(turn, fingerprint, contractHash, tokens, base, config);
       if (concurrentReplay) return { status: responseStatus(concurrentReplay), body: concurrentReplay };
       await this.#schedule();
       const started = Date.now(); let reply = {}, proposal, errorCode = null;
@@ -160,7 +164,7 @@ export class WorkConversation extends DurableObject {
         const reservationId = await hash({ scope, conversation: turn.conversation_id, request: turn.request_id });
         const reservation = await this.env.WORK_REASONING_BUDGET.getByName("provider-allowance-v1").reserve(reservationId, turn.provider, fingerprint, microusd);
         base.reservation_status = reservation.ok ? "reserved" : "denied";
-        base.reserved_usd = turn.provider === "meta" ? (reservation.ok ? microusd / 1000000 : 0) : null;
+        base.reserved_usd = turn.provider !== "ollama" ? (reservation.ok ? microusd / 1000000 : 0) : null;
         this.ctx.storage.sql.exec("UPDATE turns SET base=? WHERE conversation=? AND request=? AND response IS NULL", JSON.stringify(base), turn.conversation_id, turn.request_id);
         if (!reservation.ok) fail(429, reservation.code);
         reply = await requestModel(this.env, config, body);

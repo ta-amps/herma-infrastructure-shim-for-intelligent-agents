@@ -37,6 +37,12 @@ class ConversationState:
                 CREATE TABLE IF NOT EXISTS work_provider_budget (
                     provider TEXT PRIMARY KEY, reserved_microusd INTEGER NOT NULL);
             """)
+            conn.execute("BEGIN IMMEDIATE")
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(work_turns)")}
+            if "exception_record" not in columns:
+                conn.execute(
+                    "ALTER TABLE work_turns ADD COLUMN exception_record TEXT NOT NULL DEFAULT '{}'"
+                )
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -91,13 +97,19 @@ class ConversationState:
         fingerprint: str,
         contract_hash: str,
         tokens: int,
-        token_limit: int = 200000,
+        token_limit: int | None = None,
         turn_limit: int = 60,
         provider: str = "ollama",
         reserve_microusd: int = 0,
         budget_microusd: int = 0,
+        exception_record: dict[str, Any] | None = None,
     ) -> tuple[int, dict[str, Any] | None]:
-        if tokens < 1 or token_limit < 1 or turn_limit < 1 or reserve_microusd < 0:
+        if (
+            tokens < 1
+            or (token_limit is not None and token_limit < 1)
+            or turn_limit < 1
+            or reserve_microusd < 0
+        ):
             raise ValueError("invalid budget reservation")
         now = time.time()
         hour = int(now // 3600)
@@ -142,7 +154,8 @@ class ConversationState:
                 "SELECT * FROM work_budgets WHERE scope=? AND hour=?", (scope, hour)
             ).fetchone()
             if budget and (
-                budget["turns"] >= turn_limit or budget["reserved_tokens"] + tokens > token_limit
+                budget["turns"] >= turn_limit
+                or (token_limit is not None and budget["reserved_tokens"] + tokens > token_limit)
             ):
                 raise HermaError(
                     429,
@@ -150,7 +163,7 @@ class ConversationState:
                     "Conversation budget exhausted",
                     "Wait for the caller's next hourly budget.",
                 )
-            if tokens > token_limit:
+            if token_limit is not None and tokens > token_limit:
                 raise HermaError(
                     413,
                     "context_too_large",
@@ -187,8 +200,15 @@ class ConversationState:
             if updated.rowcount != 1:
                 raise conflict("version_conflict", "Another turn won the version update.")
             conn.execute(
-                "INSERT INTO work_turns VALUES (?,?,?,?,NULL,?)",
-                (scope, conversation, request, fingerprint, expected + 1),
+                "INSERT INTO work_turns (scope,conversation,request,fingerprint,response,version,exception_record) VALUES (?,?,?,?,NULL,?,?)",
+                (
+                    scope,
+                    conversation,
+                    request,
+                    fingerprint,
+                    expected + 1,
+                    json.dumps(exception_record or {}, allow_nan=False),
+                ),
             )
         return expected + 1, None
 

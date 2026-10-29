@@ -1,8 +1,35 @@
 # Worker-first execution and private work
 
-Architecture direction adopted October 28, 2026. This policy describes required design and migration checks. It does not certify that every current endpoint or worker already implements them.
+Architecture direction adopted October 28, 2026, clarified October 29. This policy describes required design and migration checks. It does not certify that every current endpoint or worker already implements them.
 
-Agentic work should normally be a **verb that an authorized worker claims**. A noun holds versioned input, context, an artifact or evidence. Workers reason, act, check and repair. The server coordinates identity, discovery, leases, storage, validation and receipts without autonomous model calls on the normal path.
+Independently schedulable agentic work must be a **verb that an authorized worker claims**, unless an explicit server exception applies. A noun holds versioned input, context, code, a tool, a model, a recipe, an artifact or evidence. Workers reason, act, check and repair. The server coordinates identity, discovery, leases, storage, validation and receipts without autonomous model calls on the normal path.
+
+## Projects, nouns and verbs
+
+Use three concepts to explain the system. A **project** is a public surface and
+scoped purpose that organizes **nouns** and **verbs**. Its definition, configuration
+and profile can use existing noun records. A project is not a new queue, storage
+or permission authority. Packs distribute reusable nouns and verb templates;
+their repositories and showcase pages do not become independent agent runtimes.
+
+Every new capability must identify its nouns, independently schedulable verbs,
+existing lifecycle owner and any server exception. Reject an implementation
+that hides ordinary domain reasoning inside a server handler, creates a competing
+task authority or lets a pack activate itself. Keep deterministic libraries and
+compatibility endpoints when they serve workers; packaging is not a reason to
+delete tested code or make every helper function a task.
+
+Deterministic infrastructure and essential management can remain server-side:
+identity, storage, leases, accounting, credentials, authorized provisioning,
+scheduling and recovery. They retain their own authority and audit requirements.
+Schedules may enqueue already-authorized work. Calling domain reasoning private,
+urgent or management does not create an exception. Model use by a management
+service must satisfy the explicit inference rules below.
+
+Enforce the boundary in owning tests: reject implicit model fallback, unauthorized
+effects and invalid contracts; prove that exporting a seed pack performs no
+network, enqueue, installation or activation work. Documentation inventories and
+tests of fixtures do not establish universal runtime coverage.
 
 Private, management and infrastructure work can use the same pattern through private workers. A worker can run in a customer harness, an operator environment or an approved cloud service. Its location does not determine its permissions, model provider or payer. Moving work to an operator-owned worker does not make its inference or hosting free.
 
@@ -132,3 +159,5 @@ Temporal similarly separates durable activity lifecycle coordination from tasks 
 Keep deterministic context previews and caller-requested proxy traffic distinct from optional server reasoning. Typed conversations propose actions with executed:false. Prefer a worker for planning, clarification and review; a fresh server conversation turn still consumes provider allowance when enabled.
 
 The policy preserves this product's existing scope, public identity and access rules. Unimplemented routing, private worker provisioning and exception enforcement remain engineering work until their owning checks pass.
+
+Typed conversations now record their explicit server exception in the existing turn receipt before inference. Optional configured micromodel/embedding routing and legacy agent demo model calls remain separate migration and exception-audit work. Those paths are not certified by the conversation tests.

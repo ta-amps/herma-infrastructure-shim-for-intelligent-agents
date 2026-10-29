@@ -2,7 +2,7 @@ import { env, exports } from "cloudflare:workers";
 import { runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { WorkConversation } from "../deploy/cloudflare/conversation_state.js";
-import { hash, checkSchema, parseProposal, providerConfig, strictJson } from "../deploy/cloudflare/conversation.js";
+import { hash, checkSchema, parseProposal, providerConfig, strictJson, buildRequest } from "../deploy/cloudflare/conversation.js";
 
 const contract = {
   operation_id: "record_observation", category_id: "noun.eval_run", description: "Record one SYNTHETIC capability observation.",
@@ -44,7 +44,7 @@ describe("typed conversation in the Workers runtime", () => {
     expect((await http("/v1/conversations/turn", turn(), { ...a, Cookie: "session=fixture" })).status).toBe(403);
   });
 
-  it.each(["ollama", "meta"])("clarifies then proposes typed data with %s and replays exactly", async provider => {
+  it.each(["ollama", "meta", "openai"])("clarifies then proposes typed data with %s and replays exactly", async provider => {
     const { id, stub } = caller();
     const first = await stub.turn(id, turn({ message: "hi", provider }), [entry]);
     expect(first.body.proposal.status).toBe("clarify");
@@ -53,6 +53,8 @@ describe("typed conversation in the Workers runtime", () => {
     expect(second.body.proposal.status).toBe("ready");
     expect(second.body.proposal.arguments.value.synthetic).toBe(true);
     expect(second.body.executed).toBe(false);
+    expect(second.body.max_output_tokens).toBe(16384);
+    expect(second.body.server_exception).toMatchObject({ purpose: "caller_requested_typed_proposal", principal: id, payer: "operator", retry_policy: "no_automatic_retry_or_provider_fallback" });
     expect(second.body.usage).toEqual({ input_tokens: 100, output_tokens: 50 });
     expect(second.body.receipt_hash).toMatch(/^[a-f0-9]{64}$/);
     await runInDurableObject(stub, (_instance, state) => state.storage.sql.exec("UPDATE conversations SET history=?", JSON.stringify([{ role: "user", content: "x".repeat(40000) }])));
@@ -76,6 +78,28 @@ describe("typed conversation in the Workers runtime", () => {
     const requests = await Promise.all(Array.from({ length: 20 }, async (_, i) => { const id = await hash({ i }); return stub.reserve(id, "meta", id, 1000000); }));
     expect(requests.filter(x => x.ok)).toHaveLength(1);
     expect(requests.filter(x => x.code === "provider_budget_exhausted")).toHaveLength(19);
+  });
+
+  it("reserves OpenAI independently and rejects overspending without provider calls", async () => {
+    const stub = env.WORK_REASONING_BUDGET.getByName(crypto.randomUUID());
+    const id = await hash({ provider: "openai" });
+    expect((await stub.reserve(id, "openai", id, 1000001)).code).toBe("provider_budget_exhausted");
+    expect((await stub.summary()).reservations).toEqual([]);
+    expect((await stub.reserve(id, "openai", id, 1000000)).ok).toBe(true);
+    expect((await stub.reserve(id, "openai", id, 1000000)).ok).toBe(true);
+    expect((await stub.summary()).reservations).toEqual([{ provider: "openai", reserved_microusd: 1000000 }]);
+  });
+
+  it("requires explicit output allowance and preserves large native provider settings", () => {
+    expect(() => providerConfig({}, "ollama")).toThrow("output_allowance_required");
+    const config = providerConfig({ HERMA_CONVERSATION_OLLAMA_MAX_OUTPUT: "300000", HERMA_CONVERSATION_OLLAMA_GENERATION: '{"think":true,"options":{"num_ctx":524288,"temperature":0.4}}' }, "ollama");
+    const { body, tokens } = buildRequest(config, turn(), [], []);
+    expect(body.options).toEqual({ num_predict: 300000, num_ctx: 524288, temperature: 0.4 });
+    expect(body.think).toBe(true);
+    expect(config.caller_token_limit).toBe(null);
+    expect(tokens).toBeGreaterThan(300000);
+    expect(() => providerConfig({ HERMA_CONVERSATION_OPENAI_MODEL: "synthetic", HERMA_CONVERSATION_MAX_OUTPUT: "300000" }, "openai")).toThrow("invalid_provider_configuration");
+    expect(() => providerConfig({ HERMA_CONVERSATION_MAX_OUTPUT: "300000", HERMA_CONVERSATION_OLLAMA_GENERATION: '{"options":{"num_predict":-1}}' }, "ollama")).toThrow("invalid_provider_configuration");
   });
 
   it.each([

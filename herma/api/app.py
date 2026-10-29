@@ -930,7 +930,7 @@ def create_app() -> FastAPI:
                 "snapshot_endpoint": "/v1/conversations/{id}",
                 "credential": "hmk_",
                 "scope": "route",
-                "providers": ["meta", "ollama"],
+                "providers": ["meta", "ollama", "openai"],
                 "executed": False,
                 "context": "Caller-visible context entries containing typed work_contract schemas.",
                 "documentation": "https://github.com/ta-amps/herma/blob/t/H15-work-conversation/docs/conversations.md",
