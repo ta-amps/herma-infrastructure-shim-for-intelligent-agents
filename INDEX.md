@@ -47,7 +47,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/fly/Dockerfile](deploy/fly/Dockerfile) |  |
 | [deploy/fly/fly.toml](deploy/fly/fly.toml) |  |
 
-## docs/ (11)
+## docs/ (12)
 
 | File | What it is |
 |---|---|
@@ -58,6 +58,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [docs/conversations.md](docs/conversations.md) | Typed work conversations |
 | [docs/design-and-evidence.md](docs/design-and-evidence.md) | Design decisions and measured limits |
 | [docs/evidence/conversation-observations.json](docs/evidence/conversation-observations.json) | JSON object: schema_version, observed_date, scope, provider_credentials, runs, source_run_fingerprint |
+| [docs/evidence/native-hosted-observation.json](docs/evidence/native-hosted-observation.json) | JSON object: schema_version, observed_date, harness, provider, model, mode |
 | [docs/handoff.md](docs/handoff.md) | Handoff & Status |
 | [docs/harnesses.md](docs/harnesses.md) | Connecting Configurable Agentic Coding Harnesses |
 | [docs/setup.md](docs/setup.md) | Setup, Context Database, Backing Stores & Cloudflare Deployment |

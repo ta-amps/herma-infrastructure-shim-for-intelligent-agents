@@ -1,5 +1,9 @@
 # Herma
 
+The default agentic executor is the worker's own harness holding a Tessera verb.
+Inputs, contracts, artifacts and evidence remain scoped nouns. Herma supplies
+configured context when useful; server model turns are explicit bounded exceptions.
+
 Optional [typed work conversations](docs/conversations.md) let authenticated harnesses ask for clarification and receive one schema-checked noun/verb proposal at a time. Meta and Ollama calls use server credentials, durable budget reservations and caller-scoped state. A proposal is never executed by the conversation endpoint.
 
 Read the [design decisions and experiment results](docs/design-and-evidence.md)

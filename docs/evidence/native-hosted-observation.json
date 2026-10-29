@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "observed_date": "2026-10-28",
+  "harness": "OpenCode 2.1.2",
+  "provider": "Ollama Cloud",
+  "model": "muse-spark-open",
+  "mode": "anonymous",
+  "passed": true,
+  "scope": "One native hosted full-loop run with independent Tessera HTTP record, task, receipt and audit verification; not reliability certification.",
+  "native_calls": [
+    "tessera_whoami",
+    "tessera_search_nouns",
+    "tessera_list_verbs",
+    "tessera_claim",
+    "tessera_heartbeat",
+    "tessera_put_record",
+    "tessera_get_record",
+    "tessera_submit",
+    "tessera_my_audit"
+  ],
+  "native_event_counts": {
+    "step_start": 10,
+    "tool_use": 9,
+    "step_finish": 9,
+    "text": 1
+  },
+  "receipt_sha256": "56acc877e7179846d48360cb07f6ce2f8c04eb24c9a9d7bb5f2627a8d46b14d2",
+  "run_fingerprint": "ed42b6358378e091e7b68d9d8b69314841876271552ee2970aadea25ce4f9d12",
+  "artifact_sha256": "db4169ac227fda88d5b83ae0f40e98768d820278281946f725f2b56c8bbd9154",
+  "server_llm_review_calls": 0,
+  "provider_cost_usd": null,
+  "cost_reason": "Ollama subscription use has no trusted per-run invoice price.",
+  "independent_artifact_review": null,
+  "public_catalog_promotion": false,
+  "retained_negative_controls": [
+    "Attempt 1 stopped before inference on HTTP recorder bug; corrected get_method logging.",
+    "Attempt 2 stopped before inference on overly literal resolved-policy comparison; semantically equivalent deny-first policy verified with 18 offline regressions."
+  ],
+  "remaining": [
+    "Keyed native full loop",
+    "Native Muse hosted full loop",
+    "Repeated-run reliability",
+    "Grokbot and Muse.ai",
+    "Independent shared-catalog admission"
+  ]
+}
