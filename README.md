@@ -14,7 +14,7 @@ Operator-funded conversation providers can be paused independently of worker-own
 providers. Shared cooldowns follow provider retry guidance and admit one funded
 recovery request after a limit; see [provider availability](docs/conversations.md#operator-availability-and-automatic-backpressure).
 
-Optional [typed work conversations](docs/conversations.md) let authenticated harnesses ask for clarification and receive one schema-checked noun/verb proposal at a time. Muse, Ollama Cloud, OpenAI, Anthropic and OpenRouter use explicit provider protocols, server credentials, output allowances, durable budget reservations and caller-scoped state. An optional private provider-plan noun permits controlled failover. The existing turn receipt records every attempt and its server exception. A proposed domain action is never executed by the conversation endpoint.
+Optional [typed work conversations](docs/conversations.md) let authenticated harnesses ask for clarification and receive one schema-checked noun/verb proposal at a time. Muse, Ollama Cloud, OpenAI, Anthropic and OpenRouter use explicit provider protocols, server credentials, output allowances, durable budget reservations and caller-scoped state. Each operator-funded turn needs the caller's own [operator grant](docs/conversations.md#operator-grants-per-caller). An optional private provider-plan noun permits controlled failover; it can't reach one upstream model through two credentials. The existing turn receipt records every attempt and its server exception. A proposed domain action is never executed by the conversation endpoint.
 
 Workers may use their own local or cloud providers through the ordinary shim.
 Herma preserves native generation settings without imposing a response-token
@@ -58,7 +58,7 @@ Herma accepts coding harnesses and personal assistants that can send explicit sc
 - Recognized harness identifiers: `muse-code`, `opencode`, `claude-code`, `codex`, `swarm-worker`, `custom-harness`. An identifier is not a certification of every client; see the [measured attempt matrix](docs/design-and-evidence.md).
 - Multi-caller non-poisoning: starter guardrails live in protected `system_builtin` (`403 builtin_protected` for non-admins), while custom rules, context entries, receipts, entity memory, and outcomes are strictly partitioned by `caller_scope = key:<key_id>`.
 - Personal assistants may use the same scoped `hmk_` keys. Browser navigation and cookie authentication remain refused; model routing and configuration require explicit credentials.
-- Contributor-tier models (`contributor` and `*-contributor`) are deterministically refused (`HTTP 403 contributor_tier_refused`).
+- Contributor-tier models (any model ID containing `contributor`, such as `*-contributor`) are deterministically refused (`HTTP 403 contributor_tier_refused`).
 - AI-agent discovery & preview: serves `POST /api/preview` (`persisted: false`), `POST /mcp` (stateless JSON-RPC 2.0), `/.well-known/agent-card.json`, `/llms.txt`, `/llms-full.txt`, `/robots.txt`, and `/healthz`.
 
 ## Quick Start

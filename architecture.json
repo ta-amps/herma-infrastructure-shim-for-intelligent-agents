@@ -61,7 +61,7 @@
       "path": "herma/harness_gate.py",
       "kind": "library",
       "domain": "neutral",
-      "role": "Verifies constant-time hmk_ secrets, enforces route/configure/admin scopes, allows credentialed personal assistants, and blocks contributor and -contributor models",
+      "role": "Verifies constant-time hmk_ secrets, enforces route/configure/admin scopes, allows credentialed personal assistants, and blocks every model ID containing contributor",
       "depends_on": [
         "errors",
         "schemas"
@@ -208,7 +208,7 @@
       ],
       "kind": "library",
       "domain": "neutral",
-      "role": "Caller-scoped typed proposals, explicit provider-plan nouns, per-attempt spend reservations and private attribution; native Muse/Ollama/OpenAI/Anthropic adapters and pure Jev worker wire preparation; no generated action execution",
+      "role": "Caller-scoped typed proposals, per-caller operator grants, explicit provider-plan nouns with one upstream model identity per route, per-attempt spend reservations in exact microdollars and private attribution; native Muse/Ollama/OpenAI/Anthropic adapters and pure Jev worker wire preparation; no generated action execution",
       "depends_on": [
         "errors",
         "harness_gate",
@@ -221,7 +221,11 @@
         "tests/test_provider_plan.py",
         "tests/test_provider_diagnostics.py",
         "tests/test_provider_health.py",
-        "tests/test_decision_provider.py"
+        "tests/test_decision_provider.py",
+        "tests/test_provider_accounting.py",
+        "tests/test_provider_grants.py",
+        "tests/test_conversation_storage.py",
+        "tests/test_runtime_parity.py"
       ]
     },
     {
@@ -265,7 +269,8 @@
         "tests/test_herma.py",
         "test/conversation.test.js",
         "test/provider_diagnostics.test.js",
-        "test/provider_health.test.js"
+        "test/provider_health.test.js",
+        "test/provider_grants.test.js"
       ]
     }
   ],
@@ -290,12 +295,13 @@
     },
     {
       "id": "H03",
-      "statement": "Contributor-tier models (contributor and -contributor) are refused across outbound LLM payloads and micromodel trigger classifiers before offline fallback",
+      "statement": "Contributor-tier models (any model ID containing contributor, including -contributor) are refused across outbound LLM payloads, micromodel trigger classifiers, provider plans and operator grants before offline fallback",
       "enforced_by": "harness_gate",
       "checked_by": [
         "tests/test_triggers.py::test_tier3_micromodel_classifier_and_contributor_refusal",
         "tests/test_api_and_proxy.py::test_http_edge_lockdown_and_dry_run_across_wire_formats",
-        "tests/test_herma.py::test_governance_lens_blob_sha256_integrity_and_contributor_offline_refusal"
+        "tests/test_herma.py::test_governance_lens_blob_sha256_integrity_and_contributor_offline_refusal",
+        "tests/test_provider_grants.py::test_contributor_models_are_refused_in_plans_grants_and_configuration"
       ]
     },
     {
@@ -400,6 +406,18 @@
         "tests/test_triggers.py::test_offline_engine_blocks_all_provider_calls",
         "tests/test_api_and_proxy.py::test_preview_and_dry_run_never_call_configured_trigger_providers",
         "test/triggers.test.js"
+      ]
+    },
+    {
+      "id": "H17",
+      "statement": "Operator-funded conversation turns require the caller's own exact provider/model grant; uncertain-outcome failover requires that caller's grant plus the plan opt-in; one upstream model identity is reachable through one route per plan and is held against other routes during its rate or quota limit",
+      "enforced_by": "conversation",
+      "checked_by": [
+        "tests/test_provider_grants.py::test_direct_turns_need_the_callers_own_exact_grant",
+        "tests/test_provider_grants.py::test_uncertainty_grant_defaults_off_and_a_plan_cannot_supply_it",
+        "tests/test_provider_grants.py::test_plans_refuse_a_second_credential_for_the_same_upstream_model",
+        "tests/test_provider_grants.py::test_rate_limit_holds_the_upstream_model_against_other_credentials",
+        "test/provider_grants.test.js"
       ]
     }
   ],
