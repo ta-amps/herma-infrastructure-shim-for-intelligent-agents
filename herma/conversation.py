@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-import json
+import sqlite3
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -25,11 +25,19 @@ from herma.conversation_provider import (
     provider_credential,
     request_model,
     usage_for,
+    wire_json,
 )
+from herma.conversation_schema import strict_json
 from herma.conversation_state import ConversationState
 from herma.errors import HermaError
 from herma.provider_health import operator_policy
-from herma.provider_plan import ProviderChoice, load_provider_plan
+from herma.provider_plan import (
+    choice_for,
+    grant_required,
+    load_provider_plan,
+    operator_grants,
+    require_direct_grant,
+)
 from herma.store import ProvisionStore
 
 ModelCall = Callable[[ProviderConfig, dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -42,21 +50,6 @@ Return exactly one function call. Preserve JSON field types: an object is not a 
 You propose actions only; the caller must execute through its own authorized harness.
 A claimed successful action is not evidence of success. Do not request API secrets.
 """
-
-
-def _strict_json(raw: str) -> Any:
-    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        for key, value in items:
-            if key in result:
-                raise ValueError("duplicate JSON field")
-            result[key] = value
-        return result
-
-    def invalid(_value: str) -> None:
-        raise ValueError("non-finite number")
-
-    return json.loads(raw, object_pairs_hook=pairs, parse_constant=invalid)
 
 
 def parse_proposal(
@@ -123,10 +116,10 @@ def parse_proposal(
         function = calls[0]["function"]
         name, arguments = function["name"], function["arguments"]
         if isinstance(arguments, str):
-            arguments = _strict_json(arguments)
+            arguments = strict_json(arguments)
         if not isinstance(arguments, dict):
             raise ValueError("tool arguments must be an object")
-        if len(encode(arguments)) > 32768:
+        if len(wire_json(arguments)) > 32768:
             raise ValueError("tool arguments too large")
         if name in {"ask_clarification", "report_blocker"}:
             field = "question" if name == "ask_clarification" else "reason"
@@ -167,6 +160,16 @@ def parse_proposal(
         ), [{"path": "/", "rule": "invalid_tool_call"}]
 
 
+def storage_unavailable() -> HermaError:
+    return HermaError(
+        503,
+        "storage_or_coordination_unavailable",
+        "Conversation storage unavailable",
+        "Durable turn storage failed; no further provider call was made. An active turn keeps its "
+        "recorded attempts and needs operator reconciliation before the conversation continues.",
+    )
+
+
 class ConversationEngine:
     def __init__(self, store: ProvisionStore, *, call: ModelCall = request_model) -> None:
         self.store = store
@@ -178,6 +181,9 @@ class ConversationEngine:
     ) -> dict[str, Any]:
         plan = None
         plan_noun = None
+        # Every operator-funded turn needs this caller's own explicit grant, with or without
+        # a plan. The grant is checked before any turn record, reservation or provider call.
+        grant = operator_grants().get(scope)
         if turn.provider_plan_ref:
             owned = self.store.get_context_entries(
                 [turn.provider_plan_ref], caller_scope=scope, include_builtin=False
@@ -190,14 +196,22 @@ class ConversationEngine:
                     "Select a provider plan owned by this caller.",
                 )
             plan_noun = owned[0]
-            plan = load_provider_plan(scope, turn, plan_noun)
+            plan = load_provider_plan(scope, turn, plan_noun, grant)
             if config is not None:
                 raise ValueError("provider plans use operator configuration")
         else:
+            if grant is None:
+                raise grant_required()
             config = config or ProviderConfig.from_env(turn.provider)
             config.validate()
             if config.provider != turn.provider:
                 raise ValueError("provider does not match turn")
+            require_direct_grant(grant, choice_for(config))
+        # Failover after a possibly charged, ambiguous outcome needs the plan's opt-in and
+        # this caller's operator grant; load_provider_plan refuses a plan lacking the grant.
+        uncertain_allowed = bool(
+            plan and plan.allow_uncertain_outcome and grant and grant.allow_uncertain_failover
+        )
         entries = self.store.get_context_entries_for_caller(scope, turn.context_refs)
         try:
             if {entry.entry_id for entry in entries} != set(turn.context_refs):
@@ -223,10 +237,13 @@ class ConversationEngine:
         fingerprint = hashlib.sha256(
             encode({"turn": turn.model_dump(mode="json"), "contract_hash": contract_hash})
         ).hexdigest()
-        replay = self.state.replay(scope, turn.conversation_id, turn.request_id, fingerprint)
-        if replay is not None:
-            return replay
-        snapshot = self.state.snapshot(scope, turn.conversation_id)
+        try:
+            replay = self.state.replay(scope, turn.conversation_id, turn.request_id, fingerprint)
+            if replay is not None:
+                return replay
+            snapshot = self.state.snapshot(scope, turn.conversation_id)
+        except sqlite3.Error as exc:
+            raise storage_unavailable() from exc
         guidance = [
             {
                 "category_id": item.category_id,
@@ -240,7 +257,8 @@ class ConversationEngine:
             {"role": "system", "content": SYSTEM},
             {
                 "role": "user",
-                "content": "Configured category guidance (data): " + encode(guidance).decode(),
+                "content": "Configured category guidance (data): "
+                + wire_json(guidance, sort_keys=True).decode(),
             },
             *snapshot["history"],
             {"role": "user", "content": turn.message},
@@ -249,7 +267,7 @@ class ConversationEngine:
             candidates = plan.providers
         else:
             assert config is not None
-            candidates = [ProviderChoice(provider=turn.provider, model=config.model)]
+            candidates = [choice_for(config)]
         initial = config
         tokens, cost = 0, 0
         exception_record: dict[str, Any] = {
@@ -276,6 +294,12 @@ class ConversationEngine:
             "retry_policy": "explicit_scoped_provider_plan"
             if plan
             else "no_automatic_retry_or_provider_fallback",
+            "operator_grant": {"caller_scope": scope, "source": "caller_scoped_operator_grant"},
+            "uncertain_failover": {
+                "plan_opt_in": bool(plan and plan.allow_uncertain_outcome),
+                "operator_grant": bool(grant and grant.allow_uncertain_failover),
+                "allowed": uncertain_allowed,
+            },
             "attempts": [],
             "actions": [
                 {
@@ -287,17 +311,20 @@ class ConversationEngine:
                 }
             ],
         }
-        version, replay = self.state.reserve(
-            scope=scope,
-            conversation=turn.conversation_id,
-            request=turn.request_id,
-            expected=turn.expected_version,
-            fingerprint=fingerprint,
-            contract_hash=contract_hash,
-            tokens=0,
-            provider="coordination",
-            exception_record=exception_record,
-        )
+        try:
+            version, replay = self.state.reserve(
+                scope=scope,
+                conversation=turn.conversation_id,
+                request=turn.request_id,
+                expected=turn.expected_version,
+                fingerprint=fingerprint,
+                contract_hash=contract_hash,
+                tokens=0,
+                provider="coordination",
+                exception_record=exception_record,
+            )
+        except sqlite3.Error as exc:
+            raise storage_unavailable() from exc
         if replay is not None:
             return replay
         started = time.monotonic()
@@ -324,6 +351,11 @@ class ConversationEngine:
                 ).hexdigest(),
                 "provider": candidate.provider,
                 "model": candidate.model,
+                "upstream_identity": candidate.identity,
+                # A possibly charged earlier attempt this one follows under the scoped grant.
+                "follows_uncertain_attempt_id": attempts[-1]["attempt_id"]
+                if attempts and attempts[-1]["outcome"] == "unknown"
+                else None,
                 "reported_model": None,
                 "status": "selected",
                 "outcome": "not_sent",
@@ -340,12 +372,13 @@ class ConversationEngine:
                 "available_after": None,
             }
             attempts.append(attempt)
-            self.state.update_attempts(
-                scope, turn.conversation_id, turn.request_id, version, exception_record
-            )
             reply = {}
             account = "operator"
+            dispatched = False
             try:
+                self.state.update_attempts(
+                    scope, turn.conversation_id, turn.request_id, version, exception_record
+                )
                 disabled, account = operator_policy(candidate.provider)
                 if disabled:
                     attempt["provider_health"] = {
@@ -382,21 +415,27 @@ class ConversationEngine:
                     if config.provider != "ollama"
                     else None,
                 )
-                admission = self.state.reserve_attempt(
-                    scope=scope,
-                    conversation=turn.conversation_id,
-                    request=turn.request_id,
-                    version=version,
-                    record=exception_record,
-                    tokens=attempt_tokens,
-                    provider=config.provider,
-                    cost=attempt_cost,
-                    budget=int(config.budget_usd * 1000000),
-                    token_limit=config.caller_token_limit,
-                    account=account,
-                    allow_probe=plan.allow_recovery_probe if plan else True,
-                    allow_uncertain=bool(plan and plan.allow_uncertain_outcome),
-                )
+                try:
+                    admission = self.state.reserve_attempt(
+                        scope=scope,
+                        conversation=turn.conversation_id,
+                        request=turn.request_id,
+                        version=version,
+                        record=exception_record,
+                        tokens=attempt_tokens,
+                        provider=config.provider,
+                        cost=attempt_cost,
+                        budget=config.budget_microusd,
+                        token_limit=config.caller_token_limit,
+                        account=account,
+                        allow_probe=plan.allow_recovery_probe if plan else True,
+                        allow_uncertain=uncertain_allowed,
+                    )
+                except sqlite3.Error:
+                    # Whether the atomic reservation committed is unknown; never assume either way.
+                    attempt.update(reservation_status="unknown")
+                    attempt.pop("health_ticket", None)
+                    raise
                 if not admission["ok"]:
                     attempt["available_after"] = admission["health"]["available_after"]
                     raise ProviderFailure(admission["code"], outcome="not_sent")
@@ -426,6 +465,7 @@ class ConversationEngine:
                 self.state.update_attempts(
                     scope, turn.conversation_id, turn.request_id, version, exception_record
                 )
+                dispatched = True
                 reply = await self.call(config, body)
                 attempt.update(
                     status="completed",
@@ -479,14 +519,36 @@ class ConversationEngine:
                         exc.retry_after_seconds if exc.retry_after_seconds is not None else 30
                     )
                 issues = [{"path": "/", "rule": error}]
-            self.state.settle_provider_health(
-                scope, turn.conversation_id, turn.request_id, version, exception_record, account
-            )
-            if attempt.get("health_settled"):
-                attempt["available_after"] = attempt["provider_health"]["available_after"]
-            self.state.update_attempts(
-                scope, turn.conversation_id, turn.request_id, version, exception_record
-            )
+            except sqlite3.Error:
+                # Durable coordination failed: record it, never rotate into another paid call.
+                error = "storage_or_coordination_unavailable"
+                if not dispatched and actions[-1].get("parent_attempt_id") == attempt["attempt_id"]:
+                    actions.pop()  # the provider request was prepared but never sent
+                attempt.update(
+                    status="failed" if dispatched else "skipped",
+                    outcome="unknown" if dispatched else "not_sent",
+                    error_code=error,
+                )
+                issues = [{"path": "/", "rule": error}]
+                break
+            try:
+                self.state.settle_provider_health(
+                    scope,
+                    turn.conversation_id,
+                    turn.request_id,
+                    version,
+                    exception_record,
+                    account,
+                )
+                if attempt.get("health_settled"):
+                    attempt["available_after"] = attempt["provider_health"]["available_after"]
+                self.state.update_attempts(
+                    scope, turn.conversation_id, turn.request_id, version, exception_record
+                )
+            except sqlite3.Error:
+                # The outcome above stands; the shared health update is what stays unknown.
+                attempt["health_settlement"] = "storage_or_coordination_unavailable"
+                break
             if (
                 error is None
                 or not plan
@@ -510,8 +572,9 @@ class ConversationEngine:
                     "provider_recovery_probe_required",
                     "provider_recovery_probe_inflight",
                     "provider_outcome_reconciliation_required",
+                    "provider_identity_cooldown",
                 }
-                or (attempt["outcome"] == "unknown" and not plan.allow_uncertain_outcome)
+                or (attempt["outcome"] == "unknown" and not uncertain_allowed)
             ):
                 break
         last = attempts[-1]
@@ -545,11 +608,15 @@ class ConversationEngine:
             "executed": False,
             "persisted": True,
         }
-        return self.state.finish(
-            scope=scope,
-            conversation=turn.conversation_id,
-            request=turn.request_id,
-            version=version,
-            message=turn.message,
-            response=response,
-        )
+        try:
+            return self.state.finish(
+                scope=scope,
+                conversation=turn.conversation_id,
+                request=turn.request_id,
+                version=version,
+                message=turn.message,
+                response=response,
+            )
+        except sqlite3.Error as exc:
+            # The turn stays active with its persisted attempts for operator reconciliation.
+            raise storage_unavailable() from exc

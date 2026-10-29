@@ -1,6 +1,16 @@
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 
+// Exact operator grants for synthetic callers drawn from a fixed pool by each test file.
+const choices = [
+  { provider: "meta", model: "muse-spark-1.3" }, { provider: "meta", model: "muse-wonder-1.0" },
+  { provider: "ollama", model: "muse-spark-open" }, { provider: "openai", model: "synthetic-responses-model" },
+  { provider: "anthropic", model: "synthetic-claude-model" },
+  { provider: "openrouter", model: "synthetic/openrouter-model", routing_provider: "synthetic-host" }
+];
+const pool = (lane, size, uncertain = false) => Array.from({ length: size }, (_, i) => ({ caller_scope: `key:synthetic-${lane}-${i}`, providers: choices, ...(uncertain ? { allow_uncertain_failover: true } : {}) }));
+const grants = [...pool("conversation", 96), ...pool("conversation-uncertain", 16, true), ...pool("health", 64), ...pool("http", 8), ...pool("grants", 32), ...pool("grants-uncertain", 8, true)];
+
 export default defineConfig({
   plugins: [cloudflareTest({
     wrangler: { configPath: "./deploy/cloudflare/wrangler.jsonc" },
@@ -22,8 +32,7 @@ export default defineConfig({
         HERMA_CONVERSATION_OPENROUTER_INPUT_USD_PER_MILLION: "1",
         HERMA_CONVERSATION_OPENROUTER_OUTPUT_USD_PER_MILLION: "3",
         HERMA_OPENROUTER_BUDGET_USD: "1",
-        HERMA_CONVERSATION_PROVIDER_PLAN_ALLOWLIST: '[{"provider":"meta","model":"muse-spark-1.3"},{"provider":"ollama","model":"muse-spark-open"}]',
-        HERMA_CONVERSATION_ALLOW_UNCERTAIN_FAILOVER: "true",
+        HERMA_CONVERSATION_PROVIDER_GRANTS: JSON.stringify(grants),
         HERMA_META_BUDGET_USD: "1",
         HERMA_OLLAMA_CALLS_PER_DAY: "30",
         META_API_KEY: "synthetic-provider-key",
@@ -57,6 +66,7 @@ export default defineConfig({
           return new Response(status === 204 ? null : '{"status":"queued","id":"private-job"}', { status, headers: { Location: "https://example.com/private-job", "Retry-After": "60" } });
         }
         if (openai && ["openai-queued", "openai-in_progress"].includes(text)) return Response.json({ status: text.slice("openai-".length), output: [], id: "private-job" });
+        if (text === "duplicate-reply-test") return new Response('{"choices":[{"message":{}}],"choices":[{"message":{}}]}', { headers: { "Content-Type": "application/json" } });
         if (text === "redirect-test") return new Response(null, { status: 302, headers: { Location: "https://example.com/forbidden" } });
         if (text === "too-large-test") return new Response("x".repeat(1048577));
         if (text === "failure-test") return new Response("private upstream body", { status: 429 });

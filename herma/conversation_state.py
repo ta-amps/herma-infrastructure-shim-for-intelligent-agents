@@ -12,7 +12,14 @@ from pathlib import Path
 from typing import Any
 
 from herma.errors import HermaError
-from herma.provider_health import admit_health, fresh_health, settle_health
+from herma.provider_health import (
+    ACCOUNT_LIMITS,
+    IDENTITY_LIMITS,
+    admit_health,
+    fresh_health,
+    limit_reason,
+    settle_health,
+)
 
 
 def conflict(code: str, detail: str) -> HermaError:
@@ -20,6 +27,9 @@ def conflict(code: str, detail: str) -> HermaError:
 
 
 class ConversationState:
+    # Seconds to wait for a competing SQLite writer before reporting a storage failure.
+    busy_timeout: float = 10
+
     def __init__(self, path: Path) -> None:
         self.path = path
         with self.connect() as conn:
@@ -40,6 +50,9 @@ class ConversationState:
                 CREATE TABLE IF NOT EXISTS work_provider_health (
                     scope TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
                     available_after REAL NOT NULL, PRIMARY KEY(scope,provider,model));
+                CREATE TABLE IF NOT EXISTS work_provider_identity (
+                    identity TEXT PRIMARY KEY, available_after REAL NOT NULL,
+                    reason TEXT NOT NULL, route TEXT NOT NULL);
             """)
             conn.execute("BEGIN IMMEDIATE")
             columns = {row[1] for row in conn.execute("PRAGMA table_info(work_turns)")}
@@ -57,7 +70,7 @@ class ConversationState:
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.path, timeout=10)
+        conn = sqlite3.connect(self.path, timeout=self.busy_timeout)
         conn.row_factory = sqlite3.Row
         try:
             with conn:
@@ -290,11 +303,39 @@ class ConversationState:
                     "attempt_already_reserved",
                     "Reconcile this attempt without calling the model again.",
                 )
+            now = time.time()
+            held = conn.execute(
+                "SELECT available_after,reason,route FROM work_provider_identity WHERE identity=? AND available_after>?",
+                (attempt["upstream_identity"], now),
+            ).fetchone()
+            if held and held["route"] != provider:
+                # Another provider route (a direct API or a gateway) holds a different
+                # credential, so it cannot reach the same upstream model during that limit.
+                # One provider's operator accounts keep their own isolated health instead;
+                # changing an account alias is an explicit operator configuration change.
+                # Checked before health admission, so the skip never holds a probe lease.
+                attempt.update(
+                    provider_health={
+                        "state": "limited",
+                        "reason": held["reason"],
+                        "available_after": held["available_after"],
+                        "requires_uncertain_authorization": False,
+                        "scope": "upstream_model_identity",
+                    },
+                    reservation_status="denied",
+                    reservation_ceiling_tokens=tokens,
+                    reserved_tokens=0,
+                )
+                return {
+                    "ok": False,
+                    "code": "provider_identity_cooldown",
+                    "health": attempt["provider_health"],
+                }
             states = self._health_states(conn, account, provider, attempt["model"])
             admission = admit_health(
                 states,
                 attempt["attempt_id"],
-                time.time(),
+                now,
                 allow_probe=allow_probe,
                 allow_uncertain=allow_uncertain,
             )
@@ -407,19 +448,34 @@ class ConversationState:
                 attempt["health_settled"] = True
                 return
             states = self._health_states(conn, account, attempt["provider"], attempt["model"])
+            evidence = {
+                "outcome": attempt["outcome"],
+                "error_code": attempt["error_code"],
+                "reason": (attempt.get("provider_diagnostics") or {}).get("reason"),
+                "http_status": attempt.get("upstream_http_status"),
+            }
             attempt["provider_health"] = settle_health(
                 states,
                 attempt["health_ticket"],
                 attempt["attempt_id"],
                 attempt["model"],
                 time.time(),
-                outcome=attempt["outcome"],
-                error_code=attempt["error_code"],
-                reason=(attempt.get("provider_diagnostics") or {}).get("reason"),
                 retry_seconds=attempt.get("retry_after_seconds"),
-                http_status=attempt.get("upstream_http_status"),
+                **evidence,
             )
             self._write_health(conn, account, attempt["provider"], states)
+            limited = limit_reason(**evidence)
+            if limited in IDENTITY_LIMITS:
+                held = states["*" if limited in ACCOUNT_LIMITS else attempt["model"]]
+                conn.execute(
+                    "INSERT INTO work_provider_identity VALUES (?,?,?,?) ON CONFLICT(identity) DO UPDATE SET available_after=MAX(available_after,excluded.available_after),reason=excluded.reason,route=excluded.route",
+                    (
+                        attempt["upstream_identity"],
+                        held["available_after"],
+                        limited,
+                        attempt["provider"],
+                    ),
+                )
             attempt["health_settled"] = True
             conn.execute(
                 "UPDATE work_turns SET exception_record=? WHERE scope=? AND conversation=? AND request=? AND version=?",

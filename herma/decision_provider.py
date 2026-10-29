@@ -129,7 +129,9 @@ def parse_jev_response(prepared: dict[str, Any], response: dict[str, Any]) -> di
                 or not probability(answer.get("confidence"))
             ):
                 raise ValueError("invalid decision probability distribution")
-            if kind == "choice" and answer.get("choice") not in labels:
+            # A list or object choice is invalid evidence, not an unhashable-type crash.
+            choice = answer.get("choice")
+            if kind == "choice" and (not isinstance(choice, str) or choice not in labels):
                 raise ValueError("choice is not in the requested criteria")
             if not math.isclose(sum(probs.values()), 1, abs_tol=1e-6):
                 raise ValueError("decision probabilities must sum to one")

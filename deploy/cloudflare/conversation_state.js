@@ -1,14 +1,14 @@
 // Conversation coordination, not a work queue. Tessera owns executable tasks.
 import { DurableObject } from "cloudflare:workers";
-import { ConversationError, fail, hash, validateTurn, loadContracts, loadProviderPlan, providerConfig, providerCredential, buildRequest, requestModel, parseProposal, blocked, usageFor } from "./conversation.js";
-import { operatorPolicy, freshHealth, admitHealth, settleHealth, healthView } from "./provider_health.js";
+import { ConversationError, fail, hash, validateTurn, loadContracts, loadProviderPlan, operatorGrant, requireDirectGrant, upstreamIdentity, providerConfig, providerCredential, buildRequest, requestModel, parseProposal, blocked, usageFor } from "./conversation.js";
+import { operatorPolicy, freshHealth, admitHealth, settleHealth, healthView, limitReason, ACCOUNT_LIMITS, IDENTITY_LIMITS } from "./provider_health.js";
 
 const DAY = 86400000;
 const rows = (sql, query, ...args) => sql.exec(query, ...args).toArray();
 const first = (sql, query, ...args) => rows(sql, query, ...args)[0];
 const failure = error => ({ status: error instanceof ConversationError ? error.status : 500, body: { code: error instanceof ConversationError ? error.code : "conversation_internal_error" } });
 const responseStatus = response => ["provider_budget_exhausted", "provider_call_budget_exhausted"].includes(response.error_code) ? 429 : 200;
-const reservationDenials = new Set(["invalid_budget_reservation", "invalid_provider_configuration", "reservation_replay", "provider_budget_exhausted", "provider_call_budget_exhausted", "provider_operator_disabled", "provider_backpressure", "provider_recovery_probe_required", "provider_recovery_probe_inflight", "provider_outcome_reconciliation_required"]);
+const reservationDenials = new Set(["invalid_budget_reservation", "invalid_provider_configuration", "reservation_replay", "provider_budget_exhausted", "provider_call_budget_exhausted", "provider_operator_disabled", "provider_backpressure", "provider_recovery_probe_required", "provider_recovery_probe_inflight", "provider_outcome_reconciliation_required", "provider_identity_cooldown"]);
 const healthStates = (sql, account, provider, model) => Object.fromEntries(["*", model].map(key => [key, { ...freshHealth(), ...JSON.parse(first(sql, "SELECT state FROM provider_health WHERE account=? AND provider=? AND model=?", account, provider, key)?.state || "{}") }]));
 const writeHealth = (sql, account, provider, states) => { for (const [model, state] of Object.entries(states)) if (state.generation || state.probe_id) sql.exec("INSERT INTO provider_health VALUES (?,?,?,?) ON CONFLICT(account,provider,model) DO UPDATE SET state=excluded.state", account, provider, model, JSON.stringify(state)); };
 
@@ -22,6 +22,7 @@ export class WorkReasoningBudget extends DurableObject {
         CREATE TABLE IF NOT EXISTS totals (provider TEXT PRIMARY KEY, microusd INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS reservation_day ON reservations(provider, day);
         CREATE TABLE IF NOT EXISTS provider_health (account TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, state TEXT NOT NULL, PRIMARY KEY(account,provider,model));
+        CREATE TABLE IF NOT EXISTS identity_cooldown (identity TEXT PRIMARY KEY, available_after REAL NOT NULL, reason TEXT NOT NULL, route TEXT NOT NULL);
       `);
       if (!rows(ctx.storage.sql, "PRAGMA table_info(reservations)").some(row => row.name === "health")) ctx.storage.sql.exec("ALTER TABLE reservations ADD COLUMN health TEXT NOT NULL DEFAULT '{}'");
     });
@@ -37,12 +38,18 @@ export class WorkReasoningBudget extends DurableObject {
       const sql = this.ctx.storage.sql;
       const prior = first(sql, "SELECT * FROM reservations WHERE id=?", id);
       if (prior) { const health = JSON.parse(prior.health); return { ok: prior.provider === provider && prior.fingerprint === fingerprint && prior.microusd === microusd, code: "reservation_replay", health: health.admission?.health, ticket: health.admission?.ticket }; }
+      // Another provider route (a direct API or a gateway) holds a different credential, so it
+      // cannot reach the same upstream model during that rate or quota limit. One provider's
+      // operator accounts keep their own isolated health; changing an alias is explicit operator
+      // configuration. Checked before health admission, so the skip never holds a probe lease.
+      const held = first(sql, "SELECT available_after,reason,route FROM identity_cooldown WHERE identity=? AND available_after>?", upstreamIdentity(provider, config.model), Date.now() / 1000);
+      if (held && held.route !== provider) return { ok: false, code: "provider_identity_cooldown", health: { state: "limited", reason: held.reason, available_after: held.available_after, requires_uncertain_authorization: false, scope: "upstream_model_identity" } };
       const states = healthStates(sql, policy.account, provider, config.model);
       const admission = admitHealth(states, id, Date.now() / 1000, recovery.allow_probe === true, recovery.allow_uncertain === true);
       if (!admission.ok) { writeHealth(sql, policy.account, provider, states); return admission; }
       const day = Math.floor(Date.now() / DAY);
       const total = first(sql, "SELECT microusd FROM totals WHERE provider=?", provider)?.microusd || 0;
-      if (provider !== "ollama" && total + microusd > Math.floor(config.budget_usd * 1000000)) return { ok: false, code: "provider_budget_exhausted" };
+      if (provider !== "ollama" && total + microusd > config.budget_microusd) return { ok: false, code: "provider_budget_exhausted" };
       if (provider === "ollama" && first(sql, "SELECT COUNT(*) AS n FROM reservations WHERE provider=? AND day=?", provider, day).n >= config.ollama_calls_per_day) return { ok: false, code: "provider_call_budget_exhausted" };
       writeHealth(sql, policy.account, provider, states);
       sql.exec("INSERT INTO reservations (id,provider,fingerprint,microusd,day,health) VALUES (?,?,?,?,?,?)", id, provider, fingerprint, microusd, day, JSON.stringify({ account: policy.account, model: config.model, admission, settled: false }));
@@ -61,6 +68,8 @@ export class WorkReasoningBudget extends DurableObject {
       const states = healthStates(sql, saved.account, provider, saved.model);
       const result = settleHealth(states, saved.admission.ticket, id, saved.model, Date.now() / 1000, evidence.outcome, evidence.error_code, evidence.reason, evidence.retry_after_seconds, evidence.http_status);
       writeHealth(sql, saved.account, provider, states);
+      const limited = limitReason(evidence.outcome, evidence.error_code, evidence.reason, evidence.http_status);
+      if (IDENTITY_LIMITS.has(limited)) sql.exec("INSERT INTO identity_cooldown VALUES (?,?,?,?) ON CONFLICT(identity) DO UPDATE SET available_after=MAX(available_after,excluded.available_after),reason=excluded.reason,route=excluded.route", upstreamIdentity(provider, saved.model), states[ACCOUNT_LIMITS.has(limited) ? "*" : saved.model].available_after, limited, provider);
       sql.exec("UPDATE reservations SET health=? WHERE id=?", JSON.stringify({ ...saved, settled: true, result }), id);
       return result;
     });
@@ -71,6 +80,7 @@ export class WorkReasoningBudget extends DurableObject {
     return { reservations: rows(sql, "SELECT provider,microusd AS reserved_microusd FROM totals ORDER BY provider"),
       today: rows(sql, "SELECT provider,COUNT(*) AS reserved_calls FROM reservations WHERE day=? GROUP BY provider", day),
       availability: rows(sql, "SELECT account,provider,model,state FROM provider_health").map(row => ({ account_scope: row.account, provider: row.provider, model: row.model, ...healthView(JSON.parse(row.state)) })),
+      identity_cooldowns: rows(sql, "SELECT identity,available_after,reason,route FROM identity_cooldown WHERE available_after>? ORDER BY identity", Date.now() / 1000),
       operator_disabled: ["meta", "ollama", "openai", "anthropic", "openrouter"].filter(provider => operatorPolicy(this.env, provider).disabled),
       invoice_cost_usd: null, reason: "Conservative reservations; no automatic refunds after uncertain model calls." };
   }
@@ -169,9 +179,16 @@ export class WorkConversation extends DurableObject {
   async turn(scope, raw, entries) {
     try {
       this.#identity(scope);
-      const turn = validateTurn(raw), plan = loadProviderPlan(this.env, scope, turn, entries);
+      // Every operator-funded turn needs this caller's own explicit grant, with or without a
+      // plan. The grant is checked before any turn record, reservation or provider call.
+      const turn = validateTurn(raw), grant = operatorGrant(this.env, scope), plan = loadProviderPlan(this.env, scope, turn, entries, grant);
+      if (!plan && grant === null) fail(403, "provider_grant_required");
       const initial = plan ? null : providerConfig(this.env, turn.provider);
-      const candidates = plan?.providers || [{ provider: turn.provider, model: initial.model }];
+      if (!plan) requireDirectGrant(grant, initial);
+      // Failover after a possibly charged, ambiguous outcome needs the plan's opt-in and this
+      // caller's operator grant; loadProviderPlan refuses a plan lacking the grant.
+      const uncertainAllowed = plan?.allow_uncertain_outcome === true && grant?.allow_uncertain_failover === true;
+      const candidates = plan?.providers || [{ provider: turn.provider, model: initial.model, routing_provider: turn.provider === "openrouter" ? initial.openrouter_provider : null }];
       const contracts = await loadContracts(entries.filter(item => item.entry_id !== turn.provider_plan_ref), turn.context_refs.filter(ref => ref !== turn.provider_plan_ref));
       const planNoun = plan ? entries.find(item => item.entry_id === turn.provider_plan_ref) : null;
       const contractHash = await hash({ contracts: contracts.map(({ tool_name, ...c }) => c), provider_plan: planNoun });
@@ -189,7 +206,9 @@ export class WorkConversation extends DurableObject {
         server_exception: { purpose: "caller_requested_typed_proposal", worker_path_reason: "Caller explicitly selected the interactive server capability.", principal: scope,
           data_scope: { caller_scope: scope, context_refs: turn.context_refs, conversation_id: turn.conversation_id }, effects: "proposal_only", payer: "operator",
           work_kind: "verb", operation_id: "propose_typed_action", lifecycle_owner: "herma_conversation_turn", result_kind: "noun",
-          provider_plan_ref: turn.provider_plan_ref, retry_policy: plan ? "explicit_scoped_provider_plan" : "no_automatic_retry_or_provider_fallback", actions },
+          provider_plan_ref: turn.provider_plan_ref, retry_policy: plan ? "explicit_scoped_provider_plan" : "no_automatic_retry_or_provider_fallback",
+          operator_grant: { caller_scope: scope, source: "caller_scoped_operator_grant" },
+          uncertain_failover: { plan_opt_in: plan?.allow_uncertain_outcome === true, operator_grant: grant?.allow_uncertain_failover === true, allowed: uncertainAllowed }, actions },
         attempts, latency_ms: null, error_code: null, executed: false, persisted: true };
       const concurrentReplay = this.#reserve(turn, fingerprint, contractHash, 0, base, { caller_token_limit: null });
       if (concurrentReplay) return { status: responseStatus(concurrentReplay), body: concurrentReplay };
@@ -203,6 +222,9 @@ export class WorkConversation extends DurableObject {
       for (let index = 0; index < candidates.length; index++) {
         const candidate = candidates[index];
         const attempt = { attempt_id: await hash({ scope, conversation: turn.conversation_id, request: turn.request_id, index }), provider: candidate.provider, model: candidate.model,
+          upstream_identity: upstreamIdentity(candidate.provider, candidate.model),
+          // A possibly charged earlier attempt this one follows under the scoped grant.
+          follows_uncertain_attempt_id: attempts.at(-1)?.outcome === "unknown" ? attempts.at(-1).attempt_id : null,
           reported_model: null, status: "selected", outcome: "not_sent", usage: { input_tokens: null, output_tokens: null }, usage_reason: "provider_usage_not_reported", reservation_status: "not_reserved", reserved_tokens: 0, reserved_usd: null, payer: "operator", error_code: null, upstream_http_status: null, provider_diagnostics: null, provider_health: null, available_after: null };
         attempts.push(attempt); persist();
         try {
@@ -227,7 +249,7 @@ export class WorkConversation extends DurableObject {
           attempt.reservation_status = "pending";
           base.reservation_status = "pending";
           persist();
-          const reservation = await this.env.WORK_REASONING_BUDGET.getByName("provider-allowance-v1").reserve(attempt.attempt_id, config.provider, fingerprint, microusd, { allow_probe: plan?.allow_recovery_probe !== false, allow_uncertain: plan?.allow_uncertain_outcome === true });
+          const reservation = await this.env.WORK_REASONING_BUDGET.getByName("provider-allowance-v1").reserve(attempt.attempt_id, config.provider, fingerprint, microusd, { allow_probe: plan?.allow_recovery_probe !== false, allow_uncertain: uncertainAllowed });
           if (typeof reservation?.ok !== "boolean" || (!reservation.ok && !reservationDenials.has(reservation.code)) || (reservation.ok && (!reservation.ticket || Object.keys(reservation.ticket).length !== 2 || !["*", config.model].every(key => Object.hasOwn(reservation.ticket, key) && Number.isSafeInteger(reservation.ticket[key]) && reservation.ticket[key] >= 0) || !["healthy", "recovery_probe"].includes(reservation.health?.state)))) throw new Error("invalid_reservation_response");
           attempt.provider_health = reservation.health || null;
           if (reservation.health?.state === "limited") attempt.available_after = reservation.health.available_after;
@@ -276,7 +298,7 @@ export class WorkConversation extends DurableObject {
         }
         if (attempt.available_after !== null) this.ctx.storage.sql.exec("INSERT INTO provider_health VALUES (?,?,?) ON CONFLICT(provider,model) DO UPDATE SET available_after=excluded.available_after", attempt.provider, attempt.model, attempt.available_after);
         persist();
-        if (errorCode === null || !plan || !["provider_not_configured", "provider_model_not_configured", "output_allowance_required", "invalid_provider_configuration", "unsupported_generation_configuration", "provider_unauthorized", "provider_rate_limited", "provider_rejected", "provider_outcome_uncertain", "provider_unavailable", "provider_budget_exhausted", "provider_call_budget_exhausted", "provider_cooldown", "provider_operator_disabled", "provider_backpressure", "provider_recovery_probe_required", "provider_recovery_probe_inflight", "provider_outcome_reconciliation_required"].includes(errorCode) || (attempt.outcome === "unknown" && !plan.allow_uncertain_outcome)) break;
+        if (errorCode === null || !plan || !["provider_not_configured", "provider_model_not_configured", "output_allowance_required", "invalid_provider_configuration", "unsupported_generation_configuration", "provider_unauthorized", "provider_rate_limited", "provider_rejected", "provider_outcome_uncertain", "provider_unavailable", "provider_budget_exhausted", "provider_call_budget_exhausted", "provider_cooldown", "provider_operator_disabled", "provider_backpressure", "provider_recovery_probe_required", "provider_recovery_probe_inflight", "provider_outcome_reconciliation_required", "provider_identity_cooldown"].includes(errorCode) || (attempt.outcome === "unknown" && !uncertainAllowed)) break;
       }
       const last = attempts.at(-1);
       const response = await this.#finish(turn, { ...base, ...proposal, provider: last.provider, model: last.model, usage: last.usage, latency_ms: Date.now() - started, error_code: errorCode }, turn.message);

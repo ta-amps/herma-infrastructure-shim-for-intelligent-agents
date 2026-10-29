@@ -11,7 +11,9 @@ const entry = { entry_id: "work.observation", kind: "noun", title: "Observation"
   operation_id: "record_observation", category_id: "noun.eval_run", description: "Record SYNTHETIC evidence.", input_schema: { type: "object", properties: { value: { type: "object", properties: { message: { type: "string" }, synthetic: { type: "boolean", const: true } }, required: ["message", "synthetic"], additionalProperties: false } }, required: ["value"], additionalProperties: false }
 } } };
 const input = patch => ({ conversation_id: "conversation-one", request_id: "request-one", expected_version: 0, provider: "openai", message: "SYNTHETIC", context_refs: [entry.entry_id], ...patch });
-const caller = () => { const id = "key:" + crypto.randomUUID(); return { id, stub: env.WORK_CONVERSATIONS.getByName(id) }; };
+// Pooled callers each hold their own exact operator grant from the vitest configuration.
+let pooled = 0;
+const caller = () => { const id = `key:synthetic-health-${pooled++}`; return { id, stub: env.WORK_CONVERSATIONS.getByName(id) }; };
 const freshBudget = () => env.WORK_REASONING_BUDGET.getByName("health-" + crypto.randomUUID());
 const outcome = patch => ({ outcome: "rejected", error_code: "provider_rate_limited", reason: "rate_limited", retry_after_seconds: null, http_status: 429, ...patch });
 async function clearTime(stub, mutate = state => { state.available_after = 0; }) {

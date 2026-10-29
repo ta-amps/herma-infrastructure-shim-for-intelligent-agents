@@ -2,9 +2,16 @@
 const PROVIDERS = ["meta", "ollama", "openai", "anthropic", "openrouter"];
 const HOST_PROVIDERS = new Map([["api.meta.ai", "meta"], ["ollama.com", "ollama"], ["api.openai.com", "openai"], ["api.anthropic.com", "anthropic"], ["openrouter.ai", "openrouter"]]);
 export const providerForHost = host => HOST_PROVIDERS.get(String(host || "").toLowerCase()) || null;
+// Limits that belong to the paying account rather than one model.
+export const ACCOUNT_LIMITS = new Set(["credit_or_quota_exhausted", "payment_required"]);
+// Rate and quota limits also hold the upstream model identity against every other route.
+export const IDENTITY_LIMITS = new Set(["rate_limited", ...ACCOUNT_LIMITS]);
+// Empty or whitespace-only settings are unset, as in Python.
+const unset = value => typeof value !== "string" || !value.trim();
 export function operatorPolicy(env, provider) {
-  const disabled = JSON.parse(env.HERMA_CONVERSATION_DISABLED_PROVIDERS || "[]");
-  const account = env[`HERMA_CONVERSATION_${provider.toUpperCase()}_ACCOUNT_SCOPE`] || "operator";
+  const disabledSetting = env.HERMA_CONVERSATION_DISABLED_PROVIDERS, accountSetting = env[`HERMA_CONVERSATION_${provider.toUpperCase()}_ACCOUNT_SCOPE`];
+  const disabled = JSON.parse(unset(disabledSetting) ? "[]" : disabledSetting);
+  const account = unset(accountSetting) ? "operator" : accountSetting.trim();
   if (!Array.isArray(disabled) || disabled.some(p => !PROVIDERS.includes(p)) || !/^[A-Za-z0-9_-]{1,64}$/.test(account)) throw new Error("invalid_provider_configuration");
   return { disabled: disabled.includes(provider), account };
 }
@@ -33,7 +40,9 @@ export function retryGuidance(headers, now) {
   return resets.length ? { seconds: Math.max(...resets), source: "provider_reset" } : { seconds: null, source: null };
 }
 export const freshHealth = () => ({ generation: 0, failures: 0, available_after: 0, reason: null, uncertain: false, probe_id: null, probe_until: 0 });
-const cooldown = (failures, reason) => Math.min(3600, (["credit_or_quota_exhausted", "payment_required"].includes(reason) ? 300 : 30) * 2 ** Math.min(Math.max(failures - 1, 0), 7));
+const cooldown = (failures, reason) => Math.min(3600, (ACCOUNT_LIMITS.has(reason) ? 300 : 30) * 2 ** Math.min(Math.max(failures - 1, 0), 7));
+// The shared limit an attempt's outcome demonstrates, if any (Python's limit_reason).
+export const limitReason = (outcome, errorCode, reason, httpStatus) => reason === "credit_or_quota_exhausted" ? reason : httpStatus === 402 || reason === "payment_required" ? "payment_required" : errorCode === "provider_rate_limited" || reason === "rate_limited" ? "rate_limited" : errorCode === "provider_unavailable" || outcome === "unknown" ? "provider_unavailable" : null;
 export const healthView = (state, probe = false) => ({ state: probe ? "recovery_probe" : state.failures ? "limited" : "healthy", reason: state.reason, available_after: Math.max(state.available_after, state.probe_until), requires_uncertain_authorization: state.uncertain, scope: "operator_provider_account" });
 export function admitHealth(states, attempt, now, allowProbe, allowUncertain) {
   for (const state of Object.values(states)) {
@@ -50,8 +59,8 @@ export function admitHealth(states, attempt, now, allowProbe, allowUncertain) {
   return { ok: true, ticket, health: healthView(Object.values(states).sort((a,b) => b.failures - a.failures)[0], probe) };
 }
 export function settleHealth(states, ticket, attempt, model, now, outcome, errorCode, reason, retrySeconds, httpStatus = null) {
-  const limited = reason === "credit_or_quota_exhausted" ? reason : httpStatus === 402 || reason === "payment_required" ? "payment_required" : errorCode === "provider_rate_limited" || reason === "rate_limited" ? "rate_limited" : errorCode === "provider_unavailable" || outcome === "unknown" ? "provider_unavailable" : null;
-  const target = ["credit_or_quota_exhausted", "payment_required"].includes(limited) ? "*" : model;
+  const limited = limitReason(outcome, errorCode, reason, httpStatus);
+  const target = ACCOUNT_LIMITS.has(limited) ? "*" : model;
   for (const [key, state] of Object.entries(states)) {
     const same = state.generation === ticket[key], ownsProbe = state.probe_id === attempt;
     if (limited && key === target) {

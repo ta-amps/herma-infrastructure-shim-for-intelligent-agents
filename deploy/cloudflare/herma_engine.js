@@ -916,9 +916,12 @@ export function enforceNotConsumerAssistant(request) {
   return declared || null;
 }
 
+// One classifier shared with Python: any case-insensitive "contributor" in the ID. Separators vary
+// by protocol (-contributor, /contributor, :contributor), so this deliberately over-matches.
+export const isContributorModel = model => String(model ?? "").toLowerCase().includes("contributor");
+
 export function refuseContributorModel(model) {
-  const cleaned = String(model || "").trim().toLowerCase();
-  if (cleaned === "contributor" || cleaned.includes("-contributor")) {
+  if (isContributorModel(model)) {
     throw new HermaErr(
       403,
       "contributor_tier_refused",

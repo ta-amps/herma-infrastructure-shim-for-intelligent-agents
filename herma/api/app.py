@@ -27,6 +27,7 @@ from herma.api.pages import (
 )
 from herma.conversation import ConversationEngine
 from herma.conversation_contracts import ConversationTurn
+from herma.conversation_schema import strict_json
 from herma.errors import AdminRequiredError, HermaError
 from herma.harness_gate import (
     HarnessPrincipal,
@@ -564,6 +565,13 @@ def create_app() -> FastAPI:
                 "Conversation disabled",
                 "The operator has not enabled model-assisted work conversations.",
             )
+        try:
+            # Same strict profile as the Worker: a duplicated field cannot choose the input.
+            strict_json((await req.body()).decode("utf-8"))
+        except (ValueError, RecursionError) as exc:
+            raise HermaError(
+                400, "invalid_json", "Invalid JSON", "Use a bounded JSON object with unique fields."
+            ) from exc
         result = await ConversationEngine(store).turn(principal.caller_scope, body)
         return JSONResponse(content=result, headers={"X-Request-Id": body.request_id})
 
