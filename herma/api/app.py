@@ -912,9 +912,11 @@ def create_app() -> FastAPI:
     @application.get("/api/conversation-schema")
     async def conversation_schemas() -> dict[str, object]:
         from herma.conversation_contracts import ConversationTurn, Proposal, WorkContract
+        from herma.provider_plan import ProviderPlan
 
         return {
             "conversation_turn": ConversationTurn.model_json_schema(),
+            "provider_plan": ProviderPlan.model_json_schema(),
             "work_contract": WorkContract.model_json_schema(),
             "proposal": Proposal.model_json_schema(),
         }
@@ -930,7 +932,7 @@ def create_app() -> FastAPI:
                 "snapshot_endpoint": "/v1/conversations/{id}",
                 "credential": "hmk_",
                 "scope": "route",
-                "providers": ["meta", "ollama", "openai"],
+                "providers": ["meta", "ollama", "openai", "anthropic", "openrouter"],
                 "executed": False,
                 "context": "Caller-visible context entries containing typed work_contract schemas.",
                 "documentation": "https://github.com/ta-amps/herma/blob/t/H15-work-conversation/docs/conversations.md",

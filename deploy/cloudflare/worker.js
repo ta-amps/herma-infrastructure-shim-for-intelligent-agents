@@ -1625,6 +1625,11 @@ const application = {
           catch { return problem(400, "invalid_json", "Invalid JSON", "Use a bounded JSON object with unique fields."); }
           const turn = validateTurn(body);
           const entries = await getContextEntriesMapForCaller(db, turn.context_refs, principal.caller_scope);
+          if (turn.provider_plan_ref) {
+            const owned = await getContextEntriesMapForCaller(db, [turn.provider_plan_ref], principal.caller_scope, { includeBuiltin: false });
+            if (!owned.has(turn.provider_plan_ref)) return problem(403, "provider_plan_not_authorized", "Provider plan denied", "Select a provider plan owned by this caller.");
+            entries.set(turn.provider_plan_ref, { ...owned.get(turn.provider_plan_ref), _provider_plan_scope: principal.caller_scope });
+          }
           result = await stub.turn(principal.caller_scope, turn, [...entries.values()]);
         } else result = await stub.snapshot(principal.caller_scope, decodeURIComponent(path.split("/").at(-1)));
         return jsonResp(result.body, result.status, result.status === 429 ? { "Retry-After": "3600" } : {});

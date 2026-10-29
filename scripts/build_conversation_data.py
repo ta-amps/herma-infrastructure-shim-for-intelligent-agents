@@ -10,6 +10,7 @@ from tessera.ontology.categories import CATEGORY_REGISTRY
 
 from herma.conversation import SYSTEM
 from herma.conversation_contracts import ConversationTurn, Proposal, WorkContract
+from herma.provider_plan import ProviderPlan
 
 
 def main() -> None:
@@ -21,6 +22,7 @@ def main() -> None:
         "system_prompt": SYSTEM,
         "schemas": {
             "conversation_turn": ConversationTurn.model_json_schema(),
+            "provider_plan": ProviderPlan.model_json_schema(),
             "work_contract": WorkContract.model_json_schema(),
             "proposal": Proposal.model_json_schema(),
         },

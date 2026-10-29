@@ -36,6 +36,9 @@ class ConversationState:
                     reserved_tokens INTEGER NOT NULL, PRIMARY KEY(scope,hour));
                 CREATE TABLE IF NOT EXISTS work_provider_budget (
                     provider TEXT PRIMARY KEY, reserved_microusd INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS work_provider_health (
+                    scope TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
+                    available_after REAL NOT NULL, PRIMARY KEY(scope,provider,model));
             """)
             conn.execute("BEGIN IMMEDIATE")
             columns = {row[1] for row in conn.execute("PRAGMA table_info(work_turns)")}
@@ -60,11 +63,16 @@ class ConversationState:
                 "SELECT * FROM work_conversations WHERE scope=? AND id=?", (scope, conversation)
             ).fetchone()
             if not row:
-                return {"version": 0, "history": []}
+                return {"version": 0, "history": [], "attempts": []}
+            latest = conn.execute(
+                "SELECT exception_record FROM work_turns WHERE scope=? AND conversation=? ORDER BY version DESC LIMIT 1",
+                (scope, conversation),
+            ).fetchone()
             return {
                 "version": row["version"],
                 "history": json.loads(row["history"]),
                 "active": row["active"],
+                "attempts": json.loads(latest[0]).get("attempts", []) if latest else [],
             }
 
     def replay(
@@ -105,7 +113,7 @@ class ConversationState:
         exception_record: dict[str, Any] | None = None,
     ) -> tuple[int, dict[str, Any] | None]:
         if (
-            tokens < 1
+            tokens < 0
             or (token_limit is not None and token_limit < 1)
             or turn_limit < 1
             or reserve_microusd < 0
@@ -211,6 +219,100 @@ class ConversationState:
                 ),
             )
         return expected + 1, None
+
+    def cooldown(self, scope: str, provider: str, model: str) -> float:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT available_after FROM work_provider_health WHERE scope=? AND provider=? AND model=?",
+                (scope, provider, model),
+            ).fetchone()
+            return float(row[0]) if row else 0
+
+    def update_attempts(
+        self, scope: str, conversation: str, request: str, version: int, record: dict[str, Any]
+    ) -> None:
+        with self.connect() as conn:
+            changed = conn.execute(
+                "UPDATE work_turns SET exception_record=? WHERE scope=? AND conversation=? AND request=? AND version=? AND response IS NULL",
+                (json.dumps(record, allow_nan=False), scope, conversation, request, version),
+            )
+            if changed.rowcount != 1:
+                raise conflict("turn_fence_conflict", "The turn is no longer active.")
+            if record.get("attempts"):
+                attempt = record["attempts"][-1]
+                if attempt.get("available_after") is not None:
+                    conn.execute(
+                        "INSERT INTO work_provider_health VALUES (?,?,?,?) ON CONFLICT(scope,provider,model) DO UPDATE SET available_after=excluded.available_after",
+                        (scope, attempt["provider"], attempt["model"], attempt["available_after"]),
+                    )
+
+    def reserve_attempt(
+        self,
+        *,
+        scope: str,
+        conversation: str,
+        request: str,
+        version: int,
+        record: dict[str, Any],
+        tokens: int,
+        provider: str,
+        cost: int,
+        budget: int,
+        token_limit: int | None,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT exception_record FROM work_turns WHERE scope=? AND conversation=? AND request=? AND version=? AND response IS NULL",
+                (scope, conversation, request, version),
+            ).fetchone()
+            if not row:
+                raise conflict("turn_fence_conflict", "The turn is no longer active.")
+            prior = json.loads(row[0]).get("attempts", [])
+            attempt = record["attempts"][-1]
+            if any(
+                item["attempt_id"] == attempt["attempt_id"]
+                and item.get("reservation_status") == "reserved"
+                for item in prior
+            ):
+                raise conflict(
+                    "attempt_already_reserved",
+                    "Reconcile this attempt without calling the model again.",
+                )
+            spent = conn.execute(
+                "SELECT reserved_microusd FROM work_provider_budget WHERE provider=?", (provider,)
+            ).fetchone()
+            if cost + (spent[0] if spent else 0) > budget:
+                raise HermaError(
+                    429,
+                    "provider_budget_exhausted",
+                    "Provider budget exhausted",
+                    "The selected provider allowance is reserved.",
+                )
+            hour = int(time.time() // 3600)
+            caller = conn.execute(
+                "SELECT reserved_tokens FROM work_budgets WHERE scope=? AND hour=?", (scope, hour)
+            ).fetchone()
+            if token_limit is not None and tokens + (caller[0] if caller else 0) > token_limit:
+                raise HermaError(
+                    429,
+                    "conversation_budget_exhausted",
+                    "Caller budget exhausted",
+                    "The caller token allowance is reserved.",
+                )
+            conn.execute(
+                "INSERT INTO work_provider_budget VALUES (?,?) ON CONFLICT(provider) DO UPDATE SET reserved_microusd=reserved_microusd+excluded.reserved_microusd",
+                (provider, cost),
+            )
+            conn.execute(
+                "INSERT INTO work_budgets VALUES (?,?,0,?) ON CONFLICT(scope,hour) DO UPDATE SET reserved_tokens=reserved_tokens+excluded.reserved_tokens",
+                (scope, hour, tokens),
+            )
+            attempt["reservation_status"] = "reserved"
+            conn.execute(
+                "UPDATE work_turns SET exception_record=? WHERE scope=? AND conversation=? AND request=? AND version=?",
+                (json.dumps(record, allow_nan=False), scope, conversation, request, version),
+            )
 
     def finish(
         self,
