@@ -1,6 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { WorkConversation } from "../deploy/cloudflare/conversation_state.js";
 import { hash, checkSchema, parseProposal, providerConfig, strictJson, buildRequest, loadProviderPlan } from "../deploy/cloudflare/conversation.js";
 
@@ -26,6 +26,10 @@ async function key(scopes = ["route", "configure"]) {
 }
 
 describe("typed conversation in the Workers runtime", () => {
+  beforeEach(async () => {
+    // Test cases share the plugin's storage. Keep their independent outage scenarios isolated.
+    await runInDurableObject(env.WORK_REASONING_BUDGET.getByName("provider-allowance-v1"), (_instance, state) => state.storage.sql.exec("DELETE FROM provider_health"));
+  });
   it("publishes generated schemas and enabled state without invoking a model", async () => {
     const schema = await (await http("/api/conversation-schema")).json();
     expect(schema.conversation_turn.additionalProperties).toBe(false);
@@ -81,8 +85,8 @@ describe("typed conversation in the Workers runtime", () => {
     expect((await stub.snapshot(id, input.conversation_id)).body.attempts).toEqual(result.body.attempts);
     expect((await stub.snapshot(scope(), input.conversation_id)).status).toBe(403);
     const next = await stub.turn(id, plannedTurn({ message: "rotate-test", request_id: "request-next", expected_version: 1 }), [entry, plan]);
-    expect(next.body.attempts[0].error_code).toBe("provider_cooldown");
-    expect(next.body.attempts[0].reservation_status).toBe("not_reserved");
+    expect(next.body.attempts[0].error_code).toBe("provider_backpressure");
+    expect(next.body.attempts[0].reservation_status).toBe("denied");
     expect(next.body.attempts[1].outcome).toBe("completed");
     expect(next.body.server_exception.actions.filter(a => a.action !== "provider_request").every(a => a.model === null && a.provider === null)).toBe(true);
   });
@@ -156,7 +160,8 @@ describe("typed conversation in the Workers runtime", () => {
     const b = await ollama.stub.turn(ollama.id, turn(), [entry]);
     const limit = Math.max(a.body.reserved_tokens, b.body.reserved_tokens), target = caller();
     await runInDurableObject(target.stub, async (_instance, state) => {
-      const fresh = new WorkConversation(state, { ...env, HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR: String(limit), WORK_REASONING_BUDGET: { getByName: () => ({ reserve: async (_id, provider) => provider === "meta" ? { ok: false, code: "provider_budget_exhausted" } : { ok: true } }) } });
+      const budget = env.WORK_REASONING_BUDGET.getByName("provider-allowance-v1");
+      const fresh = new WorkConversation(state, { ...env, HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR: String(limit), WORK_REASONING_BUDGET: { getByName: () => ({ reserve: async (id, provider, ...args) => provider === "meta" ? { ok: false, code: "provider_budget_exhausted" } : budget.reserve(id, provider, ...args), recordOutcome: (...args) => budget.recordOutcome(...args) }) } });
       const result = await fresh.turn(target.id, plannedTurn(), [entry, providerPlan(target.id)]);
       expect(result.body.proposal.status).toBe("ready");
       expect(result.body.attempts[0].reservation_status).toBe("denied");

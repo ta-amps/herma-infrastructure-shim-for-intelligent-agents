@@ -153,6 +153,7 @@
       "domain": "neutral",
       "role": "Evaluates caller-isolated active provisions, short-circuits respond_directly rules into protocol-faithful completions, or forwards shimmed payloads (JSON or SSE) to allowlisted upstream LLM endpoints",
       "depends_on": [
+        "conversation",
         "errors",
         "harness_gate",
         "injector",
@@ -199,6 +200,7 @@
         "herma/conversation_contracts.py",
         "herma/conversation_provider.py",
         "herma/provider_diagnostics.py",
+        "herma/provider_health.py",
         "herma/conversation_state.py",
         "herma/conversation_schema.py",
         "herma/provider_plan.py",
@@ -218,6 +220,7 @@
         "tests/test_provider_contracts.py",
         "tests/test_provider_plan.py",
         "tests/test_provider_diagnostics.py",
+        "tests/test_provider_health.py",
         "tests/test_decision_provider.py"
       ]
     },
@@ -248,6 +251,7 @@
         "deploy/cloudflare/entry.js",
         "deploy/cloudflare/conversation.js",
         "deploy/cloudflare/provider_diagnostics.js",
+        "deploy/cloudflare/provider_health.js",
         "deploy/cloudflare/conversation_state.js",
         "deploy/cloudflare/conversation_data.json"
       ],
@@ -260,7 +264,8 @@
       "tests": [
         "tests/test_herma.py",
         "test/conversation.test.js",
-        "test/provider_diagnostics.test.js"
+        "test/provider_diagnostics.test.js",
+        "test/provider_health.test.js"
       ]
     }
   ],

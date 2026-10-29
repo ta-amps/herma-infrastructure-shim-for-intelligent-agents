@@ -1,12 +1,16 @@
 // Conversation coordination, not a work queue. Tessera owns executable tasks.
 import { DurableObject } from "cloudflare:workers";
 import { ConversationError, fail, hash, validateTurn, loadContracts, loadProviderPlan, providerConfig, buildRequest, requestModel, parseProposal, blocked, usageFor } from "./conversation.js";
+import { operatorPolicy, freshHealth, admitHealth, settleHealth, healthView } from "./provider_health.js";
 
 const DAY = 86400000;
 const rows = (sql, query, ...args) => sql.exec(query, ...args).toArray();
 const first = (sql, query, ...args) => rows(sql, query, ...args)[0];
 const failure = error => ({ status: error instanceof ConversationError ? error.status : 500, body: { code: error instanceof ConversationError ? error.code : "conversation_internal_error" } });
 const responseStatus = response => ["provider_budget_exhausted", "provider_call_budget_exhausted"].includes(response.error_code) ? 429 : 200;
+const reservationDenials = new Set(["invalid_budget_reservation", "invalid_provider_configuration", "reservation_replay", "provider_budget_exhausted", "provider_call_budget_exhausted", "provider_operator_disabled", "provider_backpressure", "provider_recovery_probe_required", "provider_recovery_probe_inflight", "provider_outcome_reconciliation_required"]);
+const healthStates = (sql, account, provider, model) => Object.fromEntries(["*", model].map(key => [key, { ...freshHealth(), ...JSON.parse(first(sql, "SELECT state FROM provider_health WHERE account=? AND provider=? AND model=?", account, provider, key)?.state || "{}") }]));
+const writeHealth = (sql, account, provider, states) => { for (const [model, state] of Object.entries(states)) if (state.generation || state.probe_id) sql.exec("INSERT INTO provider_health VALUES (?,?,?,?) ON CONFLICT(account,provider,model) DO UPDATE SET state=excluded.state", account, provider, model, JSON.stringify(state)); };
 
 // This object coordinates only the shared provider allowance, never transcripts or model I/O.
 export class WorkReasoningBudget extends DurableObject {
@@ -17,24 +21,48 @@ export class WorkReasoningBudget extends DurableObject {
         CREATE TABLE IF NOT EXISTS reservations (id TEXT PRIMARY KEY, provider TEXT NOT NULL, fingerprint TEXT NOT NULL, microusd INTEGER NOT NULL, day INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS totals (provider TEXT PRIMARY KEY, microusd INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS reservation_day ON reservations(provider, day);
+        CREATE TABLE IF NOT EXISTS provider_health (account TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, state TEXT NOT NULL, PRIMARY KEY(account,provider,model));
       `);
+      if (!rows(ctx.storage.sql, "PRAGMA table_info(reservations)").some(row => row.name === "health")) ctx.storage.sql.exec("ALTER TABLE reservations ADD COLUMN health TEXT NOT NULL DEFAULT '{}'");
     });
   }
 
-  reserve(id, provider, fingerprint, microusd) {
+  reserve(id, provider, fingerprint, microusd, recovery = {}) {
+    let policy;
+    try { policy = operatorPolicy(this.env, provider); } catch { return { ok: false, code: "invalid_provider_configuration" }; }
+    if (policy.disabled) return { ok: false, code: "provider_operator_disabled", health: { state: "operator_disabled", reason: "provider_operator_disabled", available_after: null, requires_operator_enable: true } };
     const config = providerConfig(this.env, provider);
     if (!/^[a-f0-9]{64}$/.test(id) || !/^[a-f0-9]{64}$/.test(fingerprint) || !Number.isSafeInteger(microusd) || microusd < 0) return { ok: false, code: "invalid_budget_reservation" };
     return this.ctx.storage.transactionSync(() => {
       const sql = this.ctx.storage.sql;
       const prior = first(sql, "SELECT * FROM reservations WHERE id=?", id);
-      if (prior) return { ok: prior.provider === provider && prior.fingerprint === fingerprint && prior.microusd === microusd, code: "reservation_replay" };
+      if (prior) { const health = JSON.parse(prior.health); return { ok: prior.provider === provider && prior.fingerprint === fingerprint && prior.microusd === microusd, code: "reservation_replay", health: health.admission?.health, ticket: health.admission?.ticket }; }
+      const states = healthStates(sql, policy.account, provider, config.model);
+      const admission = admitHealth(states, id, Date.now() / 1000, recovery.allow_probe === true, recovery.allow_uncertain === true);
+      if (!admission.ok) { writeHealth(sql, policy.account, provider, states); return admission; }
       const day = Math.floor(Date.now() / DAY);
       const total = first(sql, "SELECT microusd FROM totals WHERE provider=?", provider)?.microusd || 0;
       if (provider !== "ollama" && total + microusd > Math.floor(config.budget_usd * 1000000)) return { ok: false, code: "provider_budget_exhausted" };
       if (provider === "ollama" && first(sql, "SELECT COUNT(*) AS n FROM reservations WHERE provider=? AND day=?", provider, day).n >= config.ollama_calls_per_day) return { ok: false, code: "provider_call_budget_exhausted" };
-      sql.exec("INSERT INTO reservations VALUES (?,?,?,?,?)", id, provider, fingerprint, microusd, day);
+      writeHealth(sql, policy.account, provider, states);
+      sql.exec("INSERT INTO reservations (id,provider,fingerprint,microusd,day,health) VALUES (?,?,?,?,?,?)", id, provider, fingerprint, microusd, day, JSON.stringify({ account: policy.account, model: config.model, admission, settled: false }));
       sql.exec("INSERT INTO totals VALUES (?,?) ON CONFLICT(provider) DO UPDATE SET microusd=microusd+excluded.microusd", provider, microusd);
-      return { ok: true, reserved_microusd: microusd };
+      return { ...admission, reserved_microusd: microusd };
+    });
+  }
+
+  recordOutcome(id, provider, fingerprint, evidence) {
+    return this.ctx.storage.transactionSync(() => {
+      const sql = this.ctx.storage.sql, prior = first(sql, "SELECT * FROM reservations WHERE id=?", id);
+      if (!prior || prior.provider !== provider || prior.fingerprint !== fingerprint) fail(409, "provider_reservation_conflict");
+      const saved = JSON.parse(prior.health);
+      if (saved.settled) return saved.result;
+      if (!saved.admission?.ticket || !["not_sent", "unknown", "rejected", "completed"].includes(evidence.outcome) || (evidence.retry_after_seconds !== null && (!Number.isFinite(evidence.retry_after_seconds) || evidence.retry_after_seconds < 0))) fail(409, "invalid_provider_outcome");
+      const states = healthStates(sql, saved.account, provider, saved.model);
+      const result = settleHealth(states, saved.admission.ticket, id, saved.model, Date.now() / 1000, evidence.outcome, evidence.error_code, evidence.reason, evidence.retry_after_seconds, evidence.http_status);
+      writeHealth(sql, saved.account, provider, states);
+      sql.exec("UPDATE reservations SET health=? WHERE id=?", JSON.stringify({ ...saved, settled: true, result }), id);
+      return result;
     });
   }
 
@@ -42,6 +70,8 @@ export class WorkReasoningBudget extends DurableObject {
     const day = Math.floor(Date.now() / DAY), sql = this.ctx.storage.sql;
     return { reservations: rows(sql, "SELECT provider,microusd AS reserved_microusd FROM totals ORDER BY provider"),
       today: rows(sql, "SELECT provider,COUNT(*) AS reserved_calls FROM reservations WHERE day=? GROUP BY provider", day),
+      availability: rows(sql, "SELECT account,provider,model,state FROM provider_health").map(row => ({ account_scope: row.account, provider: row.provider, model: row.model, ...healthView(JSON.parse(row.state)) })),
+      operator_disabled: ["meta", "ollama", "openai", "anthropic", "openrouter"].filter(provider => operatorPolicy(this.env, provider).disabled),
       invoice_cost_usd: null, reason: "Conservative reservations; no automatic refunds after uncertain model calls." };
   }
 }
@@ -173,15 +203,16 @@ export class WorkConversation extends DurableObject {
       for (let index = 0; index < candidates.length; index++) {
         const candidate = candidates[index];
         const attempt = { attempt_id: await hash({ scope, conversation: turn.conversation_id, request: turn.request_id, index }), provider: candidate.provider, model: candidate.model,
-          reported_model: null, status: "selected", outcome: "not_sent", usage: { input_tokens: null, output_tokens: null }, usage_reason: "provider_usage_not_reported", reservation_status: "not_reserved", reserved_tokens: 0, reserved_usd: null, payer: "operator", error_code: null, upstream_http_status: null, provider_diagnostics: null, available_after: null };
+          reported_model: null, status: "selected", outcome: "not_sent", usage: { input_tokens: null, output_tokens: null }, usage_reason: "provider_usage_not_reported", reservation_status: "not_reserved", reserved_tokens: 0, reserved_usd: null, payer: "operator", error_code: null, upstream_http_status: null, provider_diagnostics: null, provider_health: null, available_after: null };
         attempts.push(attempt); persist();
         try {
+          let policy;
+          try { policy = operatorPolicy(this.env, candidate.provider); } catch { fail(503, "invalid_provider_configuration"); }
+          if (policy.disabled) { attempt.provider_health = { state: "operator_disabled", reason: "provider_operator_disabled", available_after: null, requires_operator_enable: true }; fail(503, "provider_operator_disabled"); }
           const config = initial || providerConfig(this.env, candidate.provider);
           if (Date.now() >= turnDeadline) fail(503, "turn_deadline_exhausted");
           if (plan && candidate.provider === "openrouter" && candidate.routing_provider !== config.openrouter_provider) fail(503, "provider_model_not_configured");
           if (config.model !== candidate.model) fail(503, "provider_model_not_configured");
-          const available = first(this.ctx.storage.sql, "SELECT available_after FROM provider_health WHERE provider=? AND model=?", candidate.provider, candidate.model)?.available_after || 0;
-          if (available > Date.now() / 1000) { attempt.available_after = available; fail(503, "provider_cooldown"); }
           const { body, tokens, microusd } = buildRequest(config, turn, contracts, current ? JSON.parse(current.history) : []);
           Object.assign(attempt, { destination: config.url, routing_provider: config.provider === "openrouter" ? config.openrouter_provider : null, max_output_tokens: config.max_output, timeout_seconds: 25, deadline_policy: "timeout_from_provider_dispatch", reserved_tokens: tokens, reservation_ceiling_usd: config.provider === "ollama" ? null : microusd / 1000000 });
           const tokenHour = Math.floor(Date.now() / 3600000);
@@ -192,7 +223,10 @@ export class WorkConversation extends DurableObject {
           });
           base.reserved_tokens += tokens;
           persist();
-          const reservation = await this.env.WORK_REASONING_BUDGET.getByName("provider-allowance-v1").reserve(attempt.attempt_id, config.provider, fingerprint, microusd);
+          const reservation = await this.env.WORK_REASONING_BUDGET.getByName("provider-allowance-v1").reserve(attempt.attempt_id, config.provider, fingerprint, microusd, { allow_probe: plan?.allow_recovery_probe !== false, allow_uncertain: plan?.allow_uncertain_outcome === true });
+          if (typeof reservation?.ok !== "boolean" || (!reservation.ok && !reservationDenials.has(reservation.code)) || (reservation.ok && (!reservation.ticket || Object.keys(reservation.ticket).length !== 2 || !["*", config.model].every(key => Object.hasOwn(reservation.ticket, key) && Number.isSafeInteger(reservation.ticket[key]) && reservation.ticket[key] >= 0) || !["healthy", "recovery_probe"].includes(reservation.health?.state)))) throw new Error("invalid_reservation_response");
+          attempt.provider_health = reservation.health || null;
+          if (reservation.health?.state === "limited") attempt.available_after = reservation.health.available_after;
           attempt.reservation_status = reservation.ok ? "reserved" : "denied";
           attempt.reserved_usd = config.provider === "ollama" ? null : reservation.ok ? microusd / 1000000 : 0;
           base.reservation_status = attempt.reservation_status;
@@ -206,6 +240,7 @@ export class WorkConversation extends DurableObject {
             persist(); fail(429, reservation.code);
           }
           if (config.provider !== "ollama") base.reserved_usd = (base.reserved_usd || 0) + microusd / 1000000;
+          attempt.health_ticket = reservation.ticket;
           Object.assign(base, { provider: config.provider, model: config.model, reasoning_effort: config.provider === "ollama" ? null : config.reasoning_effort, max_output_tokens: config.max_output, reservation_ceiling_usd: attempt.reservation_ceiling_usd });
           Object.assign(attempt, { status: "in_flight", outcome: "unknown" });
           Object.assign(base.server_exception, { provider: config.provider, model: config.model, destination: config.url, max_output_tokens: config.max_output, reserved_tokens: base.reserved_tokens, reservation_ceiling_usd: base.reserved_usd, timeout_seconds: 25, deadline_policy: "timeout_from_provider_dispatch" });
@@ -226,13 +261,18 @@ export class WorkConversation extends DurableObject {
           errorCode = error instanceof ConversationError ? error.code : "storage_or_coordination_unavailable";
           const outcome = errorCode === "provider_not_configured" ? "not_sent" : error.outcome || attempt.outcome;
           Object.assign(attempt, { status: outcome === "not_sent" ? "skipped" : "failed", outcome, error_code: errorCode });
-          if (error instanceof ConversationError) Object.assign(attempt, { upstream_http_status: error.http_status ?? null, provider_diagnostics: error.diagnostics ?? null });
+          if (error instanceof ConversationError) Object.assign(attempt, { upstream_http_status: error.http_status ?? null, provider_diagnostics: error.diagnostics ?? null, retry_after_seconds: error.retry_after_seconds ?? null, retry_guidance_source: error.retry_guidance_source ?? null });
           if (["provider_rate_limited", "provider_unavailable"].includes(errorCode)) attempt.available_after = Date.now() / 1000 + (error.retry_after_seconds ?? 30);
           proposal = blocked(errorCode);
         }
+        if (attempt.health_ticket) {
+          attempt.provider_health = await this.env.WORK_REASONING_BUDGET.getByName("provider-allowance-v1").recordOutcome(attempt.attempt_id, candidate.provider, fingerprint, { outcome: attempt.outcome, error_code: attempt.error_code, reason: attempt.provider_diagnostics?.reason ?? null, retry_after_seconds: attempt.retry_after_seconds ?? null, http_status: attempt.upstream_http_status });
+          attempt.available_after = attempt.provider_health.available_after;
+          attempt.health_settled = true;
+        }
         if (attempt.available_after !== null) this.ctx.storage.sql.exec("INSERT INTO provider_health VALUES (?,?,?) ON CONFLICT(provider,model) DO UPDATE SET available_after=excluded.available_after", attempt.provider, attempt.model, attempt.available_after);
         persist();
-        if (errorCode === null || !plan || !["provider_not_configured", "provider_model_not_configured", "output_allowance_required", "invalid_provider_configuration", "provider_unauthorized", "provider_rate_limited", "provider_rejected", "provider_unavailable", "provider_budget_exhausted", "provider_call_budget_exhausted", "provider_cooldown"].includes(errorCode) || (attempt.outcome === "unknown" && !plan.allow_uncertain_outcome)) break;
+        if (errorCode === null || !plan || !["provider_not_configured", "provider_model_not_configured", "output_allowance_required", "invalid_provider_configuration", "provider_unauthorized", "provider_rate_limited", "provider_rejected", "provider_unavailable", "provider_budget_exhausted", "provider_call_budget_exhausted", "provider_cooldown", "provider_operator_disabled", "provider_backpressure", "provider_recovery_probe_required", "provider_recovery_probe_inflight", "provider_outcome_reconciliation_required"].includes(errorCode) || (attempt.outcome === "unknown" && !plan.allow_uncertain_outcome)) break;
       }
       const last = attempts.at(-1);
       const response = await this.#finish(turn, { ...base, ...proposal, provider: last.provider, model: last.model, usage: last.usage, latency_ms: Date.now() - started, error_code: errorCode }, turn.message);

@@ -24,6 +24,7 @@ export function normalizeProviderError(raw, bodyState = null) {
   message = typeof message === "string" ? message.toLowerCase() : "";
   if (["insufficient_quota", "billing_hard_limit_reached", "credits_exhausted"].includes(code) || ["billing_error", "insufficient_quota"].includes(kind) || ["credit balance", "insufficient credit", "insufficient quota", "current quota", "spend limit", "spend cap", "payment required"].some(text => message.includes(text))) result.reason = "credit_or_quota_exhausted";
   else if (kind === "authentication_error" || code === "invalid_api_key") result.reason = "authentication_failed";
+  else if (code === 402) result.reason = "payment_required";
   else if (kind === "permission_error") result.reason = "permission_denied";
   else if (code === "context_length_exceeded") result.reason = "context_too_large";
   else if (["no endpoints found", "no eligible provider", "no available provider"].some(text => message.includes(text))) result.reason = "no_eligible_provider_endpoint";

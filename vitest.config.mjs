@@ -7,6 +7,7 @@ export default defineConfig({
     miniflare: {
       bindings: {
         HERMA_CONVERSATION_ENABLED: "true",
+        HERMA_CONVERSATION_DISABLED_PROVIDERS: "[]",
         HERMA_CONVERSATION_MAX_OUTPUT: "16384",
         HERMA_CONVERSATION_OPENAI_MODEL: "synthetic-responses-model",
         HERMA_CONVERSATION_OPENAI_INPUT_USD_PER_MILLION: "1",
@@ -39,6 +40,11 @@ export default defineConfig({
         const openai = url.hostname === "api.openai.com";
         const anthropic = url.hostname === "api.anthropic.com";
         const openrouter = url.hostname === "openrouter.ai";
+        if ((anthropic && request.headers.get("x-api-key") === "synthetic-byo-anthropic-key") || (openrouter && request.headers.get("authorization") === "Bearer synthetic-byo-openrouter-key")) {
+          const body = await request.json();
+          if (body.messages?.at(-1)?.content !== "byo-paused-provider") return new Response("Unexpected BYO fixture", { status: 422 });
+          return Response.json({ model: body.model, observed_max_tokens: body.max_tokens, synthetic_byo: true, content: [{ type: "text", text: "SYNTHETIC worker result" }] });
+        }
         if (anthropic ? request.headers.get("x-api-key") !== "synthetic-anthropic-key" || request.headers.has("authorization") || request.headers.get("anthropic-version") !== "2026-10-21" : request.headers.get("authorization") !== (openrouter ? "Bearer synthetic-openrouter-key" : openai ? "Bearer synthetic-openai-key" : "Bearer synthetic-provider-key")) return new Response("Invalid fixture credential", { status: 403 });
         const body = await request.json(), text = (openai ? body.input : body.messages).at(-1).content;
         if (openai && (body.messages !== undefined || body.tools[0].function !== undefined || body.store !== false || body.max_output_tokens !== 16384)) return new Response("Invalid Responses protocol", { status: 422 });
@@ -49,6 +55,8 @@ export default defineConfig({
         if (text === "redirect-test") return new Response(null, { status: 302, headers: { Location: "https://example.com/forbidden" } });
         if (text === "too-large-test") return new Response("x".repeat(1048577));
         if (text === "failure-test") return new Response("private upstream body", { status: 429 });
+        if (text === "diagnostic-payment") return new Response("SYNTHETIC unrecognized payment response", { status: 402 });
+        if (text === "diagnostic-timeout") return new Response("SYNTHETIC unrecognized timeout response", { status: 408 });
         if (text.startsWith("diagnostic-")) {
           const secretEcho = "sk-" + "synthetic".repeat(8);
           const errors = {
@@ -65,7 +73,7 @@ export default defineConfig({
           name: openai || anthropic ? body.tools[0].name : body.tools[0].function.name,
           arguments: { value: text === "wrong-type-test" ? "{\"synthetic\":true}" : { message: "SYNTHETIC hello", synthetic: true } }
         };
-        await new Promise(resolve => setTimeout(resolve, 20));
+        await new Promise(resolve => setTimeout(resolve, text === "health-probe-race" ? 250 : 20));
         if (openai) return Response.json({ status: "completed", output: [{ type: "reasoning", summary: [] }, { type: "function_call", ...fn, arguments: JSON.stringify(fn.arguments) }], usage: { input_tokens: 100, output_tokens: 50 } });
         if (anthropic) return Response.json({ type: "message", stop_reason: "tool_use", content: [{ type: "tool_use", name: fn.name, input: fn.arguments }], usage: { input_tokens: 100, output_tokens: 50 } });
         return Response.json(url.hostname === "api.meta.ai" || openrouter ? { model: body.model, provider: openrouter ? "synthetic-host" : "meta", choices: [{ message: { tool_calls: [{ function: { ...fn, arguments: JSON.stringify(fn.arguments) } }] }, finish_reason: "tool_calls" }], usage: { prompt_tokens: 100, completion_tokens: 50 } } : { message: { tool_calls: [{ function: fn }] }, prompt_eval_count: 100, eval_count: 50 });

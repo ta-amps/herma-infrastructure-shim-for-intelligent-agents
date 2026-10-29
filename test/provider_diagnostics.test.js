@@ -12,6 +12,7 @@ describe("bounded provider-reported diagnostics", () => {
     [{ message: "Model requested does not exist" }, "model_unavailable"],
     [{ code: 404, message: "No endpoints found that support the requested parameters" }, "no_eligible_provider_endpoint"],
     [{ code: "insufficient_quota" }, "credit_or_quota_exhausted"],
+    [{ code: 402 }, "payment_required"],
     [{ type: "invalid_request_error", message: "Your credit balance is too low" }, "credit_or_quota_exhausted"],
     [{ type: "rate_limit_error", message: "Workspace spend cap reached" }, "credit_or_quota_exhausted"],
     [{ type: "authentication_error" }, "authentication_failed"],

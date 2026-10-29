@@ -38,6 +38,7 @@ from herma.store import ProvisionStore
             "no_eligible_provider_endpoint",
         ),
         ({"code": "insufficient_quota"}, "credit_or_quota_exhausted"),
+        ({"code": 402}, "payment_required"),
         (
             {"type": "invalid_request_error", "message": "Your credit balance is too low"},
             "credit_or_quota_exhausted",
