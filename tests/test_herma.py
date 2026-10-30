@@ -708,7 +708,7 @@ async def test_herma_handshake_endpoint_and_peer_sync(
                 "X-Herma-Harness": "opencode",
                 "User-Agent": "Muse-Personal-Assistant/1.0",
             },
-            json={"protocol_version": "1.0", "surface_id": "kothar"},
+            json={"protocol_version": "1.0", "surface_id": "eranos"},
         )
         assert r_consumer.status_code == 200
 
@@ -717,16 +717,16 @@ async def test_herma_handshake_endpoint_and_peer_sync(
             headers={
                 "X-Herma-Key": raw_key,
                 "X-Herma-Harness": "opencode",
-                "X-Surface-Id": "kothar",
+                "X-Surface-Id": "eranos",
             },
             json={
                 "protocol_version": "1.0",
-                "surface_id": "kothar",
+                "surface_id": "eranos",
                 "requested_max_chars": 900_000,
             },
         )
         assert r_hs.status_code == 200
-        assert r_hs.headers["x-surface-id"] == "kothar"
+        assert r_hs.headers["x-surface-id"] == "eranos"
         assert HEX64_RE.match(r_hs.headers["x-handshake-id"])
         hs_json = r_hs.json()
         assert hs_json["backend"] == "herma"
@@ -739,9 +739,9 @@ async def test_herma_handshake_endpoint_and_peer_sync(
             headers={
                 "X-Herma-Key": raw_key,
                 "X-Herma-Harness": "opencode",
-                "X-Surface-Id": "shamash",
+                "X-Surface-Id": "agora",
             },
-            json={"protocol_version": "1.0", "surface_id": "kothar"},
+            json={"protocol_version": "1.0", "surface_id": "eranos"},
         )
         assert r_mismatch.status_code == 400
 
@@ -781,7 +781,7 @@ async def test_herma_handshake_endpoint_and_peer_sync(
         synced = await downstream.sync_from_remote_handshake(
             "https://herma-peer.example.test",
             token=raw_key,
-            surface_id="kothar",
+            surface_id="eranos",
             handshake_path="/v1/handshake",
             provisions_path="/v1/provisions?include_context=true",
         )
@@ -800,14 +800,14 @@ const kr = await worker.fetch(new Request("https://herma.ta-amps.workers.dev/v1/
 const kj = await kr.json();
 const hr = await worker.fetch(new Request("https://herma.ta-amps.workers.dev/v1/handshake", {
   method: "POST",
-  headers: { "content-type": "application/json", "x-herma-key": kj.key, "x-herma-harness": "opencode", "x-surface-id": "kinema" },
-  body: JSON.stringify({ protocol_version: "1.0", surface_id: "kinema", requested_max_chars: 999999 }),
+  headers: { "content-type": "application/json", "x-herma-key": kj.key, "x-herma-harness": "opencode", "x-surface-id": "agora" },
+  body: JSON.stringify({ protocol_version: "1.0", surface_id: "agora", requested_max_chars: 999999 }),
 }), env);
 console.log(JSON.stringify({ status: hr.status, surfHdr: hr.headers.get("x-surface-id"), body: await hr.json() }));
 """
     )
     assert cf["status"] == 200
-    assert cf["surfHdr"] == "kinema"
+    assert cf["surfHdr"] == "agora"
     assert cf["body"]["clamped_max_chars"] == 16_000
     assert cf["body"]["backend"] == "herma"
 
@@ -1293,7 +1293,7 @@ async def test_governance_lens_blob_sha256_integrity_and_contributor_offline_ref
             return httpx.Response(
                 200,
                 json={
-                    "producer_surface": "surface:shamash",
+                    "producer_surface": "surface:agora",
                     "visibility_scope": "public_commons",
                     "tags": [],
                     "value": {
@@ -1343,7 +1343,7 @@ async def test_governance_lens_blob_sha256_integrity_and_contributor_offline_ref
             return httpx.Response(
                 200,
                 json={
-                    "producer_surface": "surface:shamash",
+                    "producer_surface": "surface:agora",
                     "visibility_scope": "public_commons",
                     "tags": ["status:verified"],
                     "value": {

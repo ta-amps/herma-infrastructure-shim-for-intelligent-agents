@@ -86,6 +86,11 @@ GOV_ENVELOPE_KEYS = frozenset(
 KNOWN_STATUS_VALUES = frozenset(
     {"quarantined", "verified", "unverified", "pending", "rejected", "draft"}
 )
+# Fabric records Herma imports must name one of these producers: the two public surfaces (Eranos, Agora)
+# and the two infrastructure services (Tessera, Herma). A retired surface is not listed, so it grants nothing.
+TRUSTED_PRODUCER_SURFACES = frozenset(
+    {"surface:tessera", "surface:eranos", "surface:herma", "surface:agora"}
+)
 
 SCHEMA_SQL = """
 PRAGMA journal_mode = WAL;
@@ -261,14 +266,8 @@ def passes_governance_lens(
             return False
         if not isinstance(gov["namespace"], str) or not gov["namespace"].strip():
             return False
-        if gov["producer_surface"] not in {
-            "surface:tessera",
-            "surface:shamash",
-            "surface:eranos",
-            "surface:herma",
-            "surface:kothar",
-            "surface:kinema",
-        }:
+        producer = gov["producer_surface"]
+        if not isinstance(producer, str) or producer not in TRUSTED_PRODUCER_SURFACES:
             return False
         if any(
             not isinstance(gov[key], list) or any(not isinstance(x, str) for x in gov[key])
