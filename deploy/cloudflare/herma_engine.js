@@ -194,7 +194,7 @@ export const DEFAULT_PROVISIONS = [
     },
   },
   {
-    prov_id: "PROV-SHAMASH-NON-ACCUSATORY",
+    prov_id: "PROV-RISK-REVIEW-NON-ACCUSATORY",
     title: "Non-Accusatory Risk Indicators & Synthetic Bundle Guard",
     summary: "Ensures fraud/harm analysis stays strictly non-accusatory, verifies SYNTHETIC markers, and routes T3/T4 decisions to human reviewers.",
     priority: 280,
@@ -206,18 +206,18 @@ export const DEFAULT_PROVISIONS = [
     inject_text: "Outputs must express objective risk indicators tied to primary statute cards and recomputed multi-currency arithmetic -- never accuse any party of being a criminal, scammer, or perpetrator. Refuse bundles lacking an explicit SYNTHETIC marker, and route T3 holds and T4 referrals exclusively to human reviewers.",
     uris: [
       {
-        uri: "https://shamash.ta-amps.workers.dev",
-        label: "Shamash Investigation & Triage Surface",
+        uri: "https://github.com/ta-amps/seed-packs/tree/main/packs/exploitation-evidence",
+        label: "Exploitation Evidence Seed Pack",
         kind: "doc",
         inline_excerpt: "Card-backed multi-currency checks across 10 harm areas and 27 dated statute cards.",
       },
     ],
-    metadata_tags: { domain: "harm-triage", surface: "shamash" },
+    metadata_tags: { domain: "harm-triage" },
     triggers: {
       mode: "any",
       keyword: {
-        any_keywords: ["statute card", "shamash", "t4 referral", "advance_to_payout", "payee_mismatch"],
-        path_globs: ["*shamash/*.py", "areas/*", "cards/*.json"],
+        any_keywords: ["statute card", "exploitation evidence", "t4 referral", "advance_to_payout", "payee_mismatch"],
+        path_globs: ["*exploitation_evidence/*.py", "areas/*", "cards/*.json"],
       },
       semantic: {
         exemplars: [
@@ -388,8 +388,8 @@ export const PREVIEW_JS = `(function () {
       wire: "responses"
     },
     statute: {
-      prompt: "Check statute card US-ROSCA-8403 after ValueError: stale fencing token in shamash/checks.py",
-      path: "shamash/checks.py",
+      prompt: "Check statute card US-ROSCA-8403 after ValueError: stale fencing token in exploitation_evidence/checks.py",
+      path: "exploitation_evidence/checks.py",
       wire: "chat_completions"
     }
   };

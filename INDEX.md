@@ -74,7 +74,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [examples/provisions/PROV-DIRECT-NOUN-VERB-SCHEMA.json](examples/provisions/PROV-DIRECT-NOUN-VERB-SCHEMA.json) | Direct Canonical Noun & Verb Schema Lookup |
 | [examples/provisions/PROV-EDGE-ORIGIN-LOCKDOWN.json](examples/provisions/PROV-EDGE-ORIGIN-LOCKDOWN.json) | Cloudflare Worker x-edge-auth & Security Header Contract |
 | [examples/provisions/PROV-NGO-HUMAN-BOUNDARY.json](examples/provisions/PROV-NGO-HUMAN-BOUNDARY.json) | NGO Kit Human-Only Crisis & Two-Donor Review Boundary |
-| [examples/provisions/PROV-SHAMASH-NON-ACCUSATORY.json](examples/provisions/PROV-SHAMASH-NON-ACCUSATORY.json) | Non-Accusatory Risk Indicators & Synthetic Bundle Guard |
+| [examples/provisions/PROV-RISK-REVIEW-NON-ACCUSATORY.json](examples/provisions/PROV-RISK-REVIEW-NON-ACCUSATORY.json) | Non-Accusatory Risk Indicators & Synthetic Bundle Guard |
 | [examples/provisions/PROV-TESSERA-FENCING.json](examples/provisions/PROV-TESSERA-FENCING.json) | Tessera Atomic Lease Fencing & Compare-and-Set Storage |
 | [examples/provisions/README.md](examples/provisions/README.md) | Example Provisions & Atomic Noun/Verb Context |
 | [examples/provisions/context/CONTEXT-TESSERA-NOUNS-VERBS.json](examples/provisions/context/CONTEXT-TESSERA-NOUNS-VERBS.json) | JSON object: entries |

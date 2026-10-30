@@ -165,12 +165,12 @@ def test_http_edge_lockdown_and_dry_run_across_wire_formats(
             "wire_format": "responses",
             "payload": {
                 "model": "muse-spark-1.3",
-                "input": "Update statute card checks in shamash/lanes/checks.py",
+                "input": "Update statute card checks in exploitation_evidence/lanes/checks.py",
             },
         },
     )
     assert r_resp.status_code == 200
-    assert "PROV-SHAMASH-NON-ACCUSATORY@v1" in r_resp.json()["receipt"]["provisions_fired"]
+    assert "PROV-RISK-REVIEW-NON-ACCUSATORY@v1" in r_resp.json()["receipt"]["provisions_fired"]
     assert "HERMA PROVISION" in r_resp.json()["augmented_payload"]["instructions"]
 
     # Anthropic /v1/messages envelope injection:
