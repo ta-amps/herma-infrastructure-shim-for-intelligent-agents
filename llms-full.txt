@@ -8,7 +8,7 @@ Contents: README.md, docs/summary.md, docs/architecture.md, docs/harnesses.md, d
 
 ========================================================================
 FILE: README.md
-URL: https://github.com/ta-amps/herma/blob/main/README.md
+URL: https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/README.md
 ========================================================================
 
 # Herma – the shim for any agent
@@ -115,7 +115,7 @@ External coding harnesses and personal assistants: [anonymous previews and track
 
 ========================================================================
 FILE: docs/summary.md
-URL: https://github.com/ta-amps/herma/blob/main/docs/summary.md
+URL: https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/summary.md
 ========================================================================
 
 # Summary
@@ -131,7 +131,7 @@ Before an outbound coding-harness request reaches `/v1/chat/completions`, `/v1/r
 
 ========================================================================
 FILE: docs/architecture.md
-URL: https://github.com/ta-amps/herma/blob/main/docs/architecture.md
+URL: https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/architecture.md
 ========================================================================
 
 # Architecture
@@ -185,7 +185,7 @@ flowchart LR
 
 ========================================================================
 FILE: docs/harnesses.md
-URL: https://github.com/ta-amps/herma/blob/main/docs/harnesses.md
+URL: https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/harnesses.md
 ========================================================================
 
 # Connecting Configurable Agentic Coding Harnesses
@@ -244,7 +244,7 @@ HTTP tests, native fixtures and pending full-loop tests, and the
 
 ========================================================================
 FILE: docs/setup.md
-URL: https://github.com/ta-amps/herma/blob/main/docs/setup.md
+URL: https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/setup.md
 ========================================================================
 
 # Setup, Context Database, Backing Stores & Cloudflare Deployment
@@ -291,7 +291,7 @@ npx --yes wrangler@4.149.0 secret put BOOTSTRAP_SECRET --config deploy/cloudflar
 
 ========================================================================
 FILE: examples/provisions/README.md
-URL: https://github.com/ta-amps/herma/blob/main/examples/provisions/README.md
+URL: https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/examples/provisions/README.md
 ========================================================================
 
 # Example Provisions & Atomic Noun/Verb Context
@@ -307,7 +307,7 @@ Each `examples/provisions/*.json` file conforms to `herma.schemas.Provision` (`e
 
 ========================================================================
 FILE: docs/handoff.md
-URL: https://github.com/ta-amps/herma/blob/main/docs/handoff.md
+URL: https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/handoff.md
 ========================================================================
 
 # Handoff & Status
@@ -349,7 +349,7 @@ certification.
 
 ========================================================================
 FILE: AGENTS.md
-URL: https://github.com/ta-amps/herma/blob/main/AGENTS.md
+URL: https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/AGENTS.md
 ========================================================================
 
 # AGENTS.md -- Herma Hard Rules
