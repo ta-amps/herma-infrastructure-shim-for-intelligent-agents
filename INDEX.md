@@ -11,7 +11,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [CHANGELOG.md](CHANGELOG.md) | Changelog |
 | [LICENSE](LICENSE) | MIT License |
 | [Makefile](Makefile) | Herma. |
-| [README.md](README.md) | Herma |
+| [README.md](README.md) | Herma – the shim for any agent |
 | [architecture.json](architecture.json) | herma |
 | [package.json](package.json) | herma-worker |
 | [pyproject.toml](pyproject.toml) |  |
