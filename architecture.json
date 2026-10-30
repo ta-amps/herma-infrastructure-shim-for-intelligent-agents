@@ -1,5 +1,5 @@
 {
-  "$schema": "https://github.com/ta-amps/hackathon-context/blob/main/agents/schemas/architecture.schema.json",
+  "$schema": "https://github.com/ta-amps/ta-amps-hackathon/blob/main/hackathon/agents/schemas/architecture.schema.json",
   "schema_version": 1,
   "name": "herma",
   "summary": "Herma: context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic noun, verb, and URI context from a caller-isolated database before LLM execution. Rules, deterministic entity memory, and atomic noun/verb entries load from SQLite/D1, governed Tessera stores and blobs, or remote handshake servers; personal assistants use the same scoped credentials as coding harnesses; contributor-tier models are refused.",

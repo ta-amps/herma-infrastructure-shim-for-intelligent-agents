@@ -3,7 +3,7 @@
 ## Integration checkpoint, October 29, 2026
 
 The reviewed release is merged into `main`. The tested implementation revision is
-`e1b87f881a1e1a2427f06a5afb229603e7dee6eb`; [its GitHub checks](https://github.com/ta-amps/herma/actions/runs/40873481450) passed.
+`e1b87f881a1e1a2427f06a5afb229603e7dee6eb`; [its GitHub checks](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/actions/runs/40873481450) passed.
 Fresh builds matched the deployed Worker executable exactly.
 
 85 Python tests and 49 actual Worker checks passed, including strict decision types and offline no-egress controls.

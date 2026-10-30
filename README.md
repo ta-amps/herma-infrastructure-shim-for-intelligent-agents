@@ -49,7 +49,7 @@ Static system prompts bloat every turn when stuffed with every rule, schema, and
    - **Tier 2 -- Semantic Similarity Triggers**: Hybrid concept-cluster + subword cosine matching (plus optional `/v1/embeddings`) can match paraphrased intent without shared literal keywords. Match quality depends on the configured rules and examples.
    - **Tier 3 -- Micromodel Router Triggers**: Lightweight fast classifier prompt (`HERMA_MICROMODEL_URL`, with deterministic offline fallback) invoked only when Tier 1 and Tier 2 did not already match in `any` mode.
    - **Typed and Offline Boundaries**: Model decisions require a JSON boolean `apply` and finite numeric confidence; malformed replies never activate a provision. Offline previews and dry-runs skip model and embedding providers. See [routing boundaries and evidence](docs/design-and-evidence.md#configured-shim-reasoning-and-offline-boundaries).
-   - Matched rules shim bounded rule prose, authoritative URIs (`https://`, SHA-256 verified `tessera://blobs/<sha256>`, `tessera://buckets/<bucket>/<key>`, `mcp://`, `urn:`), and **atomic noun, verb, and detail definitions** (`[NOUN/VERB CONTEXT]`) pulled from a caller-isolated database (`POST /v1/context` / `GET /v1/context`, SQLite/D1 `context_entries`, Layer-1 governed [Tessera](https://github.com/ta-amps/tessera) noun stores & buckets, or a remote handshake database) -- deduplicated across turns (`once_per_conversation`) with a canonical SHA-256 `InjectionReceipt`.
+   - Matched rules shim bounded rule prose, authoritative URIs (`https://`, SHA-256 verified `tessera://blobs/<sha256>`, `tessera://buckets/<bucket>/<key>`, `mcp://`, `urn:`), and **atomic noun, verb, and detail definitions** (`[NOUN/VERB CONTEXT]`) pulled from a caller-isolated database (`POST /v1/context` / `GET /v1/context`, SQLite/D1 `context_entries`, Layer-1 governed [Tessera](https://github.com/ta-amps/tessera-infrastructure-work-and-storage-engine) noun stores & buckets, or a remote handshake database) -- deduplicated across turns (`once_per_conversation`) with a canonical SHA-256 `InjectionReceipt`.
 
 2. **Responding Directly (`action: "respond_directly"`)**:
    - When a matched rule can answer or enforce a deterministic response directly (workspace command recipes, canonical noun/verb schema lookups, or blocked-action guidance), Herma short-circuits upstream forwarding and responds directly in the caller's native protocol (`/v1/chat/completions`, `/v1/responses`, `/v1/messages`, `/v1/dry-run`) with zero upstream LLM token spend, attaching `x-herma-direct-response: true` and `x-herma-receipt-sha256`.
@@ -69,8 +69,8 @@ Herma accepts coding harnesses and personal assistants that can send explicit sc
 ## Quick Start
 
 ```bash
-git clone https://github.com/ta-amps/herma.git
-cd herma
+git clone https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents.git
+cd herma-infrastructure-shim-for-intelligent-agents
 make setup
 make check
 make demo
@@ -82,11 +82,11 @@ uv are required; no sibling checkout is needed.
 
 ## The ta-amps ecosystem
 
-- **Eranos** (`https://eranos.ta-amps.workers.dev`), public surface: the two-sided marketplace where people donate spare AI capacity and their agents build and review agent kits for nonprofits (`github.com/ta-amps/eranos`)
-- **Agora** (`https://ta-amps.github.io/agora/`), public surface: the single overview of architecture and setup, use cases, connecting any agent and contributing (`github.com/ta-amps/agora`)
-- **Tessera** (`https://tessera.ta-amps.workers.dev`), infrastructure: atomic noun/verb work queue and compare-and-set storage (`github.com/ta-amps/tessera`)
-- **Herma** (`https://herma.ta-amps.workers.dev`), infrastructure: context-shimming AI middleware for configurable coding harnesses -- 3-tier rules, caller-isolated noun/verb context database, deterministic entity memory, and zero-token direct responses (`github.com/ta-amps/herma`)
-- **Pack library** (`github.com/ta-amps/pack-contributions`): seed packs of nouns and verbs, such as the collection for spotting exploitation and scams in synthetic cases, never accusing anyone
+- **Eranos** (`https://eranos.ta-amps.workers.dev`), public surface: the two-sided marketplace where people donate spare AI capacity and their agents build and review agent kits for nonprofits (`github.com/ta-amps/eranos-public-marketplace-for-public-good-token-burn`)
+- **Agora** (`https://ta-amps.github.io/agora-public-overview-architecture-setup-and-contribution/`), public surface: the single overview of architecture and setup, use cases, connecting any agent and contributing (`github.com/ta-amps/agora-public-overview-architecture-setup-and-contribution`)
+- **Tessera** (`https://tessera.ta-amps.workers.dev`), infrastructure: atomic noun/verb work queue and compare-and-set storage (`github.com/ta-amps/tessera-infrastructure-work-and-storage-engine`)
+- **Herma** (`https://herma.ta-amps.workers.dev`), infrastructure: context-shimming AI middleware for configurable coding harnesses -- 3-tier rules, caller-isolated noun/verb context database, deterministic entity memory, and zero-token direct responses (`github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents`)
+- **Pack library** (`github.com/ta-amps/seed-packs-library-of-nouns-and-verbs`): seed packs of nouns and verbs, such as the collection for spotting exploitation and scams in synthetic cases, never accusing anyone
 - `https://home.ta-amps.workers.dev` is not a surface; that address sends people to Agora and still serves the agent brief as text at `/connect`.
 
 ## Documentation
