@@ -92,8 +92,8 @@ PREVIEW_JS = """(function () {
       wire: "responses"
     },
     statute: {
-      prompt: "Check statute card US-ROSCA-8403 after ValueError: stale fencing token in shamash/checks.py",
-      path: "shamash/checks.py",
+      prompt: "Check statute card US-ROSCA-8403 after ValueError: stale fencing token in exploitation_evidence/checks.py",
+      path: "exploitation_evidence/checks.py",
       wire: "chat_completions"
     }
   };

@@ -1894,6 +1894,12 @@ const prev = await (await worker.fetch(new Request("https://herma.ta-amps.worker
   method: "POST", headers: { "content-type": "application/json" },
   body: JSON.stringify({ prompt: "Check src/tessera/_tasks.py fencing and US-ROSCA-8403" }),
 }), env)).json();
+const riskPrev = await (await worker.fetch(new Request("https://herma.ta-amps.workers.dev/api/preview", {
+  method: "POST", headers: { "content-type": "application/json" },
+  body: JSON.stringify({ prompt: "Check statute card US-ROSCA-8403 after ValueError: stale fencing token in exploitation_evidence/checks.py", workspace_paths: ["exploitation_evidence/checks.py"] }),
+}), env)).json();
+const riskMatch = riskPrev.matches.find((m) => m.prov_id === "PROV-RISK-REVIEW-NON-ACCUSATORY");
+const llmsFullText = await llmsFull.text();
 
 const mcpInit = await (await worker.fetch(new Request("https://herma.ta-amps.workers.dev/mcp", {
   method: "POST", headers: { "content-type": "application/json" },
@@ -1918,6 +1924,8 @@ console.log(JSON.stringify({
   hasSvgHeader: homeHtml.includes('class="brand-mark"') && homeHtml.includes('class="table-wrap"'),
   prevPersisted: prev.persisted,
   prevMatches: prev.matches.length,
+  riskReasons: riskMatch ? riskMatch.reasons : null,
+  starterIds: [...llmsFullText.matchAll(/^- `(PROV-[A-Z0-9-]+)`/gm)].map((m) => m[1]).sort(),
   mcpServer: mcpInit.result.serverInfo.name,
   mcpTools: mcpList.result.tools.map((t) => t.name),
   mcpExtracted: mcpCall.result.structuredContent.count,
@@ -1932,6 +1940,15 @@ console.log(JSON.stringify({
     assert cf["cardName"] == "Herma"
     assert cf["hasSvgHeader"] is True
     assert cf["prevPersisted"] is False and cf["prevMatches"] >= 1
+    # The console's statute preset fires the plain-named starter through its path trigger, and
+    # the Worker's starter provisions mirror the Python example provisions one for one.
+    assert cf["riskReasons"] is not None
+    assert any(reason.startswith("keyword:path(") for reason in cf["riskReasons"])
+    example_ids = sorted(
+        json.loads(path.read_text(encoding="utf-8"))["prov_id"]
+        for path in (REPO_ROOT / "examples" / "provisions").glob("*.json")
+    )
+    assert cf["starterIds"] == example_ids
     assert cf["mcpServer"] == "herma"
     assert set(cf["mcpTools"]) == {"list_builtin_provisions", "preview_shim", "extract_entities"}
     assert cf["mcpExtracted"] >= 2
