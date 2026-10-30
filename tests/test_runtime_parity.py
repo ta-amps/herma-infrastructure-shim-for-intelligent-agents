@@ -32,13 +32,19 @@ from herma.errors import HermaError
 from herma.harness_gate import is_contributor_model
 from herma.provider_health import operator_policy
 from herma.provider_plan import operator_grants, upstream_identity
-from herma.store import TRUSTED_PRODUCER_SURFACES, ProvisionStore, passes_governance_lens
+from herma.schemas import KeywordTrigger, Provision, StoredProvision, TriggerSpec
+from herma.store import (
+    TRUSTED_PRODUCER_SURFACES,
+    ProvisionStore,
+    passes_governance_lens,
+    provision_passes_lens,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE = """
 import { createHash } from 'node:crypto';
 import * as c from './deploy/cloudflare/conversation.js';
-import { isContributorModel, passesGovernanceLens, TRUSTED_PRODUCER_SURFACES } from './deploy/cloudflare/herma_engine.js';
+import { isContributorModel, passesGovernanceLens, provisionPassesLens, TRUSTED_PRODUCER_SURFACES } from './deploy/cloudflare/herma_engine.js';
 import { operatorPolicy } from './deploy/cloudflare/provider_health.js';
 let raw = ''; for await (const chunk of process.stdin) raw += chunk;
 const outcome = run => { try { return run(); } catch (error) { return { error: error.code ?? error.message }; } };
@@ -56,6 +62,8 @@ result.sizes = input.sizes.map(body => [c.bytes(body), createHash('sha256').upda
 result.strict = input.strict.map(text => outcome(() => c.strictJson(text)));
 result.lens = input.lens.map(item => passesGovernanceLens(item));
 result.trusted = [...TRUSTED_PRODUCER_SURFACES].sort();
+result.stored_lens = input.stored_lens.map(([store, tags, cohort]) =>
+  provisionPassesLens({ source_store: store, provision: { metadata_tags: tags } }, { harnessKind: "opencode", cohort }));
 console.log(JSON.stringify(result));
 """
 
@@ -233,6 +241,44 @@ LENS = [
     }
     for producer in PRODUCERS
 ]
+# Flat tags as the pre-2026-10-27 sync stored them, the shape of Herma's six live starters.
+LEGACY_TAGS = {
+    "allowed_surfaces": "surface:herma,surface:tessera",
+    "domain": "swarm-fabric",
+    "producer_surface": "surface:herma",
+    "status": "status:verified",
+}
+SYNCED = "tessera_cloud:herma.provisions"
+
+
+def fabric(**changes: Any) -> str:
+    governance: dict[str, Any] = {
+        "namespace": "main",
+        "producer_surface": "surface:herma",
+        "visibility_scope": "public_commons",
+        "allowed_surfaces": ["surface:herma", "surface:tessera"],
+        "target_cohorts": ["all"],
+        "tags": ["status:verified"],
+    }
+    return json.dumps({**governance, **changes})
+
+
+STORED_LENS: list[tuple[str, dict[str, str], str, bool]] = [
+    ("system_builtin", {}, "", True),
+    ("harness:opencode", {}, "", True),
+    (SYNCED, LEGACY_TAGS, "", False),
+    (SYNCED, {**LEGACY_TAGS, "fabric_governance": fabric()}, "", True),
+    (SYNCED, {"fabric_governance": fabric(producer_surface="surface:frontier")}, "", False),
+    (SYNCED, {"fabric_governance": fabric(target_cohorts=["cohort:ngo-helpline"])}, "", False),
+    (
+        SYNCED,
+        {"fabric_governance": fabric(target_cohorts=["cohort:ngo-helpline"])},
+        "ngo-helpline",
+        True,
+    ),
+    (SYNCED, {"fabric_governance": fabric(tags=["status:quarantined"])}, "", False),
+    (SYNCED, {"fabric_governance": "{not json"}, "", False),
+]
 
 
 def python_outcome(run: Any) -> Any:
@@ -271,6 +317,7 @@ def worker() -> dict[str, Any]:
         "sizes": SIZES,
         "strict": STRICT,
         "lens": LENS,
+        "stored_lens": [[store, tags, cohort] for store, tags, cohort, _ in STORED_LENS],
     }
     result = subprocess.run(
         ["node", "--no-warnings", "--input-type=module", "-e", NODE],
@@ -295,6 +342,33 @@ def test_governance_lens_trusts_the_same_producer_surfaces(worker: dict[str, Any
     assert worker["trusted"] == sorted(TRUSTED_PRODUCER_SURFACES) == sorted(CURRENT_SURFACES)
     assert worker["lens"] == [passes_governance_lens(item) for item in LENS]
     assert [p for p, ok in zip(PRODUCERS, worker["lens"], strict=True) if ok] == CURRENT_SURFACES
+
+
+def stored_case(source_store: str, tags: dict[str, str]) -> StoredProvision:
+    provision = Provision(
+        prov_id="PROV-LENS-CASE",
+        title="Lens case",
+        summary="One stored row for the Layer-1 lens.",
+        inject_text="Synthetic text for a lens check.",
+        metadata_tags=tags,
+        triggers=TriggerSpec(keyword=KeywordTrigger(any_keywords=["lens"])),
+    )
+    return StoredProvision(
+        provision=provision,
+        version=1,
+        content_sha256="0" * 64,
+        source_store=source_store,
+        updated_at=0.0,
+    )
+
+
+def test_stored_provisions_pass_the_lens_the_same_way(worker: dict[str, Any]) -> None:
+    """Synced rows fire only with fabric_governance; the flat tags of the pre-lens sync never do."""
+    python = [
+        provision_passes_lens(stored_case(store, tags), harness_kind="opencode", cohort=cohort)
+        for store, tags, cohort, _ in STORED_LENS
+    ]
+    assert worker["stored_lens"] == python == [expected for *_, expected in STORED_LENS]
 
 
 def test_identity_contributor_and_exact_amounts_match_the_worker(worker: dict[str, Any]) -> None:
