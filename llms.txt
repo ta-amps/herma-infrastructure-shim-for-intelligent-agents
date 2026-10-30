@@ -1,4 +1,4 @@
-# Herma
+# Herma – the shim for any agent
 
 > Herma is infrastructure: it connects agents to context and models. Versioned nouns carry data and evidence; claimable verbs carry work. Tessera's storage and task contracts remain the shared authority, and Herma adds no separate domain reasoning runtime.
 
