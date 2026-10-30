@@ -328,7 +328,7 @@ def _render_header() -> str:
         <a href="/healthz">Health JSON</a>
         <a href="/llms.txt">llms.txt</a>
         <a href="/.well-known/agent-card.json">Agent Card</a>
-        <a href="https://github.com/ta-amps/herma">GitHub</a>
+        <a href="https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents">GitHub</a>
       </nav>
     </div>
   </header>"""
