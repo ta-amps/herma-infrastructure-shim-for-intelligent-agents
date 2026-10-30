@@ -189,7 +189,8 @@
       ],
       "tests": [
         "tests/test_api_and_proxy.py",
-        "tests/test_herma.py"
+        "tests/test_herma.py",
+        "tests/test_retired_names.py"
       ]
     },
     {
@@ -270,7 +271,8 @@
         "test/conversation.test.js",
         "test/provider_diagnostics.test.js",
         "test/provider_health.test.js",
-        "test/provider_grants.test.js"
+        "test/provider_grants.test.js",
+        "tests/test_retired_names.py"
       ]
     }
   ],
@@ -418,6 +420,16 @@
         "tests/test_provider_grants.py::test_plans_refuse_a_second_credential_for_the_same_upstream_model",
         "tests/test_provider_grants.py::test_rate_limit_holds_the_upstream_model_against_other_credentials",
         "test/provider_grants.test.js"
+      ]
+    },
+    {
+      "id": "H18",
+      "statement": "Served pages, discovery text, starter seed data and runtime sources never name a retired pack, and fabric imports trust only the current producer surfaces: Tessera, Herma, Eranos and Agora",
+      "enforced_by": "edge",
+      "checked_by": [
+        "tests/test_retired_names.py::test_served_text_names_no_retired_pack",
+        "tests/test_retired_names.py::test_seed_data_and_runtime_sources_name_no_retired_pack",
+        "tests/test_runtime_parity.py::test_governance_lens_trusts_the_same_producer_surfaces"
       ]
     }
   ],

@@ -32,13 +32,13 @@ from herma.errors import HermaError
 from herma.harness_gate import is_contributor_model
 from herma.provider_health import operator_policy
 from herma.provider_plan import operator_grants, upstream_identity
-from herma.store import ProvisionStore
+from herma.store import TRUSTED_PRODUCER_SURFACES, ProvisionStore, passes_governance_lens
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE = """
 import { createHash } from 'node:crypto';
 import * as c from './deploy/cloudflare/conversation.js';
-import { isContributorModel } from './deploy/cloudflare/herma_engine.js';
+import { isContributorModel, passesGovernanceLens, TRUSTED_PRODUCER_SURFACES } from './deploy/cloudflare/herma_engine.js';
 import { operatorPolicy } from './deploy/cloudflare/provider_health.js';
 let raw = ''; for await (const chunk of process.stdin) raw += chunk;
 const outcome = run => { try { return run(); } catch (error) { return { error: error.code ?? error.message }; } };
@@ -54,6 +54,8 @@ result.grants = input.grants.map(env => outcome(() => [...c.operatorGrants(env).
 result.policies = input.policies.map(([provider, env]) => outcome(() => operatorPolicy(env, provider)));
 result.sizes = input.sizes.map(body => [c.bytes(body), createHash('sha256').update(JSON.stringify(body)).digest('hex')]);
 result.strict = input.strict.map(text => outcome(() => c.strictJson(text)));
+result.lens = input.lens.map(item => passesGovernanceLens(item));
+result.trusted = [...TRUSTED_PRODUCER_SURFACES].sort();
 console.log(JSON.stringify(result));
 """
 
@@ -209,6 +211,28 @@ SIZES: list[Any] = [
     {"messages": [{"role": "user", "content": "lone \ud800 surrogate"}], "temperature": 0.4},
 ]
 STRICT = ['{"a":1}', '{"a":1,"a":2}', '{"a":{"b":1,"b":2}}', '{"a":NaN}', "[1,2]", "{"]
+CURRENT_SURFACES = ["surface:tessera", "surface:eranos", "surface:herma", "surface:agora"]
+PRODUCERS: list[Any] = [
+    *CURRENT_SURFACES,
+    "surface:frontier",
+    "surface:Herma",
+    "herma",
+    "surface:",
+    "",
+    None,
+    ["surface:herma"],
+]
+LENS = [
+    {
+        "namespace": "herma.provisions",
+        "producer_surface": producer,
+        "visibility_scope": "public_commons",
+        "allowed_surfaces": [],
+        "target_cohorts": ["all"],
+        "tags": ["status:verified"],
+    }
+    for producer in PRODUCERS
+]
 
 
 def python_outcome(run: Any) -> Any:
@@ -246,6 +270,7 @@ def worker() -> dict[str, Any]:
         "policies": POLICIES,
         "sizes": SIZES,
         "strict": STRICT,
+        "lens": LENS,
     }
     result = subprocess.run(
         ["node", "--no-warnings", "--input-type=module", "-e", NODE],
@@ -263,6 +288,13 @@ def clean_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in list(os.environ):
         if name.startswith("HERMA_"):
             monkeypatch.delenv(name)
+
+
+def test_governance_lens_trusts_the_same_producer_surfaces(worker: dict[str, Any]) -> None:
+    """Only the current surfaces may produce imported records; a retired surface grants nothing."""
+    assert worker["trusted"] == sorted(TRUSTED_PRODUCER_SURFACES) == sorted(CURRENT_SURFACES)
+    assert worker["lens"] == [passes_governance_lens(item) for item in LENS]
+    assert [p for p, ok in zip(PRODUCERS, worker["lens"], strict=True) if ok] == CURRENT_SURFACES
 
 
 def test_identity_contributor_and_exact_amounts_match_the_worker(worker: dict[str, Any]) -> None:

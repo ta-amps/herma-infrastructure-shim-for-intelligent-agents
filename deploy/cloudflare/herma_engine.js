@@ -26,6 +26,9 @@ export const ALLOWED_ENTITY_KINDS = new Set([
   "error_signature",
 ]);
 export const ALLOWED_OUTCOMES = new Set(["accepted", "retry_error", "ignored", "overridden"]);
+// Fabric records Herma imports must name one of these producers: the two public surfaces (Eranos, Agora)
+// and the two infrastructure services (Tessera, Herma). A retired surface is not listed, so it grants nothing.
+export const TRUSTED_PRODUCER_SURFACES = new Set(["surface:tessera", "surface:eranos", "surface:herma", "surface:agora"]);
 
 const PROJECT_TAG_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,63}$/;
 const BLOB_SHA256_RE = /^[0-9a-f]{64}$/;
@@ -206,7 +209,7 @@ export const DEFAULT_PROVISIONS = [
     inject_text: "Outputs must express objective risk indicators tied to primary statute cards and recomputed multi-currency arithmetic -- never accuse any party of being a criminal, scammer, or perpetrator. Refuse bundles lacking an explicit SYNTHETIC marker, and route T3 holds and T4 referrals exclusively to human reviewers.",
     uris: [
       {
-        uri: "https://github.com/ta-amps/seed-packs/tree/main/packs/exploitation-evidence",
+        uri: "https://github.com/ta-amps/seed-packs-library-of-nouns-and-verbs/tree/main/packs/exploitation-evidence",
         label: "Exploitation Evidence Seed Pack",
         kind: "doc",
         inline_excerpt: "Card-backed multi-currency checks across 10 harm areas and 27 dated statute cards.",
@@ -703,7 +706,7 @@ export function passesGovernanceLens(rawItem, {harnessKind = null, cohort = "", 
   if (!trustedLocal) {
     if (required.some(k => !(k in gov))) return false;
     if (typeof gov.namespace !== "string" || !gov.namespace.trim()) return false;
-    if (!["surface:tessera", "surface:shamash", "surface:eranos", "surface:herma", "surface:kothar", "surface:kinema"].includes(gov.producer_surface)) return false;
+    if (!TRUSTED_PRODUCER_SURFACES.has(gov.producer_surface)) return false;
     if (["allowed_surfaces", "target_cohorts", "tags"].some(k => !Array.isArray(gov[k]) || gov[k].some(v => typeof v !== "string"))) return false;
     if (!gov.tags.includes("status:verified") || gov.tags.includes("status:quarantined")) return false;
     if (gov.visibility_scope === "allowlist_surfaces") {

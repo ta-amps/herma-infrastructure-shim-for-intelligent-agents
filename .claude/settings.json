@@ -15,8 +15,6 @@
       "Bash(uv run pytest:*)",
       "Bash(uv run ruff:*)",
       "Bash(uv run mypy:*)",
-      "Bash(uv run shamash cards)",
-      "Bash(uv run shamash manifest verify)",
       "Bash(pnpm --dir web:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
@@ -35,8 +33,7 @@
       "Bash(wrangler deploy:*)",
       "Bash(npx wrangler:*)",
       "Bash(muse:*)",
-      "Bash(make muse-smoke)",
-      "Bash(uv run shamash muse-smoke)"
+      "Bash(make muse-smoke)"
     ],
     "deny": [
       "Read(./.env)",
