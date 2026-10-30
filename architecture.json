@@ -272,7 +272,8 @@
         "test/provider_diagnostics.test.js",
         "test/provider_health.test.js",
         "test/provider_grants.test.js",
-        "tests/test_retired_names.py"
+        "tests/test_retired_names.py",
+        "tests/test_builtin_starters.py"
       ]
     }
   ],
@@ -430,6 +431,15 @@
         "tests/test_retired_names.py::test_served_text_names_no_retired_pack",
         "tests/test_retired_names.py::test_seed_data_and_runtime_sources_name_no_retired_pack",
         "tests/test_runtime_parity.py::test_governance_lens_trusts_the_same_producer_surfaces"
+      ]
+    },
+    {
+      "id": "H19",
+      "statement": "Starters synced from Tessera into system_builtin fire for routed callers only when they carry fabric_governance that passes the Layer-1 lens, and Python and the Worker decide every stored row the same way",
+      "enforced_by": "edge",
+      "checked_by": [
+        "tests/test_builtin_starters.py::test_synced_starters_fire_for_routed_callers_only_with_their_governance",
+        "tests/test_runtime_parity.py::test_stored_provisions_pass_the_lens_the_same_way"
       ]
     }
   ],

@@ -131,12 +131,13 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/provider_health.test.js](test/provider_health.test.js) |  |
 | [test/triggers.test.js](test/triggers.test.js) |  |
 
-## tests/ (20)
+## tests/ (21)
 
 | File | What it is |
 |---|---|
 | [tests/conftest.py](tests/conftest.py) | Synthetic operator grants for managed conversation tests; no provider is ever contacted. |
 | [tests/test_api_and_proxy.py](tests/test_api_and_proxy.py) | Tests for multi-protocol payload augmentation, deduplication, edge lockdown, and HTTP endpoints. |
+| [tests/test_builtin_starters.py](tests/test_builtin_starters.py) | Starters synced from Tessera fire for routed callers only when they carry fabricgovernance. |
 | [tests/test_cli_demo.py](tests/test_cli_demo.py) | The CI demo verifies the supported client policy and its real provision pipeline. |
 | [tests/test_conversation.py](tests/test_conversation.py) | Typed proposals, caller isolation, budget fencing and real HTTP provider contracts. |
 | [tests/test_conversation_schema_parity.py](tests/test_conversation_schema_parity.py) | Cross-runtime fixtures for the portable conversation schema boundary. |
