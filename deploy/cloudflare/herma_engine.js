@@ -1947,7 +1947,7 @@ label{display:block;font-size:.82rem;font-weight:600;color:var(--muted);margin-b
 .entity-tags{display:flex;flex-wrap:wrap;gap:.4rem;margin:.5rem 0}.entity-chip{display:inline-block;padding:.18rem .55rem;border-radius:6px;background:var(--pill);border:1px solid var(--border);font-size:.8rem}`;
 
 function renderHeader() {
-  return `<header class="site-header"><div class="header-inner"><a class="brand" href="/">${BRAND_SVG}<span>Herma</span></a><nav aria-label="Primary"><a href="/">Overview</a><a href="/connect">Connect Harness</a><a href="/healthz">Health JSON</a><a href="/llms.txt">llms.txt</a><a href="/.well-known/agent-card.json">Agent Card</a><a href="https://tessera.ta-amps.workers.dev/board">Tessera Cloud</a><a href="https://github.com/ta-amps/herma">GitHub</a></nav></div></header>`;
+  return `<header class="site-header"><div class="header-inner"><a class="brand" href="/">${BRAND_SVG}<span>Herma</span></a><nav aria-label="Primary"><a href="/">Overview</a><a href="/connect">Connect Harness</a><a href="/healthz">Health JSON</a><a href="/llms.txt">llms.txt</a><a href="/.well-known/agent-card.json">Agent Card</a><a href="https://tessera.ta-amps.workers.dev/board">Tessera Cloud</a><a href="https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents">GitHub</a></nav></div></header>`;
 }
 
 function renderFooter(publicUrl) {

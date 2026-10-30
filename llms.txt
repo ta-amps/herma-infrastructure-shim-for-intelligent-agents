@@ -3,21 +3,21 @@
 > Herma is infrastructure: it connects agents to context and models. Versioned nouns carry data and evidence; claimable verbs carry work. Tessera's storage and task contracts remain the shared authority, and Herma adds no separate domain reasoning runtime.
 
 ## Start here
-- [README.md](https://github.com/ta-amps/herma/blob/main/README.md): what this is and how to run it
-- [AGENTS.md](https://github.com/ta-amps/herma/blob/main/AGENTS.md): rules every agent follows here
-- [INDEX.md](https://github.com/ta-amps/herma/blob/main/INDEX.md): every file with a description
-- [KEYWORDS.md](https://github.com/ta-amps/herma/blob/main/KEYWORDS.md): where each term appears
-- [llms-full.txt](https://github.com/ta-amps/herma/blob/main/llms-full.txt): the main documents in full, in reading order
+- [README.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/README.md): what this is and how to run it
+- [AGENTS.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/AGENTS.md): rules every agent follows here
+- [INDEX.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/INDEX.md): every file with a description
+- [KEYWORDS.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/KEYWORDS.md): where each term appears
+- [llms-full.txt](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/llms-full.txt): the main documents in full, in reading order
 
 ## Documents
-- [CHANGELOG.md](https://github.com/ta-amps/herma/blob/main/CHANGELOG.md): Changelog
-- [docs/WORKER-FIRST-EXECUTION.md](https://github.com/ta-amps/herma/blob/main/docs/WORKER-FIRST-EXECUTION.md): Worker-first execution and private work
-- [docs/access-modes.md](https://github.com/ta-amps/herma/blob/main/docs/access-modes.md): External agent access
-- [docs/agent-troubleshooting.md](https://github.com/ta-amps/herma/blob/main/docs/agent-troubleshooting.md): Bilateral agent communication
-- [docs/architecture.md](https://github.com/ta-amps/herma/blob/main/docs/architecture.md): Architecture
-- [docs/conversations.md](https://github.com/ta-amps/herma/blob/main/docs/conversations.md): Typed work conversations
-- [docs/design-and-evidence.md](https://github.com/ta-amps/herma/blob/main/docs/design-and-evidence.md): Design decisions and measured limits
-- [docs/handoff.md](https://github.com/ta-amps/herma/blob/main/docs/handoff.md): Handoff & Status
-- [docs/harnesses.md](https://github.com/ta-amps/herma/blob/main/docs/harnesses.md): Connecting Configurable Agentic Coding Harnesses
-- [docs/setup.md](https://github.com/ta-amps/herma/blob/main/docs/setup.md): Setup, Context Database, Backing Stores & Cloudflare Deployment
-- [docs/summary.md](https://github.com/ta-amps/herma/blob/main/docs/summary.md): Summary
+- [CHANGELOG.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/CHANGELOG.md): Changelog
+- [docs/WORKER-FIRST-EXECUTION.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/WORKER-FIRST-EXECUTION.md): Worker-first execution and private work
+- [docs/access-modes.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/access-modes.md): External agent access
+- [docs/agent-troubleshooting.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/agent-troubleshooting.md): Bilateral agent communication
+- [docs/architecture.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/architecture.md): Architecture
+- [docs/conversations.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/conversations.md): Typed work conversations
+- [docs/design-and-evidence.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/design-and-evidence.md): Design decisions and measured limits
+- [docs/handoff.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/handoff.md): Handoff & Status
+- [docs/harnesses.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/harnesses.md): Connecting Configurable Agentic Coding Harnesses
+- [docs/setup.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/setup.md): Setup, Context Database, Backing Stores & Cloudflare Deployment
+- [docs/summary.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/summary.md): Summary
