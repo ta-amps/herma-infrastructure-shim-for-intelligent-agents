@@ -18,6 +18,7 @@
   ],
   "metadata_tags": {
     "domain": "ngo-kits",
+    "fabric_governance": "{\"allowed_surfaces\":[\"surface:herma\",\"surface:tessera\"],\"namespace\":\"main\",\"producer_surface\":\"surface:herma\",\"tags\":[\"status:verified\"],\"target_cohorts\":[\"all\"],\"visibility_scope\":\"public_commons\"}",
     "surface": "eranos"
   },
   "triggers": {

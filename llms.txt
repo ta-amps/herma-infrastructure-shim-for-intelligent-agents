@@ -1,6 +1,6 @@
-# Herma – the shim for any agent
+# Herma -- the context & capability shim for any agent
 
-> Herma is infrastructure: it connects agents to context and models. Versioned nouns carry data and evidence; claimable verbs carry work. Tessera's storage and task contracts remain the shared authority, and Herma adds no separate domain reasoning runtime.
+> Herma: context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic noun, verb, and URI context from a user-configured database before LLM execution.
 
 ## Start here
 - [README.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/README.md): what this is and how to run it
