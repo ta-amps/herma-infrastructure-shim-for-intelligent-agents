@@ -75,7 +75,18 @@ const CONCEPT_GROUPS = [
   ["concept:harm_compliance", ["scam", "fraud", "coercion", "exploitation", "victim", "caseworker", "statute", "fee", "usury", "payee", "impersonation", "accuse", "synthetic"]],
   ["concept:ngo_autonomy", ["nonprofit", "ngo", "volunteer", "hotline", "shelter", "intake", "crisis", "steward", "reviewer", "drafter", "playbook", "sop"]],
   ["concept:edge_security", ["cloudflare", "worker", "origin", "proxy", "secret", "header", "csp", "hsts", "token", "auth", "credential", "leak"]],
+  ["concept:harness_feeds", ["harness", "harnesstax", "feed", "benchmark", "overhead", "opencode", "profile", "leaderboard"]],
+  ["concept:lora_memory", ["lora", "qlora", "peft", "adapter", "parametric", "glimmer", "llama", "cutoff", "weights", "finetune"]],
 ];
+
+const BUILTIN_FABRIC_GOVERNANCE = JSON.stringify({
+  allowed_surfaces: ["surface:herma", "surface:tessera"],
+  namespace: "main",
+  producer_surface: "surface:herma",
+  tags: ["status:verified"],
+  target_cohorts: ["all"],
+  visibility_scope: "public_commons",
+});
 
 export const DEFAULT_CONTEXT_ENTRIES = [
   {
@@ -92,7 +103,7 @@ export const DEFAULT_CONTEXT_ENTRIES = [
       invariant: "submit/heartbeat/park reject fence < current_fence",
     },
     source_uri: "https://tessera.ta-amps.workers.dev/llms.txt",
-    updated_at: "2026-10-27T00:00:00+00:00",
+    updated_at: "2026-10-30T00:00:00+00:00",
   },
   {
     entry_id: "verb:tessera.claim",
@@ -105,7 +116,7 @@ export const DEFAULT_CONTEXT_ENTRIES = [
       returns: ["task_id", "fence", "payload"],
     },
     source_uri: "mcp://tessera/tools/claim",
-    updated_at: "2026-10-27T00:00:00+00:00",
+    updated_at: "2026-10-30T00:00:00+00:00",
   },
   {
     entry_id: "detail:herma.shim_budget",
@@ -118,37 +129,90 @@ export const DEFAULT_CONTEXT_ENTRIES = [
       dedupe_modes: ["once_per_conversation", "every_turn"],
     },
     source_uri: "urn:ta-amps:spec:herma-context-shim-v1",
-    updated_at: "2026-10-27T00:00:00+00:00",
+    updated_at: "2026-10-30T00:00:00+00:00",
+  },
+  {
+    entry_id: "noun:harness.feed",
+    kind: "noun",
+    title: "Agent Harness Research Feed Task Object",
+    summary: "Encapsulating Feed Task Object aggregating dated harness profiles, HarnessTax prompt/schema token overhead, and verified benchmarks across Harness Square / Harness2, OpenCode, Pi, and Muse Code.",
+    schema_or_body: {
+      fields: {
+        feed_id: "string",
+        harnesses: ["harness-square", "opencode", "pi", "muse-code"],
+        harness_tax_tokens: "integer >= 0",
+        benchmark_receipts: "list[sha256]",
+      },
+      invariant: "comparative harness scores cite content-addressed benchmark receipts",
+    },
+    source_uri: "urn:ta-amps:spec:harness-feeds-v1",
+    updated_at: "2026-10-30T00:00:00+00:00",
+  },
+  {
+    entry_id: "detail:herma.lora_vs_shim",
+    kind: "detail",
+    title: "Prompt Shimming vs LoRAs as Parametric Memory Rule",
+    summary: "Routes volatile or caller-scoped facts through zero-weight Herma context shims, stabilized post-cutoff Task Object schemas into Llama 3.2 / Muse Glimmer PEFT LoRA adapters, and novel multi-step synthesis to frontier Muse Spark 1.3 or Muse Wonder 1.0.",
+    schema_or_body: {
+      herma_context_shim: "0 weight updates; volatile facts, live URIs, caller guardrails (Llama 3.2 3B 52.0% -> 64.7%)",
+      lora_parametric_memory: "PEFT LoRA on Llama 3.2 1B/3B or Muse Glimmer 30B QLoRA; stable post-cutoff Task Object schemas with zero per-turn HarnessTax",
+      frontier_passthrough: "Muse Spark 1.3 / Muse Wonder 1.0 in Standard mode (-contributor refused)",
+    },
+    source_uri: "urn:ta-amps:spec:lora-memory-routing-v1",
+    updated_at: "2026-10-30T00:00:00+00:00",
   },
 ];
 
 export const DEFAULT_PROVISIONS = [
   {
     prov_id: "PROV-DIRECT-NOUN-VERB-SCHEMA",
-    title: "Direct Canonical Noun & Verb Schema Lookup",
-    summary: "Responds directly with canonical atomic noun/verb schema definitions from Herma's context database without calling an upstream LLM.",
+    title: "Direct Tasks & Task Objects (Canonical Noun/Verb Schema) Lookup",
+    summary: "Responds directly to natural-language Task and Task-Object or canonical noun/verb schema lookups from Herma's context database without calling an upstream LLM.",
     priority: 350,
     enabled: true,
     action: "respond_directly",
-    direct_response: "Canonical Herma + Tessera Noun/Verb Contract: shared state artifacts are compare-and-set NOUNs guarded by expected_version, and work items are leased VERB tiles (enqueue -> claim -> heartbeat -> submit/park) guarded by a monotonic fence token.",
+    direct_response: "Canonical Herma + Tessera Noun/Verb Contract -- Tasks (`verbs` on the wire) and Task Objects (`nouns` on the wire: every reusable tool, feed, dataset, LoRA adapter, shim, or receipt a task uses or creates). Shared Task Objects are compare-and-set NOUNs guarded by expected_version, and independently schedulable Tasks are leased VERB tiles (enqueue -> claim -> heartbeat -> submit/park) guarded by a monotonic fence token.",
     context_refs: ["noun:tessera.lease_fence", "verb:tessera.claim"],
     inject_position: "system_prefix",
     dedupe_mode: "every_turn",
     max_chars: 3000,
-    inject_text: "Return the canonical noun/verb schema contract directly without invoking an upstream LLM.",
+    inject_text: "Return the canonical Tasks (verbs) and Task Objects (nouns) schema contract directly without invoking an upstream LLM.",
     uris: [
       {
         uri: "https://tessera.ta-amps.workers.dev/llms.txt",
         label: "Tessera Noun & Verb Protocol Summary",
         kind: "schema",
-        inline_excerpt: "Atomic compare-and-set nouns and fenced queue verbs.",
+        inline_excerpt: "Atomic compare-and-set Task Objects (nouns) and fenced queue Tasks (verbs).",
       },
     ],
-    metadata_tags: { domain: "context-database", mode: "direct-response" },
+    metadata_tags: {
+      domain: "context-database",
+      fabric_governance: BUILTIN_FABRIC_GOVERNANCE,
+      mode: "direct-response",
+    },
     triggers: {
       mode: "any",
       keyword: {
-        any_keywords: ["canonical noun/verb schema", "herma direct schema", "/herma-schema"],
+        any_keywords: [
+          "canonical noun/verb schema",
+          "herma direct schema",
+          "/herma-schema",
+          "task and task-object schema",
+          "task and task object schema",
+          "tasks and task objects",
+          "tasks and task-objects",
+          "what are tasks and task objects",
+          "what are tasks and task-objects",
+          "what is a task object",
+          "what is a task-object",
+          "canonical noun and verb schema",
+          "noun and verb schema",
+          "noun-verb schema",
+          "noun/verb schema",
+        ],
+        regex_patterns: [
+          "\\b(?:what\\s+(?:are|is)\\s+(?:a\\s+)?tasks?\\s+and\\s+task[- ]objects?|tasks?\\s*(?:&|and|/)\\s*task[- ]objects?\\s+(?:schema|contract|model|primitives?)|noun[- /\\s]+(?:and\\s+)?verb\\s+(?:schema|contract))\\b",
+        ],
       },
     },
   },
@@ -178,7 +242,11 @@ export const DEFAULT_PROVISIONS = [
         inline_excerpt: "Requires expected_version (null for new keys, integer head version for updates).",
       },
     ],
-    metadata_tags: { domain: "swarm-fabric", surface: "tessera" },
+    metadata_tags: {
+      domain: "swarm-fabric",
+      fabric_governance: BUILTIN_FABRIC_GOVERNANCE,
+      surface: "tessera",
+    },
     triggers: {
       mode: "any",
       keyword: {
@@ -215,7 +283,10 @@ export const DEFAULT_PROVISIONS = [
         inline_excerpt: "Card-backed multi-currency checks across 10 harm areas and 27 dated statute cards.",
       },
     ],
-    metadata_tags: { domain: "harm-triage" },
+    metadata_tags: {
+      domain: "harm-triage",
+      fabric_governance: BUILTIN_FABRIC_GOVERNANCE,
+    },
     triggers: {
       mode: "any",
       keyword: {
@@ -228,6 +299,124 @@ export const DEFAULT_PROVISIONS = [
           "clear legitimate look-alike invoice twin while holding mismatched beneficiary account",
         ],
         concepts: ["scam", "fraud", "statute", "payee", "synthetic"],
+        threshold: 0.26,
+      },
+    },
+  },
+  {
+    prov_id: "PROV-HARNESS-FEEDS-GUIDE",
+    title: "Agent Harness Research Feeds & HarnessTax Benchmark Context",
+    summary: "Shims structured guidance on encapsulating Feed Task Objects, HarnessTax token overhead, and receipt-backed benchmarks across Harness Square / Harness2, OpenCode, Pi, and Muse Code.",
+    priority: 275,
+    enabled: true,
+    action: "shim_context",
+    context_refs: ["noun:harness.feed", "detail:herma.shim_budget"],
+    inject_position: "system_prefix",
+    dedupe_mode: "once_per_conversation",
+    max_chars: 2600,
+    inject_text: "Agent Harness Research Feeds are encapsulating `Feed` Task Objects (`nouns` on the wire) that bundle dated harness capability profiles, measured `HarnessTax` static prompt/tool-schema token overhead, and reproducible benchmark receipts across Harness Square / Harness2, OpenCode, Pi, and Muse Code. Keep comparative harness claims tied to content-addressed receipts, separate static `HarnessTax` overhead from task-specific shimmed bytes, and update feed heads via compare-and-set `expected_version`.",
+    uris: [
+      {
+        uri: "https://ta-amps.github.io/agora-public-overview-architecture-setup-and-contribution/",
+        label: "Agora Public Surface & Harness Ecosystem Overview",
+        kind: "doc",
+        inline_excerpt: "Encapsulating Feed Task Objects, HarnessTax accounting, and multi-harness routing across Muse Code, OpenCode, Pi, and Harness Square.",
+      },
+      {
+        uri: "urn:ta-amps:spec:harness-feeds-v1",
+        label: "Agent Harness Research Feed Task Object Spec",
+        kind: "schema",
+        inline_excerpt: "Tracks harness profile, HarnessTax prompt overhead, wire support, and SHA-256 benchmark receipts.",
+      },
+    ],
+    metadata_tags: {
+      domain: "harness-feeds",
+      fabric_governance: BUILTIN_FABRIC_GOVERNANCE,
+      surface: "agora",
+    },
+    triggers: {
+      mode: "any",
+      keyword: {
+        any_keywords: [
+          "agent harness feeds",
+          "agent harness research feeds",
+          "harness research feeds",
+          "harness feeds",
+          "harness feed",
+          "harnesstax",
+          "harness tax",
+          "harness square",
+          "harness2",
+          "feed task object",
+        ],
+        path_globs: ["*harness*feed*", "*feeds*/*.py", "*feeds*/*.json"],
+      },
+      semantic: {
+        exemplars: [
+          "compare coding agent harness token overhead and benchmark profiles across OpenCode, Pi, Muse Code, and Harness Square",
+          "aggregate verified agent harness research feeds and HarnessTax measurements into a versioned Feed Task Object",
+        ],
+        concepts: ["harness", "harnesstax", "feed", "benchmark", "overhead", "opencode"],
+        threshold: 0.26,
+      },
+    },
+  },
+  {
+    prov_id: "PROV-LORA-MEMORY-ROUTING",
+    title: "Prompt Shimming vs LoRAs as Parametric Memory vs Frontier Routing",
+    summary: "Shims the engineering decision rule separating zero-weight Herma context shimming, Llama 3.2 / Muse Glimmer PEFT LoRAs as parametric memory, and frontier Muse passthrough.",
+    priority: 270,
+    enabled: true,
+    action: "shim_context",
+    context_refs: ["detail:herma.lora_vs_shim", "detail:herma.shim_budget"],
+    inject_position: "system_prefix",
+    dedupe_mode: "once_per_conversation",
+    max_chars: 2600,
+    inject_text: "Apply the 3-regime memory & routing rule: (1) Use a Herma Context Shim (0 weight updates) for volatile, newly minted, or caller-scoped facts, live URIs, and turn-level guardrails (measured 52.0% -> 64.7% exact tool-call lift on Llama 3.2 3B before weight updates). (2) Promote recurring, stabilized post-cutoff Task Object schemas and refusal contracts into PEFT LoRA adapters as parametric memory (Llama 3.2 1B/3B local router/memory or Muse Glimmer 30B 4-bit QLoRA) to eliminate repeated per-turn HarnessTax tokens, gated by pre-registered held-out promotion checks. (3) Route open-ended synthesis and independent review Tasks (`verbs`) to frontier `Muse Spark 1.3` or `Muse Wonder 1.0` in Standard mode (`-contributor` tiers remain strictly refused).",
+    uris: [
+      {
+        uri: "urn:ta-amps:spec:lora-memory-routing-v1",
+        label: "Herma Shim vs Parametric LoRA Routing Matrix",
+        kind: "schema",
+        inline_excerpt: "Separates volatile context shimming, post-cutoff PEFT LoRA parametric memory, and Standard-mode frontier passthrough.",
+      },
+      {
+        uri: "https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/tree/main/training",
+        label: "Herma Shim Router & LoRA Spec Artifacts",
+        kind: "doc",
+        inline_excerpt: "Reproducible PEFT LoRA configuration and measured context-shim lift evaluation.",
+      },
+    ],
+    metadata_tags: {
+      domain: "lora-memory",
+      fabric_governance: BUILTIN_FABRIC_GOVERNANCE,
+    },
+    triggers: {
+      mode: "any",
+      keyword: {
+        any_keywords: [
+          "lora as memory",
+          "loras as memory",
+          "lora as parametric memory",
+          "loras as parametric memory",
+          "parametric memory",
+          "prompt shimming vs lora",
+          "context shim vs lora",
+          "shim vs lora",
+          "peft lora",
+          "muse glimmer",
+          "post-cutoff schema",
+          "post-cutoff task object",
+          "shim-router-lora",
+        ],
+        path_globs: ["training/*", "eval/*"],
+      },
+      semantic: {
+        exemplars: [
+          "decide when to inject facts in a prompt context shim versus baking stable post-cutoff schemas into a PEFT LoRA adapter",
+          "use Llama 3.2 or Muse Glimmer QLoRA adapters as parametric memory instead of paying repeated prompt token overhead",
+        ],
+        concepts: ["lora", "qlora", "peft", "adapter", "parametric", "glimmer"],
         threshold: 0.26,
       },
     },
@@ -251,7 +440,11 @@ export const DEFAULT_PROVISIONS = [
         inline_excerpt: "Two-step eq01 -> eq02 -> eq03 volunteer pipeline with deterministic autonomy checks.",
       },
     ],
-    metadata_tags: { domain: "ngo-kits", surface: "eranos" },
+    metadata_tags: {
+      domain: "ngo-kits",
+      fabric_governance: BUILTIN_FABRIC_GOVERNANCE,
+      surface: "eranos",
+    },
     triggers: {
       mode: "any",
       micromodel: {
@@ -281,7 +474,10 @@ export const DEFAULT_PROVISIONS = [
         inline_excerpt: "Origin returns RFC 9457 403 problem+json whenever x-edge-auth is absent or mismatched.",
       },
     ],
-    metadata_tags: { domain: "edge-security" },
+    metadata_tags: {
+      domain: "edge-security",
+      fabric_governance: BUILTIN_FABRIC_GOVERNANCE,
+    },
     triggers: {
       mode: "any",
       keyword: {
@@ -380,6 +576,21 @@ export const PREVIEW_JS = `(function () {
   if (!promptEl || !runBtn || !statusEl || !outputEl) return;
 
   const presets = {
+    tasks: {
+      prompt: "What are tasks and task objects?",
+      path: "",
+      wire: "responses"
+    },
+    feeds: {
+      prompt: "Compare agent harness feeds and HarnessTax across Harness Square, OpenCode, Pi, and Muse Code.",
+      path: "feeds/harness_profiles.json",
+      wire: "chat_completions"
+    },
+    lora: {
+      prompt: "When should we use prompt shimming vs LoRA as parametric memory on Llama 3.2 or Muse Glimmer?",
+      path: "training/shim-router-lora-spec.json",
+      wire: "chat_completions"
+    },
     fencing: {
       prompt: "Update src/tessera/_tasks.py to verify noun:tessera.lease_fence with \`put_record()\`.",
       path: "src/tessera/_tasks.py",
@@ -1993,24 +2204,27 @@ export function renderOverviewHtml(
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><link rel="icon" href="/favicon.svg" type="image/svg+xml"/><title>Herma v${HERMA_VERSION} -- Context-Shimming AI Middleware</title><style>${STYLE}</style></head><body>
 ${renderHeader()}
 <main>
-<span class="pill">Herma v${HERMA_VERSION} · Programmable AI Request Middleware · 24/7 Cloudflare D1 + Tessera Cloud</span>
-<h1>Context-Shimming AI Middleware for Configurable Coding Harnesses</h1>
-<p class="lead"><strong>Herma:</strong> context-shimming AI middleware for configurable coding harnesses -- intercepts requests via <strong>keyword</strong>, <strong>semantic</strong>, or <strong>micromodel</strong> rules to <strong>respond directly</strong> or shim atomic <strong>noun, verb, and URI context</strong> from a user-configured database before LLM execution. Personal assistants with scoped credentials are supported. Contributor-tier models remain refused.</p>
+<span class="pill">Herma v${HERMA_VERSION} · Programmable AI Request Middleware · Tasks &amp; Task Objects Shim · 24/7 Cloudflare D1 + Tessera Cloud</span>
+<h1>Tasks, Task Objects &amp; Context-Shimming Middleware for Coding Harnesses</h1>
+<p class="lead"><strong>Herma:</strong> context-shimming AI middleware for configurable coding harnesses -- connects <strong>Tasks (<code>verbs</code> on the wire)</strong> and <strong>Task Objects (<code>nouns</code> on the wire: reusable tools, feeds, datasets, LoRA adapters, shims, and receipts)</strong> to models without static prompt bloat (<code>HarnessTax</code>) or post-cutoff schema amnesia. Herma intercepts requests via <strong>keyword</strong>, <strong>semantic</strong>, or <strong>micromodel</strong> rules to <strong>respond directly</strong> in 0 tokens or shim bounded context before LLM execution (lifting frozen <code>Llama 3.2 3B</code> tool accuracy <code>52.0% -&gt; 64.7%</code> with zero weight updates). Personal assistants with scoped credentials are supported; <code>*-contributor</code> models remain refused.</p>
 <section class="grid">
-<div class="card"><span class="pill">Tier 1-3 Rules</span><h3>Keyword, Semantic &amp; Micromodel</h3><p>Evaluates prompt terms, file path globs, tool names, semantic similarity, and micromodel intent routing without bloating static system prompts.</p></div>
-<div class="card"><span class="pill">Caller-Isolated Shims</span><h3>Atomic Noun, Verb &amp; Entity Memory</h3><p>Isolates custom rules, context entries, receipts, and top-of-mind working entities per <code>caller_scope</code> while protecting <code>system_builtin</code> guardrails.</p></div>
-<div class="card"><span class="pill">respond_directly</span><h3>Zero-Token Direct Responses</h3><p>Short-circuits upstream calls when a rule can answer directly across OpenAI, Responses, and Anthropic protocols while recording a SHA-256 <code>InjectionReceipt</code>.</p></div>
+<div class="card"><span class="pill">Tasks &amp; Task Objects</span><h3>Plain-Language Primitives, Wire-Safe</h3><p>Independently schedulable <strong>Tasks</strong> map to fenced queue <code>verbs</code>; reusable tools, <code>Feed</code> profiles, LoRA specs, and receipts map to compare-and-set <strong>Task Objects</strong> (<code>nouns</code>).</p></div>
+<div class="card"><span class="pill">0-Weight Lift + LoRA Memory</span><h3>Kill Prompt Bloat &amp; Amnesia</h3><p>Shim volatile rules inline today (<code>52.0% -&gt; 64.7%</code> on <code>Llama 3.2 3B</code>), then promote stabilized post-cutoff schemas into <code>Llama 3.2</code> / <code>Muse Glimmer</code> PEFT LoRAs.</p></div>
+<div class="card"><span class="pill">respond_directly</span><h3>Zero-Token Direct Responses</h3><p>Answers natural-language Task / Task-Object and contract lookups directly across OpenAI, Responses, and Anthropic wire formats while minting a SHA-256 <code>InjectionReceipt</code>.</p></div>
 </section>
 <section class="card inspector" aria-labelledby="inspector-heading">
 <span class="pill">Read-Only Inspector · persisted: false</span>
 <h2 id="inspector-heading">Shim Trigger &amp; Entity Extractor Preview</h2>
 <p style="color:var(--muted);margin:0.2rem 0 0.8rem;font-size:0.9rem;">Test starter <code>system_builtin</code> provisions and deterministic regex entity extraction in memory without writing receipts or reading caller state.</p>
 <div class="preset-row">
+<button class="btn" type="button" data-herma-preset="tasks">Preset: Tasks &amp; Task Objects</button>
+<button class="btn" type="button" data-herma-preset="feeds">Preset: Agent Harness Feeds</button>
+<button class="btn" type="button" data-herma-preset="lora">Preset: Shim vs LoRA Memory</button>
 <button class="btn" type="button" data-herma-preset="fencing">Preset: Tessera Lease Fencing</button>
 <button class="btn" type="button" data-herma-preset="direct">Preset: Direct Noun/Verb Schema</button>
 <button class="btn" type="button" data-herma-preset="statute">Preset: Statute Card &amp; Error Retry</button>
 </div>
-<div><label for="herma-preview-prompt">Outbound Harness Prompt</label><textarea id="herma-preview-prompt" placeholder="e.g. Update src/tessera/_tasks.py to verify noun:tessera.lease_fence and US-ROSCA-8403"></textarea></div>
+<div><label for="herma-preview-prompt">Outbound Harness Prompt</label><textarea id="herma-preview-prompt" placeholder="e.g. What are tasks and task objects?"></textarea></div>
 <div class="form-row">
 <div><label for="herma-preview-path">Workspace Paths (comma-separated)</label><input id="herma-preview-path" type="text" placeholder="src/tessera/_tasks.py"/></div>
 <div><label for="herma-preview-wire">Wire Protocol</label><select id="herma-preview-wire"><option value="chat_completions">OpenAI /v1/chat/completions</option><option value="responses">Responses /v1/responses</option><option value="messages">Anthropic /v1/messages</option></select></div>
@@ -2019,6 +2233,8 @@ ${renderHeader()}
 <div id="herma-preview-status" class="preview-status" role="status" aria-live="polite">Enter a coding-harness prompt or choose a preset above to preview builtin triggers and entity extraction (persisted: false).</div>
 <div id="herma-preview-output"></div>
 </section>
+<h2>Which Meta Models Do What</h2>
+<div class="table-wrap"><table><thead><tr><th>Meta Model / Harness</th><th>Role in Herma</th><th>Memory / Routing Regime</th><th>Verified Signal</th></tr></thead><tbody><tr><td><code>Muse Spark 1.3</code></td><td>Frontier multi-step coding, tool orchestration &amp; review Tasks (<code>verbs</code>)</td><td>Context Shim + Standard-mode passthrough (<code>-contributor</code> refused)</td><td>Caller-isolated microdollar budgets + SHA-256 <code>InjectionReceipt</code></td></tr><tr><td><code>Muse Wonder 1.0</code></td><td>Fast structured synthesis &amp; typed work-conversation proposals</td><td>Single schema-checked proposal (<code>executed: false</code>)</td><td>Strict duplicate-key JSON guard + exact picodollar accounting</td></tr><tr><td><code>Muse Glimmer 30B QLoRA</code></td><td>Open-weights specialist for stabilized post-cutoff Task Object schemas</td><td>4-bit QLoRA Parametric Memory (avoids repeated <code>HarnessTax</code>)</td><td><code>93.3% -&gt; 99.3%</code> exact tool-call match on 150-row synthetic holdout</td></tr><tr><td><code>Llama 3.2 1B / 3B</code></td><td>Local Tier-3 Shim Router (<code>1B</code>) &amp; edge LoRAs as Parametric Memory (<code>1B/3B</code>)</td><td>0-weight Herma Shim first, then PEFT LoRA (<code>r=16..32</code>)</td><td><code>3B</code>: <code>52.0% -&gt; 64.7%</code> shim lift (<code>72.7%</code> LoRA); <code>1B</code>: <code>12.0% -&gt; 50.7%</code></td></tr><tr><td><code>Muse Code</code></td><td>Configurable coding harness (<code>X-Herma-Harness: muse-code</code>)</td><td>Benchmarked alongside Harness Square, OpenCode &amp; Pi in <code>Feed</code> nouns</td><td>Shimmed via <code>PROV-HARNESS-FEEDS-GUIDE</code> with receipt-backed profiles</td></tr></tbody></table></div>
 <h2>Starter Builtin Provisions (${builtinProvs.length})</h2>
 <div class="table-wrap"><table><thead><tr><th>ID</th><th>Title &amp; Action</th><th>Triggers</th><th>URIs &amp; Priority</th><th>Store</th></tr></thead><tbody>${pRows || "<tr><td colspan='5'>No builtin provisions seeded yet.</td></tr>"}</tbody></table></div>
 <h2>Starter Builtin Noun, Verb &amp; Detail Context (${(contextEntries || []).length})</h2>

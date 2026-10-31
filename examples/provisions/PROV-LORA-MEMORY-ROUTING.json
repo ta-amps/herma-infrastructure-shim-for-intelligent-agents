@@ -1,0 +1,73 @@
+{
+  "prov_id": "PROV-LORA-MEMORY-ROUTING",
+  "title": "Prompt Shimming vs LoRAs as Parametric Memory vs Frontier Routing",
+  "summary": "Shims the engineering decision rule separating zero-weight Herma context shimming, Llama 3.2 / Muse Glimmer PEFT LoRAs as parametric memory, and frontier Muse passthrough.",
+  "priority": 270,
+  "enabled": true,
+  "action": "shim_context",
+  "context_refs": [
+    "detail:herma.lora_vs_shim",
+    "detail:herma.shim_budget"
+  ],
+  "inject_position": "system_prefix",
+  "dedupe_mode": "once_per_conversation",
+  "max_chars": 2600,
+  "inject_text": "Apply the 3-regime memory & routing rule: (1) Use a Herma Context Shim (0 weight updates) for volatile, newly minted, or caller-scoped facts, live URIs, and turn-level guardrails (measured 52.0% -> 64.7% exact tool-call lift on Llama 3.2 3B before weight updates). (2) Promote recurring, stabilized post-cutoff Task Object schemas and refusal contracts into PEFT LoRA adapters as parametric memory (Llama 3.2 1B/3B local router/memory or Muse Glimmer 30B 4-bit QLoRA) to eliminate repeated per-turn HarnessTax tokens, gated by pre-registered held-out promotion checks. (3) Route open-ended synthesis and independent review Tasks (`verbs`) to frontier `Muse Spark 1.3` or `Muse Wonder 1.0` in Standard mode (`-contributor` tiers remain strictly refused).",
+  "uris": [
+    {
+      "uri": "urn:ta-amps:spec:lora-memory-routing-v1",
+      "label": "Herma Shim vs Parametric LoRA Routing Matrix",
+      "kind": "schema",
+      "inline_excerpt": "Separates volatile context shimming, post-cutoff PEFT LoRA parametric memory, and Standard-mode frontier passthrough."
+    },
+    {
+      "uri": "https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/tree/main/training",
+      "label": "Herma Shim Router & LoRA Spec Artifacts",
+      "kind": "doc",
+      "inline_excerpt": "Reproducible PEFT LoRA configuration and measured context-shim lift evaluation."
+    }
+  ],
+  "metadata_tags": {
+    "domain": "lora-memory",
+    "fabric_governance": "{\"allowed_surfaces\":[\"surface:herma\",\"surface:tessera\"],\"namespace\":\"main\",\"producer_surface\":\"surface:herma\",\"tags\":[\"status:verified\"],\"target_cohorts\":[\"all\"],\"visibility_scope\":\"public_commons\"}"
+  },
+  "triggers": {
+    "mode": "any",
+    "keyword": {
+      "any_keywords": [
+        "lora as memory",
+        "loras as memory",
+        "lora as parametric memory",
+        "loras as parametric memory",
+        "parametric memory",
+        "prompt shimming vs lora",
+        "context shim vs lora",
+        "shim vs lora",
+        "peft lora",
+        "muse glimmer",
+        "post-cutoff schema",
+        "post-cutoff task object",
+        "shim-router-lora"
+      ],
+      "path_globs": [
+        "training/*",
+        "eval/*"
+      ]
+    },
+    "semantic": {
+      "exemplars": [
+        "decide when to inject facts in a prompt context shim versus baking stable post-cutoff schemas into a PEFT LoRA adapter",
+        "use Llama 3.2 or Muse Glimmer QLoRA adapters as parametric memory instead of paying repeated prompt token overhead"
+      ],
+      "concepts": [
+        "lora",
+        "qlora",
+        "peft",
+        "adapter",
+        "parametric",
+        "glimmer"
+      ],
+      "threshold": 0.26
+    }
+  }
+}

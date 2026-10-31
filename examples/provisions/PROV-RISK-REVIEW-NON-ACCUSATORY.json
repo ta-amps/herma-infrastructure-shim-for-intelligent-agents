@@ -17,7 +17,8 @@
     }
   ],
   "metadata_tags": {
-    "domain": "harm-triage"
+    "domain": "harm-triage",
+    "fabric_governance": "{\"allowed_surfaces\":[\"surface:herma\",\"surface:tessera\"],\"namespace\":\"main\",\"producer_surface\":\"surface:herma\",\"tags\":[\"status:verified\"],\"target_cohorts\":[\"all\"],\"visibility_scope\":\"public_commons\"}"
   },
   "triggers": {
     "mode": "any",

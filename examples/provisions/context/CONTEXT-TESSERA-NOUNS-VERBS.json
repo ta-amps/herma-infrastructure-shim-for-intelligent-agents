@@ -14,7 +14,7 @@
         "invariant": "submit/heartbeat/park reject fence < current_fence"
       },
       "source_uri": "https://tessera.ta-amps.workers.dev/llms.txt",
-      "updated_at": "2026-10-27T00:00:00+00:00"
+      "updated_at": "2026-10-30T00:00:00+00:00"
     },
     {
       "entry_id": "verb:tessera.claim",
@@ -27,7 +27,7 @@
         "returns": ["task_id", "fence", "payload"]
       },
       "source_uri": "mcp://tessera/tools/claim",
-      "updated_at": "2026-10-27T00:00:00+00:00"
+      "updated_at": "2026-10-30T00:00:00+00:00"
     },
     {
       "entry_id": "detail:herma.shim_budget",
@@ -40,7 +40,37 @@
         "dedupe_modes": ["once_per_conversation", "every_turn"]
       },
       "source_uri": "urn:ta-amps:spec:herma-context-shim-v1",
-      "updated_at": "2026-10-27T00:00:00+00:00"
+      "updated_at": "2026-10-30T00:00:00+00:00"
+    },
+    {
+      "entry_id": "noun:harness.feed",
+      "kind": "noun",
+      "title": "Agent Harness Research Feed Task Object",
+      "summary": "Encapsulating Feed Task Object aggregating dated harness profiles, HarnessTax prompt/schema token overhead, and verified benchmarks across Harness Square / Harness2, OpenCode, Pi, and Muse Code.",
+      "schema_or_body": {
+        "fields": {
+          "feed_id": "string",
+          "harnesses": ["harness-square", "opencode", "pi", "muse-code"],
+          "harness_tax_tokens": "integer >= 0",
+          "benchmark_receipts": "list[sha256]"
+        },
+        "invariant": "comparative harness scores cite content-addressed benchmark receipts"
+      },
+      "source_uri": "urn:ta-amps:spec:harness-feeds-v1",
+      "updated_at": "2026-10-30T00:00:00+00:00"
+    },
+    {
+      "entry_id": "detail:herma.lora_vs_shim",
+      "kind": "detail",
+      "title": "Prompt Shimming vs LoRAs as Parametric Memory Rule",
+      "summary": "Routes volatile or caller-scoped facts through zero-weight Herma context shims, stabilized post-cutoff Task Object schemas into Llama 3.2 / Muse Glimmer PEFT LoRA adapters, and novel multi-step synthesis to frontier Muse Spark 1.3 or Muse Wonder 1.0.",
+      "schema_or_body": {
+        "herma_context_shim": "0 weight updates; volatile facts, live URIs, caller guardrails (Llama 3.2 3B 52.0% -> 64.7%)",
+        "lora_parametric_memory": "PEFT LoRA on Llama 3.2 1B/3B or Muse Glimmer 30B QLoRA; stable post-cutoff Task Object schemas with zero per-turn HarnessTax",
+        "frontier_passthrough": "Muse Spark 1.3 / Muse Wonder 1.0 in Standard mode (-contributor refused)"
+      },
+      "source_uri": "urn:ta-amps:spec:lora-memory-routing-v1",
+      "updated_at": "2026-10-30T00:00:00+00:00"
     }
   ]
 }

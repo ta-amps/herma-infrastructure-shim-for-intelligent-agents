@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 430" width="920" height="430" role="img" aria-labelledby="chart-title chart-desc">
+  <title id="chart-title">Herma Context-Shim Lift and Meta Model Memory Regimes</title>
+  <desc id="chart-desc">Measured synthetic 150-row tool-call accuracy showing Llama 3.2 3B rising from 52.0% base to 64.7% with zero-weight Herma context shimming and 72.7% with promoted LoRA, Muse Glimmer 30B rising from 93.3% to 99.3% with QLoRA, and 3-tier natural-language shim routing.</desc>
+  <rect width="920" height="430" rx="14" fill="#0c1017"/>
+  <rect x="16" y="16" width="888" height="398" rx="11" fill="#131a24" stroke="#253244" stroke-width="1.5"/>
+
+  <text x="40" y="54" fill="#eef2f7" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="20" font-weight="700">Herma Zero-Weight Shim Lift &amp; Parametric LoRA Progression</text>
+  <text x="40" y="77" fill="#9fb0c5" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13">150-row synthetic Task (verb) &amp; Task Object (noun) contract benchmark -- Standard mode only (-contributor refused)</text>
+
+  <rect x="40" y="98" width="520" height="292" rx="10" fill="#0f151e" stroke="#253244" stroke-width="1"/>
+  <text x="58" y="124" fill="#67b7ff" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="700">EXACT CONTRACT ACCURACY (%)</text>
+
+  <text x="58" y="158" fill="#eef2f7" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600">Llama 3.2 3B -- Base (raw prompt, 0 shim)</text>
+  <rect x="58" y="166" width="420" height="18" rx="5" fill="#1b2738"/>
+  <rect x="58" y="166" width="218.4" height="18" rx="5" fill="#5b6f8a"/>
+  <text x="488" y="180" fill="#9fb0c5" font-family="ui-monospace, SFMono-Regular, monospace" font-size="13" font-weight="700">52.0%</text>
+
+  <text x="58" y="210" fill="#eef2f7" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="700">Llama 3.2 3B + Herma Context Shim (0 weight updates)</text>
+  <rect x="58" y="218" width="420" height="20" rx="5" fill="#1b2738"/>
+  <rect x="58" y="218" width="271.7" height="20" rx="5" fill="#67b7ff"/>
+  <text x="488" y="233" fill="#67b7ff" font-family="ui-monospace, SFMono-Regular, monospace" font-size="13" font-weight="700">64.7% (+12.7)</text>
+
+  <text x="58" y="264" fill="#eef2f7" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600">Llama 3.2 3B + Promoted PEFT LoRA (r=32)</text>
+  <rect x="58" y="272" width="420" height="18" rx="5" fill="#1b2738"/>
+  <rect x="58" y="272" width="305.3" height="18" rx="5" fill="#53d69a"/>
+  <text x="488" y="286" fill="#53d69a" font-family="ui-monospace, SFMono-Regular, monospace" font-size="13" font-weight="700">72.7% (+20.7)</text>
+
+  <line x1="58" y1="306" x2="540" y2="306" stroke="#253244" stroke-width="1"/>
+
+  <text x="58" y="330" fill="#eef2f7" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600">Muse Glimmer 30B -- Base vs 4-bit QLoRA Holdout</text>
+  <rect x="58" y="338" width="420" height="14" rx="4" fill="#1b2738"/>
+  <rect x="58" y="338" width="391.9" height="14" rx="4" fill="#5b6f8a"/>
+  <text x="488" y="349" fill="#9fb0c5" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12" font-weight="700">93.3% base</text>
+
+  <rect x="58" y="358" width="420" height="16" rx="4" fill="#1b2738"/>
+  <rect x="58" y="358" width="417.1" height="16" rx="4" fill="#53d69a"/>
+  <text x="488" y="370" fill="#53d69a" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12" font-weight="700">99.3% QLoRA</text>
+
+  <rect x="578" y="98" width="302" height="292" rx="10" fill="#0f151e" stroke="#253244" stroke-width="1"/>
+  <text x="596" y="124" fill="#67b7ff" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="700">NATURAL-LANGUAGE SHIM ROUTING</text>
+
+  <rect x="596" y="138" width="266" height="68" rx="8" fill="#131a24" stroke="#253244"/>
+  <text x="608" y="158" fill="#53d69a" font-family="ui-monospace, SFMono-Regular, monospace" font-size="11" font-weight="700">respond_directly (0 LLM tokens)</text>
+  <text x="608" y="176" fill="#eef2f7" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">"What are tasks and task objects?"</text>
+  <text x="608" y="194" fill="#9fb0c5" font-family="ui-monospace, SFMono-Regular, monospace" font-size="11">-> PROV-DIRECT-NOUN-VERB-SCHEMA</text>
+
+  <rect x="596" y="216" width="266" height="68" rx="8" fill="#131a24" stroke="#253244"/>
+  <text x="608" y="236" fill="#67b7ff" font-family="ui-monospace, SFMono-Regular, monospace" font-size="11" font-weight="700">shim_context (Feed Task Object)</text>
+  <text x="608" y="254" fill="#eef2f7" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">"agent harness feeds &amp; HarnessTax"</text>
+  <text x="608" y="272" fill="#9fb0c5" font-family="ui-monospace, SFMono-Regular, monospace" font-size="11">-> PROV-HARNESS-FEEDS-GUIDE</text>
+
+  <rect x="596" y="294" width="266" height="80" rx="8" fill="#131a24" stroke="#253244"/>
+  <text x="608" y="314" fill="#67b7ff" font-family="ui-monospace, SFMono-Regular, monospace" font-size="11" font-weight="700">shim_context (Memory Decision)</text>
+  <text x="608" y="332" fill="#eef2f7" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">"prompt shimming vs LoRA memory"</text>
+  <text x="608" y="350" fill="#9fb0c5" font-family="ui-monospace, SFMono-Regular, monospace" font-size="11">-> PROV-LORA-MEMORY-ROUTING</text>
+  <text x="608" y="365" fill="#9fb0c5" font-family="ui-monospace, SFMono-Regular, monospace" font-size="10">100% Python &lt;-&gt; Cloudflare Worker parity</text>
+</svg>

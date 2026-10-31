@@ -86,6 +86,7 @@ CONCEPT_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "record",
             "state",
             "atomic",
+            "bucket",
         ),
     ),
     (
@@ -138,6 +139,34 @@ CONCEPT_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "auth",
             "credential",
             "leak",
+        ),
+    ),
+    (
+        "concept:harness_feeds",
+        (
+            "harness",
+            "harnesstax",
+            "feed",
+            "benchmark",
+            "overhead",
+            "opencode",
+            "profile",
+            "leaderboard",
+        ),
+    ),
+    (
+        "concept:lora_memory",
+        (
+            "lora",
+            "qlora",
+            "peft",
+            "adapter",
+            "parametric",
+            "glimmer",
+            "llama",
+            "cutoff",
+            "weights",
+            "finetune",
         ),
     ),
 )

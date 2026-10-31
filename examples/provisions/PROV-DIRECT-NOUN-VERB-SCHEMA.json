@@ -1,11 +1,11 @@
 {
   "prov_id": "PROV-DIRECT-NOUN-VERB-SCHEMA",
-  "title": "Direct Canonical Noun & Verb Schema Lookup",
-  "summary": "Responds directly with canonical atomic noun/verb schema definitions from Herma's context database without calling an upstream LLM.",
+  "title": "Direct Tasks & Task Objects (Canonical Noun/Verb Schema) Lookup",
+  "summary": "Responds directly to natural-language Task and Task-Object or canonical noun/verb schema lookups from Herma's context database without calling an upstream LLM.",
   "priority": 350,
   "enabled": true,
   "action": "respond_directly",
-  "direct_response": "Canonical Herma + Tessera Noun/Verb Contract: shared state artifacts are compare-and-set NOUNs guarded by expected_version, and work items are leased VERB tiles (enqueue -> claim -> heartbeat -> submit/park) guarded by a monotonic fence token.",
+  "direct_response": "Canonical Herma + Tessera Noun/Verb Contract -- Tasks (`verbs` on the wire) and Task Objects (`nouns` on the wire: every reusable tool, feed, dataset, LoRA adapter, shim, or receipt a task uses or creates). Shared Task Objects are compare-and-set NOUNs guarded by expected_version, and independently schedulable Tasks are leased VERB tiles (enqueue -> claim -> heartbeat -> submit/park) guarded by a monotonic fence token.",
   "context_refs": [
     "noun:tessera.lease_fence",
     "verb:tessera.claim"
@@ -13,17 +13,18 @@
   "inject_position": "system_prefix",
   "dedupe_mode": "every_turn",
   "max_chars": 3000,
-  "inject_text": "Return the canonical noun/verb schema contract directly without invoking an upstream LLM.",
+  "inject_text": "Return the canonical Tasks (verbs) and Task Objects (nouns) schema contract directly without invoking an upstream LLM.",
   "uris": [
     {
       "uri": "https://tessera.ta-amps.workers.dev/llms.txt",
       "label": "Tessera Noun & Verb Protocol Summary",
       "kind": "schema",
-      "inline_excerpt": "Atomic compare-and-set nouns and fenced queue verbs."
+      "inline_excerpt": "Atomic compare-and-set Task Objects (nouns) and fenced queue Tasks (verbs)."
     }
   ],
   "metadata_tags": {
     "domain": "context-database",
+    "fabric_governance": "{\"allowed_surfaces\":[\"surface:herma\",\"surface:tessera\"],\"namespace\":\"main\",\"producer_surface\":\"surface:herma\",\"tags\":[\"status:verified\"],\"target_cohorts\":[\"all\"],\"visibility_scope\":\"public_commons\"}",
     "mode": "direct-response"
   },
   "triggers": {
@@ -32,7 +33,22 @@
       "any_keywords": [
         "canonical noun/verb schema",
         "herma direct schema",
-        "/herma-schema"
+        "/herma-schema",
+        "task and task-object schema",
+        "task and task object schema",
+        "tasks and task objects",
+        "tasks and task-objects",
+        "what are tasks and task objects",
+        "what are tasks and task-objects",
+        "what is a task object",
+        "what is a task-object",
+        "canonical noun and verb schema",
+        "noun and verb schema",
+        "noun-verb schema",
+        "noun/verb schema"
+      ],
+      "regex_patterns": [
+        "\\b(?:what\\s+(?:are|is)\\s+(?:a\\s+)?tasks?\\s+and\\s+task[- ]objects?|tasks?\\s*(?:&|and|/)\\s*task[- ]objects?\\s+(?:schema|contract|model|primitives?)|noun[- /\\s]+(?:and\\s+)?verb\\s+(?:schema|contract))\\b"
       ]
     }
   }
