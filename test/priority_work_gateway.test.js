@@ -386,4 +386,116 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     expect(demoPageRes.status).toBe(200);
     expect(demoPageRes.headers.get("content-security-policy")).toContain("script-src 'self'");
   });
+
+  it("enforces atomic CAS /q/claim without double-leases, rejects stale fencing_token with 409, and indexes pure CJK & Devanagari search queries", async () => {
+    // 1. Seed 8 isolated tasks + CJK/Devanagari task_objects
+    const raceOwner = "w_casrace_unit01";
+    const seedVerbs = Array.from({ length: 8 }, (_, idx) => ({
+      tier: "public_general",
+      verb_kind: "worker_self_directed",
+      owner_worker_uuid: raceOwner,
+      title: `CAS Race Probe Step ${idx}`,
+      prompt: `Verify atomic lease uniqueness ${idx}`,
+    }));
+    const seedRes = await callGateway("/q/submit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent_id: "cas-seeder",
+        worker_uuid: raceOwner,
+        task_id: "self_seed",
+        summary: "Seed CAS & multi-script objects",
+        task_objects: [
+          {
+            object_key: "cjk_hinanjo_unicode_probe_v1",
+            category: "multiscript_schema",
+            summary: "避難所 自治体 防災 オフライン名簿スキーマ readability check",
+            payload: { script: "ja", terms: ["避難所", "自治体"] },
+          },
+          {
+            object_key: "devanagari_ashraya_probe_v1",
+            category: "multiscript_schema",
+            summary: "हिन्दी आश्रय सहायता ऑफलाइन पंजीकरण तालिका",
+            payload: { script: "hi", terms: ["हिन्दी", "आश्रय", "सहायता"] },
+          },
+        ],
+        queued_verbs: seedVerbs,
+      }),
+    });
+    expect(seedRes.status).toBe(200);
+
+    // 2. Fire 8 concurrent POST /q/claim calls for `slot: "own"` -> 8 distinct task_ids, 0 double-leases!
+    const concurrentClaims = await Promise.all(
+      Array.from({ length: 8 }, (_, idx) =>
+        callGateway("/q/claim", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            agent_id: `racer-${idx}`,
+            worker_uuid: raceOwner,
+            slot: "own",
+          }),
+        }).then((r) => r.json())
+      )
+    );
+    const leasedIds = concurrentClaims.map((c) => c.lease?.task_id).filter(Boolean);
+    expect(leasedIds.length).toBe(8);
+    expect(new Set(leasedIds).size).toBe(8);
+
+    // 3. Stale fencing_token rejection (409 Conflict)
+    const targetLease = concurrentClaims[0].lease;
+    const wrongTokRes = await callGateway("/q/submit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent_id: "stale-worker",
+        worker_uuid: raceOwner,
+        task_id: targetLease.task_id,
+        fencing_token: 0,
+        summary: "stale before completion",
+      }),
+    });
+    expect(wrongTokRes.status).toBe(409);
+
+    const validSubRes = await callGateway("/q/submit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent_id: "racer-0",
+        worker_uuid: raceOwner,
+        task_id: targetLease.task_id,
+        fencing_token: targetLease.fencing_token,
+        summary: "authoritative completion",
+      }),
+    });
+    expect(validSubRes.status).toBe(200);
+
+    const postDoneStaleRes = await callGateway("/q/submit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent_id: "late-zombie",
+        worker_uuid: raceOwner,
+        task_id: targetLease.task_id,
+        fencing_token: targetLease.fencing_token,
+        summary: "attempted overwrite after done",
+      }),
+    });
+    expect(postDoneStaleRes.status).toBe(409);
+
+    // 4. Pure CJK & pure Devanagari native /q/search + zero spurious SymSpell rewrite on indexed "readability"
+    const cjkRes = await callGateway(`/q/search?q=${encodeURIComponent("避難所 自治体")}`);
+    expect(cjkRes.status).toBe(200);
+    const cjkJson = await cjkRes.json();
+    expect(cjkJson.results[0].id).toBe("cjk_hinanjo_unicode_probe_v1");
+
+    const devaRes = await callGateway(`/q/search?q=${encodeURIComponent("हिन्दी आश्रय सहायता")}`);
+    expect(devaRes.status).toBe(200);
+    const devaJson = await devaRes.json();
+    expect(devaJson.results[0].id).toBe("devanagari_ashraya_probe_v1");
+
+    const readRes = await callGateway("/q/search?q=readability");
+    const readJson = await readRes.json();
+    expect(readJson.query_analysis.typo_corrections.readability).toBeUndefined();
+  });
 });

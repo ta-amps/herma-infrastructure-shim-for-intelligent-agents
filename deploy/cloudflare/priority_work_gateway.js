@@ -84,6 +84,8 @@ export const QUEUE_GATEWAY_GRID = Object.freeze({
   candidate_pool_cap: 60,
   symspell_max_words_per_doc: 32,
   lease_ttl_ms: 900000,
+  cas_claim_max_retries: 8,
+  cjk_bigram_width: 2,
   priority_ngo_default: 95,
   priority_public_default: 60,
   priority_eval_default: 80,
@@ -136,6 +138,7 @@ export const QUEUE_GATEWAY_GRID = Object.freeze({
   http_forbidden: 403,
   http_not_found: 404,
   http_method_not_allowed: 405,
+  http_conflict: 409,
 });
 
 const PUBLIC_TIERS = new Set(["ngo_priority", "public_general"]);
@@ -297,14 +300,24 @@ function stemToken(word) {
 }
 
 function tokenizeWordsAndIdentifiers(text) {
-  const spaced = String(text || "").replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase();
-  const raw = spaced.match(/[a-z0-9_]+/g) || [];
+  const normalized = String(text || "").normalize("NFKC");
+  const spaced = normalized.replace(/([\p{Ll}\p{N}])(\p{Lu})/gu, "$1 $2").toLowerCase();
+  const raw = spaced.match(/[\p{L}\p{M}\p{N}_]+/gu) || [];
   const out = [];
+  const cjkRunRe = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+/gu;
   for (const tok of raw) {
     if (tok.length >= QUEUE_GATEWAY_GRID.min_token_len) out.push(tok);
     if (tok.includes("_")) {
       for (const part of tok.split("_")) {
         if (part.length >= QUEUE_GATEWAY_GRID.min_token_len) out.push(part);
+      }
+    }
+    const cjkRuns = tok.match(cjkRunRe) || [];
+    for (const run of cjkRuns) {
+      if (run.length >= QUEUE_GATEWAY_GRID.min_token_len) out.push(run);
+      const biW = QUEUE_GATEWAY_GRID.cjk_bigram_width;
+      for (let i = 0; i + biW <= run.length; i += 1) {
+        out.push(run.slice(i, i + biW));
       }
     }
   }
@@ -1214,6 +1227,14 @@ async function resolveSymspellCorrections(db, rawTokens) {
       .bind(tok, tok)
       .first();
     if (exact) {
+      corrected.push(tok);
+      continue;
+    }
+    const exactStem = await db
+      .prepare("SELECT term FROM herma_search_postings WHERE term_kind = 'stem' AND term = ? LIMIT 1")
+      .bind(stemToken(tok))
+      .first();
+    if (exactStem) {
       corrected.push(tok);
       continue;
     }
@@ -2738,138 +2759,168 @@ async function claimNextAuthorizedTask(
 
   let row = null;
   let evalCandidates = null;
+  let nextToken = 0;
+  let expiresIso = "";
 
-  if (requestedTier && ALL_TIERS.has(requestedTier)) {
-    row = await db
-      .prepare(
-        `SELECT * FROM herma_durable_queue
-         WHERE state = 'ready' AND tier = ?
-         ORDER BY ${bandOrderClause} priority DESC, id ASC LIMIT 1`
-      )
-      .bind(requestedTier, ...bandBind)
-      .first();
-  } else if (infraAllowed && !workerUuid && !normalizedSlot) {
-    row = await db
-      .prepare(
-        `SELECT * FROM herma_durable_queue
-         WHERE state = 'ready' AND ${visAllowed}
-         ORDER BY (CASE WHEN tier IN ('infra_private', 'ngo_priority') THEN 0 ELSE 1 END) ASC,
-                  ${bandOrderClause} priority DESC, id ASC
-         LIMIT 1`
-      )
-      .bind(...bandBind)
-      .first();
-  } else if (effectiveSlot === "eval") {
-    evalCandidates = await buildLiveEvaluationCandidates(db, infraAllowed);
-    row = await db
-      .prepare(
-        `SELECT * FROM herma_durable_queue
-         WHERE state = 'ready' AND ${visAllowed} AND verb_kind = 'eval_and_rank'
-         ORDER BY priority DESC, id ASC LIMIT 1`
-      )
-      .first();
-    if (!row) {
-      // Auto-synthesize a live Beat-1 evaluation verb so the 3-beat rotation never stalls on Beat 1
-      const nowSynth = new Date().toISOString();
-      const synthHash = (await sha256HexGateway(`eval_auto:${profile.worker_uuid}:${profile.iteration_count}:${nowSynth}`)).slice(
-        0,
-        QUEUE_GATEWAY_GRID.hash_prefix_chars
-      );
-      const synthId = `verb_evl_${synthHash}`;
-      const sampleIds = [
-        ...evalCandidates.tasks_to_evaluate.map((t) => t.task_id),
-        ...evalCandidates.task_objects_to_evaluate.map((o) => o.object_key),
-      ].slice(0, QUEUE_GATEWAY_GRID.eval_packet_limit * 2);
-      const synthTitle = `Beat-1 Priority & Novelty Audit (${sampleIds.slice(0, 3).join(", ") || "live queue"})`;
-      const synthPrompt =
-        `Analyze and rank the attached evaluation_candidates (${sampleIds.join(", ") || "via /q/pulse"}) through your persona lens (${profile.persona_label}). ` +
-        "Score actual_importance (1..100), potential_importance (1..100), estimated_priority (1..100), novelty_milli (0..1000), and convergence_flag, store 1 calibration summary object, and submit your evaluations array.";
-      const idxMeta = await indexSidecarDocument(db, {
-        title: synthTitle,
-        bodyText: synthPrompt,
-        category: "eval_and_rank",
-        labels: ["eval_and_rank", `worker:${profile.worker_uuid}`],
-        inputContract: "live_queue_and_object_slice",
-        outputContract: "calibrated_evaluations_and_rubric",
-      });
-      await db
-        .prepare(
-          `INSERT OR IGNORE INTO herma_durable_queue
-           (task_id, tier, visibility, priority, state, title, prompt, input_contract, output_contract,
-            simhash64_hex, producer_agent, created_at, updated_at,
-            partition_slot, category, labels_json, input_shape_hash, output_shape_hash,
-            lsh_band_0, lsh_band_1, quality_milli, content_sha256, verb_kind, producer_worker_uuid)
-           VALUES (?, 'public_general', 'public_commons', ?, 'ready', ?, ?, 'live_queue_and_object_slice',
-                   'calibrated_evaluations_and_rubric', ?, 'beat1-eval-synthesizer', ?, ?,
-                   ?, 'eval_and_rank', ?, ?, ?, ?, ?, ?, ?, 'eval_and_rank', ?)`
-        )
-        .bind(
-          synthId,
-          QUEUE_GATEWAY_GRID.priority_eval_default,
-          synthTitle,
-          synthPrompt,
-          idxMeta.simhash64_hex,
-          nowSynth,
-          nowSynth,
-          idxMeta.partition_slot,
-          JSON.stringify(["eval_and_rank", `worker:${profile.worker_uuid}`]),
-          idxMeta.input_shape_hash,
-          idxMeta.output_shape_hash,
-          idxMeta.lsh_band_0,
-          idxMeta.lsh_band_1,
-          QUEUE_GATEWAY_GRID.default_quality_milli,
-          idxMeta.content_sha256,
-          profile.worker_uuid
-        )
-        .run();
-      row = await db.prepare("SELECT * FROM herma_durable_queue WHERE task_id = ?").bind(synthId).first();
-    }
-  } else if (effectiveSlot === "own") {
-    // 1. Worker's own UUID-tagged continuation verb first
-    row = await db
-      .prepare(
-        `SELECT * FROM herma_durable_queue
-         WHERE state = 'ready' AND ${visAllowed} AND owner_worker_uuid = ?
-         ORDER BY priority DESC, id ASC LIMIT 1`
-      )
-      .bind(profile.worker_uuid)
-      .first();
-    // 2. Otherwise claim a stored Verb-Generator Verb (`meta_generator`) or Prior-Runtime Mutator (`verb_mutator`)
-    if (!row) {
-      row = await db
+  for (let casAttempt = 0; casAttempt < QUEUE_GATEWAY_GRID.cas_claim_max_retries; casAttempt += 1) {
+    let candidate = null;
+    if (requestedTier && ALL_TIERS.has(requestedTier)) {
+      candidate = await db
         .prepare(
           `SELECT * FROM herma_durable_queue
-           WHERE state = 'ready' AND ${visAllowed} AND verb_kind IN ('meta_generator', 'verb_mutator')
-             AND (owner_worker_uuid = '' OR owner_worker_uuid = ?)
+           WHERE state = 'ready' AND tier = ?
+           ORDER BY ${bandOrderClause} priority DESC, id ASC LIMIT 1`
+        )
+        .bind(requestedTier, ...bandBind)
+        .first();
+    } else if (infraAllowed && !workerUuid && !normalizedSlot) {
+      candidate = await db
+        .prepare(
+          `SELECT * FROM herma_durable_queue
+           WHERE state = 'ready' AND ${visAllowed}
+           ORDER BY (CASE WHEN tier IN ('infra_private', 'ngo_priority') THEN 0 ELSE 1 END) ASC,
+                    ${bandOrderClause} priority DESC, id ASC
+           LIMIT 1`
+        )
+        .bind(...bandBind)
+        .first();
+    } else if (effectiveSlot === "eval") {
+      if (!evalCandidates) {
+        evalCandidates = await buildLiveEvaluationCandidates(db, infraAllowed);
+      }
+      candidate = await db
+        .prepare(
+          `SELECT * FROM herma_durable_queue
+           WHERE state = 'ready' AND ${visAllowed} AND verb_kind = 'eval_and_rank'
+           ORDER BY priority DESC, id ASC LIMIT 1`
+        )
+        .first();
+      if (!candidate) {
+        // Auto-synthesize a live Beat-1 evaluation verb so the 3-beat rotation never stalls on Beat 1
+        const nowSynth = new Date().toISOString();
+        const synthHash = (
+          await sha256HexGateway(`eval_auto:${profile.worker_uuid}:${profile.iteration_count}:${nowSynth}:${casAttempt}`)
+        ).slice(0, QUEUE_GATEWAY_GRID.hash_prefix_chars);
+        const synthId = `verb_evl_${synthHash}`;
+        const sampleIds = [
+          ...evalCandidates.tasks_to_evaluate.map((t) => t.task_id),
+          ...evalCandidates.task_objects_to_evaluate.map((o) => o.object_key),
+        ].slice(0, QUEUE_GATEWAY_GRID.eval_packet_limit * 2);
+        const synthTitle = `Beat-1 Priority & Novelty Audit (${sampleIds.slice(0, 3).join(", ") || "live queue"})`;
+        const synthPrompt =
+          `Analyze and rank the attached evaluation_candidates (${sampleIds.join(", ") || "via /q/pulse"}) through your persona lens (${profile.persona_label}). ` +
+          "Score actual_importance (1..100), potential_importance (1..100), estimated_priority (1..100), novelty_milli (0..1000), and convergence_flag, store 1 calibration summary object, and submit your evaluations array.";
+        const idxMeta = await indexSidecarDocument(db, {
+          title: synthTitle,
+          bodyText: synthPrompt,
+          category: "eval_and_rank",
+          labels: ["eval_and_rank", `worker:${profile.worker_uuid}`],
+          inputContract: "live_queue_and_object_slice",
+          outputContract: "calibrated_evaluations_and_rubric",
+        });
+        await db
+          .prepare(
+            `INSERT OR IGNORE INTO herma_durable_queue
+             (task_id, tier, visibility, priority, state, title, prompt, input_contract, output_contract,
+              simhash64_hex, producer_agent, created_at, updated_at,
+              partition_slot, category, labels_json, input_shape_hash, output_shape_hash,
+              lsh_band_0, lsh_band_1, quality_milli, content_sha256, verb_kind, producer_worker_uuid)
+             VALUES (?, 'public_general', 'public_commons', ?, 'ready', ?, ?, 'live_queue_and_object_slice',
+                     'calibrated_evaluations_and_rubric', ?, 'beat1-eval-synthesizer', ?, ?,
+                     ?, 'eval_and_rank', ?, ?, ?, ?, ?, ?, ?, 'eval_and_rank', ?)`
+          )
+          .bind(
+            synthId,
+            QUEUE_GATEWAY_GRID.priority_eval_default,
+            synthTitle,
+            synthPrompt,
+            idxMeta.simhash64_hex,
+            nowSynth,
+            nowSynth,
+            idxMeta.partition_slot,
+            JSON.stringify(["eval_and_rank", `worker:${profile.worker_uuid}`]),
+            idxMeta.input_shape_hash,
+            idxMeta.output_shape_hash,
+            idxMeta.lsh_band_0,
+            idxMeta.lsh_band_1,
+            QUEUE_GATEWAY_GRID.default_quality_milli,
+            idxMeta.content_sha256,
+            profile.worker_uuid
+          )
+          .run();
+        candidate = await db.prepare("SELECT * FROM herma_durable_queue WHERE task_id = ? AND state = 'ready'").bind(synthId).first();
+      }
+    } else if (effectiveSlot === "own") {
+      // 1. Worker's own UUID-tagged continuation verb first
+      candidate = await db
+        .prepare(
+          `SELECT * FROM herma_durable_queue
+           WHERE state = 'ready' AND ${visAllowed} AND owner_worker_uuid = ?
            ORDER BY priority DESC, id ASC LIMIT 1`
         )
         .bind(profile.worker_uuid)
         .first();
-    }
-    // 3. Otherwise claim an unclaimed general task not privately owned by a different worker_uuid
-    if (!row) {
-      row = await db
+      // 2. Otherwise claim a stored Verb-Generator Verb (`meta_generator`) or Prior-Runtime Mutator (`verb_mutator`)
+      if (!candidate) {
+        candidate = await db
+          .prepare(
+            `SELECT * FROM herma_durable_queue
+             WHERE state = 'ready' AND ${visAllowed} AND verb_kind IN ('meta_generator', 'verb_mutator')
+               AND (owner_worker_uuid = '' OR owner_worker_uuid = ?)
+             ORDER BY priority DESC, id ASC LIMIT 1`
+          )
+          .bind(profile.worker_uuid)
+          .first();
+      }
+      // 3. Otherwise claim an unclaimed general task not privately owned by a different worker_uuid
+      if (!candidate) {
+        candidate = await db
+          .prepare(
+            `SELECT * FROM herma_durable_queue
+             WHERE state = 'ready' AND ${visAllowed} AND (owner_worker_uuid = '' OR owner_worker_uuid = ?)
+             ORDER BY (CASE WHEN tier = 'public_general' THEN 0 ELSE 1 END) ASC,
+                      ${bandOrderClause} priority DESC, id ASC LIMIT 1`
+          )
+          .bind(profile.worker_uuid, ...bandBind)
+          .first();
+      }
+    } else {
+      // Beat 0 (`ngo`) or `any`: NGO Public-Good tasks ALWAYS first (avoiding other workers' private own-tagged threads unless unclaimed)
+      candidate = await db
         .prepare(
           `SELECT * FROM herma_durable_queue
            WHERE state = 'ready' AND ${visAllowed} AND (owner_worker_uuid = '' OR owner_worker_uuid = ?)
-           ORDER BY (CASE WHEN tier = 'public_general' THEN 0 ELSE 1 END) ASC,
-                    ${bandOrderClause} priority DESC, id ASC LIMIT 1`
+           ORDER BY (CASE WHEN tier = 'ngo_priority' THEN 0 ELSE 1 END) ASC,
+                    ${bandOrderClause} priority DESC, id ASC
+           LIMIT 1`
         )
         .bind(profile.worker_uuid, ...bandBind)
         .first();
     }
-  } else {
-    // Beat 0 (`ngo`) or `any`: NGO Public-Good tasks ALWAYS first (avoiding other workers' private own-tagged threads unless unclaimed)
-    row = await db
+
+    if (!candidate) {
+      break;
+    }
+
+    const prevToken = Number(candidate.fencing_token || 0);
+    const tryToken = prevToken + 1;
+    const now = new Date();
+    const tryExpiresIso = new Date(now.getTime() + QUEUE_GATEWAY_GRID.lease_ttl_ms).toISOString();
+    const casRes = await db
       .prepare(
-        `SELECT * FROM herma_durable_queue
-         WHERE state = 'ready' AND ${visAllowed} AND (owner_worker_uuid = '' OR owner_worker_uuid = ?)
-         ORDER BY (CASE WHEN tier = 'ngo_priority' THEN 0 ELSE 1 END) ASC,
-                  ${bandOrderClause} priority DESC, id ASC
-         LIMIT 1`
+        `UPDATE herma_durable_queue
+         SET state = 'leased', fencing_token = ?, leased_by = ?, lease_expires_at = ?, updated_at = ?
+         WHERE id = ? AND state = 'ready' AND COALESCE(fencing_token, 0) = ?`
       )
-      .bind(profile.worker_uuid, ...bandBind)
-      .first();
+      .bind(tryToken, agentId, tryExpiresIso, now.toISOString(), candidate.id, prevToken)
+      .run();
+
+    if (Number(casRes?.meta?.changes ?? 0) > 0) {
+      row = candidate;
+      nextToken = tryToken;
+      expiresIso = tryExpiresIso;
+      break;
+    }
   }
 
   const priorRuntimes = await fetchPriorVerbRuntimes(db, infraAllowed, QUEUE_GATEWAY_GRID.prior_runtimes_limit);
@@ -2906,18 +2957,6 @@ async function claimNextAuthorizedTask(
   if (!row) {
     return { task: null, bilateral_guidance: bilateralGuidance };
   }
-
-  const nextToken = Number(row.fencing_token || 0) + 1;
-  const now = new Date();
-  const expiresIso = new Date(now.getTime() + QUEUE_GATEWAY_GRID.lease_ttl_ms).toISOString();
-  await db
-    .prepare(
-      `UPDATE herma_durable_queue
-       SET state = 'leased', fencing_token = ?, leased_by = ?, lease_expires_at = ?, updated_at = ?
-       WHERE id = ?`
-    )
-    .bind(nextToken, agentId, expiresIso, now.toISOString(), row.id)
-    .run();
 
   return {
     task: {
@@ -3121,6 +3160,23 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       forbidden: true,
       detail: "Submitting to server_infra tasks requires server infrastructure worker authorization.",
     };
+  }
+  if (existingTask && payload.fencing_token !== undefined && payload.fencing_token !== null) {
+    const reqToken = Number(payload.fencing_token);
+    const curToken = Number(existingTask.fencing_token || 0);
+    if (
+      existingTask.state === "done" ||
+      (existingTask.state === "leased" && reqToken !== curToken) ||
+      (existingTask.state === "ready" && curToken > 0 && reqToken !== curToken)
+    ) {
+      return {
+        conflict: true,
+        code: "stale_fencing_token",
+        detail: `Stale or mismatched fencing_token (${reqToken}) for task ${taskId} (state=${existingTask.state}, current_fencing_token=${curToken}).`,
+        expected_fencing_token: curToken,
+        task_state: existingTask.state,
+      };
+    }
   }
   const parentGenDepth = existingTask ? Number(existingTask.generation_depth || 0) : 0;
 
@@ -3466,12 +3522,12 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
   const receiptHash = tesseraSync.receipt_hash || localReceipt;
   const verificationCode = receiptHash.slice(0, QUEUE_GATEWAY_GRID.hash_prefix_chars);
 
-  if (existingTask) {
+  if (existingTask && existingTask.state !== "done") {
     await db
       .prepare(
         `UPDATE herma_durable_queue
          SET state = 'done', completed_by = ?, result_summary = ?, receipt_hash = ?, updated_at = ?
-         WHERE task_id = ?`
+         WHERE task_id = ? AND state != 'done'`
       )
       .bind(agentId, summary, receiptHash, nowIso, taskId)
       .run();
@@ -4082,6 +4138,18 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       if (out.forbidden) {
         return sendJson({ ok: false, code: "forbidden_tier", detail: out.detail }, QUEUE_GATEWAY_GRID.http_forbidden);
       }
+      if (out.conflict) {
+        return sendJson(
+          {
+            ok: false,
+            code: out.code || "stale_fencing_token",
+            detail: out.detail,
+            expected_fencing_token: out.expected_fencing_token,
+            task_state: out.task_state,
+          },
+          QUEUE_GATEWAY_GRID.http_conflict
+        );
+      }
       if (wantsJson) return sendJson(out);
       return sendText(
         [
@@ -4113,6 +4181,18 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       const out = await processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed, body);
       if (out.forbidden) {
         return sendJson({ ok: false, code: "forbidden_tier", detail: out.detail }, QUEUE_GATEWAY_GRID.http_forbidden);
+      }
+      if (out.conflict) {
+        return sendJson(
+          {
+            ok: false,
+            code: out.code || "stale_fencing_token",
+            detail: out.detail,
+            expected_fencing_token: out.expected_fencing_token,
+            task_state: out.task_state,
+          },
+          QUEUE_GATEWAY_GRID.http_conflict
+        );
       }
       return sendJson(out);
     }
