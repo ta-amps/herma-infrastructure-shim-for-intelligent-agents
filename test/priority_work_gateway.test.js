@@ -82,4 +82,44 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     const infraClaim = await infraClaimRes.json();
     expect(infraClaim.lease.tier).toBe("infra_private");
   });
+
+  it("supports typo-tolerant SymSpell + semantic alias + LSH RRF search on /q/search while hiding infra_private from public", async () => {
+    // 1. Severe multi-typo search ("shlter accesibility harmnizer") recovers canonical terms & ranks shelter seed #1
+    const typoRes = await callGateway("/q/search?q=shlter+accesibility+harmnizer");
+    expect(typoRes.status).toBe(200);
+    const typoJson = await typoRes.json();
+    expect(typoJson.ok).toBe(true);
+    expect(typoJson.query_analysis.typo_corrections.shlter).toBe("shelter");
+    expect(typoJson.results.length).toBeGreaterThanOrEqual(1);
+    expect(typoJson.results[0].id).toBe("ngo_seed_disaster_shelter_schema");
+    for (const item of typoJson.results) {
+      expect(item.tier).not.toBe("infra_private");
+    }
+
+    // 2. Semantic alias expansion + stored task_objects retrieval
+    const semRes = await callGateway("/q/search?q=990n+epostcard+rubric");
+    expect(semRes.status).toBe(200);
+    const semJson = await semRes.json();
+    const ids = semJson.results.map((r) => r.id);
+    expect(ids).toContain("ngo_seed_990n_directory_audit");
+    expect(ids).toContain("rubric_990n");
+
+    // 3. Public caller explicitly querying tier=infra_private is blocked with 403 Forbidden
+    const forbidSearch = await callGateway("/q/search?q=coalescing&tier=infra_private");
+    expect(forbidSearch.status).toBe(403);
+
+    // 4. Affinity band claim coalescing prefers matching lsh_band_0 within equal priority tier
+    const pulseRes = await callGateway("/q/pulse");
+    const pulse = await pulseRes.json();
+    const pubReady = pulse.ready_tasks_preview.filter((t) => t.tier === "public_general");
+    if (pubReady.length >= 1 && pubReady[pubReady.length - 1].lsh_band_0) {
+      const targetBand = pubReady[pubReady.length - 1].lsh_band_0;
+      const affClaimRes = await callGateway(
+        `/q/claim/affinity-worker?tier=public_general&affinity_band=${encodeURIComponent(targetBand)}&format=json`
+      );
+      expect(affClaimRes.status).toBe(200);
+      const affClaim = await affClaimRes.json();
+      expect(affClaim.lease.lsh_band_0).toBe(targetBand);
+    }
+  });
 });
