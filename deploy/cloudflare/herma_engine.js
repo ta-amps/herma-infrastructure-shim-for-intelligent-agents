@@ -152,10 +152,10 @@ export const DEFAULT_CONTEXT_ENTRIES = [
     entry_id: "detail:herma.lora_vs_shim",
     kind: "detail",
     title: "Prompt Shimming vs LoRAs as Parametric Memory Rule",
-    summary: "Routes volatile or caller-scoped facts through zero-weight Herma context shims, stabilized post-cutoff Task Object schemas into Llama 3.2 / Muse Glimmer PEFT LoRA adapters, and novel multi-step synthesis to frontier Muse Spark 1.3 or Muse Wonder 1.0.",
+    summary: "Routes volatile or caller-scoped facts through zero-weight Herma context shims, stabilized post-cutoff Task Object schemas into Muse Glimmer 30B / compact PEFT LoRA adapters, and novel multi-step synthesis to frontier Muse Spark 1.3 or Muse Wonder 1.0.",
     schema_or_body: {
-      herma_context_shim: "0 weight updates; volatile facts, live URIs, caller guardrails (Llama 3.2 3B 52.0% -> 64.7%)",
-      lora_parametric_memory: "PEFT LoRA on Llama 3.2 1B/3B or Muse Glimmer 30B QLoRA; stable post-cutoff Task Object schemas with zero per-turn HarnessTax",
+      herma_context_shim: "0 weight updates; volatile facts, live URIs, caller guardrails (compact 3B baseline 52.0% -> 64.7%; Muse Spark Open blind NGO eval 87.5% -> 95.8%)",
+      lora_parametric_memory: "Muse Glimmer 30B 4-bit QLoRA & compact local router PEFT LoRA; stable post-cutoff Task Object schemas with zero per-turn HarnessTax",
       frontier_passthrough: "Muse Spark 1.3 / Muse Wonder 1.0 in Standard mode (-contributor refused)",
     },
     source_uri: "urn:ta-amps:spec:lora-memory-routing-v1",
@@ -364,7 +364,7 @@ export const DEFAULT_PROVISIONS = [
   {
     prov_id: "PROV-LORA-MEMORY-ROUTING",
     title: "Prompt Shimming vs LoRAs as Parametric Memory vs Frontier Routing",
-    summary: "Shims the engineering decision rule separating zero-weight Herma context shimming, Llama 3.2 / Muse Glimmer PEFT LoRAs as parametric memory, and frontier Muse passthrough.",
+    summary: "Shims the engineering decision rule separating zero-weight Herma context shimming, Muse Glimmer 30B PEFT LoRAs as parametric memory, and frontier Muse passthrough.",
     priority: 270,
     enabled: true,
     action: "shim_context",
@@ -372,7 +372,7 @@ export const DEFAULT_PROVISIONS = [
     inject_position: "system_prefix",
     dedupe_mode: "once_per_conversation",
     max_chars: 2600,
-    inject_text: "Apply the 3-regime memory & routing rule: (1) Use a Herma Context Shim (0 weight updates) for volatile, newly minted, or caller-scoped facts, live URIs, and turn-level guardrails (measured 52.0% -> 64.7% exact tool-call lift on Llama 3.2 3B before weight updates). (2) Promote recurring, stabilized post-cutoff Task Object schemas and refusal contracts into PEFT LoRA adapters as parametric memory (Llama 3.2 1B/3B local router/memory or Muse Glimmer 30B 4-bit QLoRA) to eliminate repeated per-turn HarnessTax tokens, gated by pre-registered held-out promotion checks. (3) Route open-ended synthesis and independent review Tasks (`verbs`) to frontier `Muse Spark 1.3` or `Muse Wonder 1.0` in Standard mode (`-contributor` tiers remain strictly refused).",
+    inject_text: "Apply the 3-regime memory & routing rule: (1) Use a Herma Context Shim (0 weight updates) for volatile, newly minted, or caller-scoped facts, live URIs, and turn-level guardrails (measured 52.0% -> 64.7% exact tool-call lift on compact 3B baseline and 87.5% -> 95.8% on Muse Spark Open blind NGO eval before weight updates). (2) Promote recurring, stabilized post-cutoff Task Object schemas and refusal contracts into PEFT LoRA adapters as parametric memory (Muse Glimmer 30B 4-bit QLoRA and compact local router LoRAs) to eliminate repeated per-turn HarnessTax tokens, gated by pre-registered held-out promotion checks. (3) Route open-ended synthesis and independent review Tasks (`verbs`) to frontier `Muse Spark 1.3` or `Muse Wonder 1.0` in Standard mode (`-contributor` tiers remain strictly refused).",
     uris: [
       {
         uri: "urn:ta-amps:spec:lora-memory-routing-v1",
@@ -414,7 +414,7 @@ export const DEFAULT_PROVISIONS = [
       semantic: {
         exemplars: [
           "decide when to inject facts in a prompt context shim versus baking stable post-cutoff schemas into a PEFT LoRA adapter",
-          "use Llama 3.2 or Muse Glimmer QLoRA adapters as parametric memory instead of paying repeated prompt token overhead",
+          "use Muse Glimmer 30B QLoRA adapters as parametric memory instead of paying repeated prompt token overhead",
         ],
         concepts: ["lora", "qlora", "peft", "adapter", "parametric", "glimmer"],
         threshold: 0.26,
@@ -587,7 +587,7 @@ export const PREVIEW_JS = `(function () {
       wire: "chat_completions"
     },
     lora: {
-      prompt: "When should we use prompt shimming vs LoRA as parametric memory on Llama 3.2 or Muse Glimmer?",
+      prompt: "When should we use prompt shimming vs LoRA as parametric memory on Muse Spark Open or Muse Glimmer?",
       path: "training/shim-router-lora-spec.json",
       wire: "chat_completions"
     },
@@ -2206,10 +2206,10 @@ ${renderHeader()}
 <main>
 <span class="pill">Herma v${HERMA_VERSION} · Programmable AI Request Middleware · Tasks &amp; Task Objects Shim · 24/7 Cloudflare D1 + Tessera Cloud</span>
 <h1>Tasks, Task Objects &amp; Context-Shimming Middleware for Coding Harnesses</h1>
-<p class="lead"><strong>Herma:</strong> context-shimming AI middleware for configurable coding harnesses -- connects <strong>Tasks (<code>verbs</code> on the wire)</strong> and <strong>Task Objects (<code>nouns</code> on the wire: reusable tools, feeds, datasets, LoRA adapters, shims, and receipts)</strong> to models without static prompt bloat (<code>HarnessTax</code>) or post-cutoff schema amnesia. Herma intercepts requests via <strong>keyword</strong>, <strong>semantic</strong>, or <strong>micromodel</strong> rules to <strong>respond directly</strong> in 0 tokens or shim bounded context before LLM execution (lifting frozen <code>Llama 3.2 3B</code> tool accuracy <code>52.0% -&gt; 64.7%</code> with zero weight updates). Personal assistants with scoped credentials are supported; <code>*-contributor</code> models remain refused.</p>
+<p class="lead"><strong>Herma:</strong> context-shimming AI middleware for configurable coding harnesses -- connects <strong>Tasks (<code>verbs</code> on the wire)</strong> and <strong>Task Objects (<code>nouns</code> on the wire: reusable tools, feeds, datasets, LoRA adapters, shims, and receipts)</strong> to models without static prompt bloat (<code>HarnessTax</code>) or post-cutoff schema amnesia. Herma intercepts requests via <strong>keyword</strong>, <strong>semantic</strong>, or <strong>micromodel</strong> rules to <strong>respond directly</strong> in 0 tokens or shim bounded context before LLM execution (lifting <code>Muse Spark Open</code> blind NGO accuracy <code>87.5% -&gt; 95.8%</code> and compact 3B tool accuracy <code>52.0% -&gt; 64.7%</code> with zero weight updates). Personal assistants with scoped credentials are supported; <code>*-contributor</code> models remain refused.</p>
 <section class="grid">
 <div class="card"><span class="pill">Tasks &amp; Task Objects</span><h3>Plain-Language Primitives, Wire-Safe</h3><p>Independently schedulable <strong>Tasks</strong> map to fenced queue <code>verbs</code>; reusable tools, <code>Feed</code> profiles, LoRA specs, and receipts map to compare-and-set <strong>Task Objects</strong> (<code>nouns</code>).</p></div>
-<div class="card"><span class="pill">0-Weight Lift + LoRA Memory</span><h3>Kill Prompt Bloat &amp; Amnesia</h3><p>Shim volatile rules inline today (<code>52.0% -&gt; 64.7%</code> on <code>Llama 3.2 3B</code>), then promote stabilized post-cutoff schemas into <code>Llama 3.2</code> / <code>Muse Glimmer</code> PEFT LoRAs.</p></div>
+<div class="card"><span class="pill">0-Weight Lift + LoRA Memory</span><h3>Kill Prompt Bloat &amp; Amnesia</h3><p>Shim volatile rules inline today (<code>87.5% -&gt; 95.8%</code> on <code>Muse Spark Open</code>; <code>52.0% -&gt; 64.7%</code> on compact 3B), then promote stabilized post-cutoff schemas into <code>Muse Glimmer 30B</code> PEFT LoRAs.</p></div>
 <div class="card"><span class="pill">respond_directly</span><h3>Zero-Token Direct Responses</h3><p>Answers natural-language Task / Task-Object and contract lookups directly across OpenAI, Responses, and Anthropic wire formats while minting a SHA-256 <code>InjectionReceipt</code>.</p></div>
 </section>
 <section class="card inspector" aria-labelledby="inspector-heading">
@@ -2234,7 +2234,7 @@ ${renderHeader()}
 <div id="herma-preview-output"></div>
 </section>
 <h2>Which Meta Models Do What</h2>
-<div class="table-wrap"><table><thead><tr><th>Meta Model / Harness</th><th>Role in Herma</th><th>Memory / Routing Regime</th><th>Verified Signal</th></tr></thead><tbody><tr><td><code>Muse Spark 1.3</code></td><td>Frontier multi-step coding, tool orchestration &amp; review Tasks (<code>verbs</code>)</td><td>Context Shim + Standard-mode passthrough (<code>-contributor</code> refused)</td><td>Caller-isolated microdollar budgets + SHA-256 <code>InjectionReceipt</code></td></tr><tr><td><code>Muse Wonder 1.0</code></td><td>Fast structured synthesis &amp; typed work-conversation proposals</td><td>Single schema-checked proposal (<code>executed: false</code>)</td><td>Strict duplicate-key JSON guard + exact picodollar accounting</td></tr><tr><td><code>Muse Glimmer 30B QLoRA</code></td><td>Open-weights specialist for stabilized post-cutoff Task Object schemas</td><td>4-bit QLoRA Parametric Memory (avoids repeated <code>HarnessTax</code>)</td><td><code>93.3% -&gt; 99.3%</code> exact tool-call match on 150-row synthetic holdout</td></tr><tr><td><code>Llama 3.2 1B / 3B</code></td><td>Local Tier-3 Shim Router (<code>1B</code>) &amp; edge LoRAs as Parametric Memory (<code>1B/3B</code>)</td><td>0-weight Herma Shim first, then PEFT LoRA (<code>r=16..32</code>)</td><td><code>3B</code>: <code>52.0% -&gt; 64.7%</code> shim lift (<code>72.7%</code> LoRA); <code>1B</code>: <code>12.0% -&gt; 50.7%</code></td></tr><tr><td><code>Muse Code</code></td><td>Configurable coding harness (<code>X-Herma-Harness: muse-code</code>)</td><td>Benchmarked alongside Harness Square, OpenCode &amp; Pi in <code>Feed</code> nouns</td><td>Shimmed via <code>PROV-HARNESS-FEEDS-GUIDE</code> with receipt-backed profiles</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>Meta Model / Harness</th><th>Role in Herma</th><th>Memory / Routing Regime</th><th>Verified Signal</th></tr></thead><tbody><tr><td><code>Muse Spark 1.3</code></td><td>Frontier multi-step coding, tool orchestration &amp; review Tasks (<code>verbs</code>)</td><td>Context Shim + Standard-mode passthrough (<code>-contributor</code> refused)</td><td>Caller-isolated microdollar budgets + SHA-256 <code>InjectionReceipt</code></td></tr><tr><td><code>Muse Wonder 1.0</code></td><td>Fast structured synthesis &amp; typed work-conversation proposals</td><td>Single schema-checked proposal (<code>executed: false</code>)</td><td>Strict duplicate-key JSON guard + exact picodollar accounting</td></tr><tr><td><code>Muse Spark Open</code></td><td>Default autonomous swarm worker, <code>/q/help</code> &amp; <code>/q/chat</code> reasoning</td><td>Herma Context Shim + reusable <code>reasoning_suggestion</code> Task Objects</td><td><code>87.5% -&gt; 95.8%</code> blind NGO stance accuracy (+25 pp ambiguous calibration)</td></tr><tr><td><code>Muse Glimmer 30B QLoRA</code></td><td>Open-weights specialist for stabilized post-cutoff Task Object schemas</td><td>4-bit QLoRA Parametric Memory on Modal GPU (avoids repeated <code>HarnessTax</code>)</td><td><code>93.3% -&gt; 99.3%</code> exact tool-call match on 150-row synthetic holdout</td></tr><tr><td><code>Muse Code</code></td><td>Configurable coding harness (<code>X-Herma-Harness: muse-code</code>)</td><td>Benchmarked alongside Harness Square, OpenCode &amp; Pi in <code>Feed</code> nouns</td><td>Shimmed via <code>PROV-HARNESS-FEEDS-GUIDE</code> with receipt-backed profiles</td></tr></tbody></table></div>
 <h2>Starter Builtin Provisions (${builtinProvs.length})</h2>
 <div class="table-wrap"><table><thead><tr><th>ID</th><th>Title &amp; Action</th><th>Triggers</th><th>URIs &amp; Priority</th><th>Store</th></tr></thead><tbody>${pRows || "<tr><td colspan='5'>No builtin provisions seeded yet.</td></tr>"}</tbody></table></div>
 <h2>Starter Builtin Noun, Verb &amp; Detail Context (${(contextEntries || []).length})</h2>

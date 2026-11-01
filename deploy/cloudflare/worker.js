@@ -1,5 +1,7 @@
 import { agentStartAsset, withAgentStart } from "./agent_start.js";
 import { agentFetch } from "./agent_access.js";
+import { handleBilateralBridge } from "./bilateral_bridge.js";
+import { handlePriorityWorkGateway } from "./priority_work_gateway.js";
 import { ConversationError, conversationSchemas, strictJson, validateTurn } from "./conversation.js";
 // Cloudflare Cloud Worker for Herma: 24/7 caller-isolated context-shimming AI middleware backed by
 // Cloudflare D1 (`ta-amps-herma`) + direct Service Binding to `tessera` Cloud (`env.TESSERA`),
@@ -1444,7 +1446,7 @@ async function proxyOrigin(request, env) {
 }
 
 const application = {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if ((env.STORAGE_MODE || "cloud") === "origin") {
       return proxyOrigin(request, env);
     }
@@ -1525,6 +1527,31 @@ const application = {
             headers: { "content-type": "text/html; charset=utf-8" },
           })
         );
+      }
+      if (path === "/bridge" || path.startsWith("/bridge/")) {
+        return await handleBilateralBridge(request, env, db, publicUrl, { withSecurity, ctx });
+      }
+      if (
+        path === "/q" ||
+        path.startsWith("/q/") ||
+        path === "/starter" ||
+        path.startsWith("/starter/") ||
+        path === "/help" ||
+        path === "/chat" ||
+        path.startsWith("/chat/") ||
+        path === "/status" ||
+        path === "/prompts" ||
+        path.startsWith("/prompts/") ||
+        path === "/prompts.js" ||
+        path === "/get-started" ||
+        path === "/dashboard" ||
+        path.startsWith("/dashboard/") ||
+        path === "/dashboard.js" ||
+        path.startsWith("/c/") ||
+        path.startsWith("/w/") ||
+        path.startsWith("/api/object/")
+      ) {
+        return await handlePriorityWorkGateway(request, env, db, publicUrl, { withSecurity, ctx });
       }
       if (path === "/api/preview") {
         if (method !== "POST") return methodNotAllowed(["POST"]);
@@ -2183,7 +2210,11 @@ const application = {
   },
 };
 
-const onboardingApplication = { fetch(request, env) { return agentFetch(request, env, (req, bindings) => application.fetch(req, bindings)); } };
+const onboardingApplication = {
+  fetch(request, env, ctx) {
+    return agentFetch(request, env, (req, bindings, execCtx) => application.fetch(req, bindings, execCtx), ctx);
+  },
+};
 
 export default {
   ...onboardingApplication,

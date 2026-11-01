@@ -12,7 +12,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [Dockerfile](Dockerfile) | Reproducible standalone container image for Herma (Python FastAPI + SQLite WAL). |
 | [LICENSE](LICENSE) | MIT License |
 | [Makefile](Makefile) | Herma. |
-| [README.md](README.md) | Herma -- the context & capability shim for any agent |
+| [README.md](README.md) | Herma -- the < 2 ms context & capability shim for any agent |
 | [architecture.json](architecture.json) | herma |
 | [package.json](package.json) | herma-worker |
 | [pyproject.toml](pyproject.toml) |  |
@@ -31,22 +31,30 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) |  |
 
-## deploy/ (15)
+## deploy/ (23)
 
 | File | What it is |
 |---|---|
 | [deploy/bootstrap-hosting.sh](deploy/bootstrap-hosting.sh) | One-time hosting setup for one service on Fly.io behind a Cloudflare Worker: the Fly app and its |
 | [deploy/cloudflare/agent_access.js](deploy/cloudflare/agent_access.js) |  |
 | [deploy/cloudflare/agent_start.js](deploy/cloudflare/agent_start.js) | Versioned onboarding instructions. |
+| [deploy/cloudflare/bilateral_bridge.js](deploy/cloudflare/bilateral_bridge.js) | Bilateral Agent Transport Shim (/bridge/) for Herma Cloud Worker. |
+| [deploy/cloudflare/composition_and_demand_engine.js](deploy/cloudflare/composition_and_demand_engine.js) | Universal Task-Object Reuse Graph, Interface Composer & Adaptive Demand-Driven Prioritizer (/q/graph, /q/comp… |
 | [deploy/cloudflare/conversation.js](deploy/cloudflare/conversation.js) | Typed proposals only. |
 | [deploy/cloudflare/conversation_data.json](deploy/cloudflare/conversation_data.json) | JSON object: categories, schemas, system_prompt |
 | [deploy/cloudflare/conversation_state.js](deploy/cloudflare/conversation_state.js) | Conversation coordination, not a work queue. |
 | [deploy/cloudflare/d1-herma.sql](deploy/cloudflare/d1-herma.sql) | Persistent Cloudflare D1 caller-isolated schema for Herma context-shimming AI middleware (ta-amps-herma). |
+| [deploy/cloudflare/dashboard_and_permalinks.js](deploy/cloudflare/dashboard_and_permalinks.js) | Interactive Worker Swarm Visualization Dashboard (/dashboard, /q/dashboard, /q/dashboard.js) |
 | [deploy/cloudflare/entry.js](deploy/cloudflare/entry.js) |  |
 | [deploy/cloudflare/herma_engine.js](deploy/cloudflare/herma_engine.js) | Context-shimming 3-tier trigger engine, multi-caller isolation, governance lens, |
+| [deploy/cloudflare/on_demand_api_and_nodes.js](deploy/cloudflare/on_demand_api_and_nodes.js) | Universal On-Demand TaskObject API Runtime, Scoped Key Vault & Swappable Backend Engine Slots |
+| [deploy/cloudflare/priority_work_gateway.js](deploy/cloudflare/priority_work_gateway.js) | Prioritized Multi-Tier Durable Task Queue, Partitioned Search Sidecar & Task-Object Gateway (/q/) |
+| [deploy/cloudflare/prompts_page.js](deploy/cloudflare/prompts_page.js) | Public Copy-Paste "Get Started Prompts" Hub (/prompts, /get-started, /q/start, /q/prompts.js) |
 | [deploy/cloudflare/provider_diagnostics.js](deploy/cloudflare/provider_diagnostics.js) | Fixed provider-reported categories only. |
 | [deploy/cloudflare/provider_health.js](deploy/cloudflare/provider_health.js) | Deterministic shared availability inside the existing operator allowance coordinator. |
 | [deploy/cloudflare/worker.js](deploy/cloudflare/worker.js) |  |
+| [deploy/cloudflare/worker_entropy_catalog.js](deploy/cloudflare/worker_entropy_catalog.js) | Bilateral Worker Onboarding Personas, Calibration Questions, Single-Step Atomic Remix Operators, |
+| [deploy/cloudflare/worker_help_and_starter.js](deploy/cloudflare/worker_help_and_starter.js) | Bilateral Worker Help (/q/help), Agent-to-Agent Chat (/q/chat, /q/a2a), |
 | [deploy/cloudflare/wrangler.jsonc](deploy/cloudflare/wrangler.jsonc) | Herma Cloud Worker: 24/7 context-shimming AI middleware on Cloudflare Workers + D1 (ta-amps-herma) |
 | [deploy/fly/Dockerfile](deploy/fly/Dockerfile) |  |
 | [deploy/fly/fly.toml](deploy/fly/fly.toml) |  |
@@ -130,11 +138,15 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/check_architecture.py](scripts/check_architecture.py) | Check that architecture.json still describes this repo truthfully. |
 | [scripts/check_public.py](scripts/check_public.py) | Fail if a file headed for a public repo holds a secret or a private name. |
 
-## test/ (5)
+## test/ (9)
 
 | File | What it is |
 |---|---|
+| [test/bilateral_bridge.test.js](test/bilateral_bridge.test.js) |  |
 | [test/conversation.test.js](test/conversation.test.js) |  |
+| [test/herma_v63_boundaries_and_chat.test.js](test/herma_v63_boundaries_and_chat.test.js) |  |
+| [test/on_demand_api_keys_and_nodes.test.js](test/on_demand_api_keys_and_nodes.test.js) |  |
+| [test/priority_work_gateway.test.js](test/priority_work_gateway.test.js) |  |
 | [test/provider_diagnostics.test.js](test/provider_diagnostics.test.js) |  |
 | [test/provider_grants.test.js](test/provider_grants.test.js) |  |
 | [test/provider_health.test.js](test/provider_health.test.js) |  |
