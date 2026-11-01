@@ -155,6 +155,14 @@ export function parseSlugReply(rawSlug) {
   const generatedTasks = [];
   const reusableBlocks = [];
   const notes = [];
+  const nodeFacet = {
+    node_name: "",
+    problem: "",
+    solution: "",
+    input_type: "",
+    output_type: "",
+    common_use_cases: "",
+  };
   for (const sec of sections) {
     const lower = sec.toLowerCase();
     if (lower.startsWith("subtasks-") || lower.startsWith("subtasks:")) {
@@ -176,16 +184,34 @@ export function parseSlugReply(rawSlug) {
       const idx = sec.indexOf("-");
       const val = sec.slice(idx + 1).replace(/[-_]+/g, " ").trim();
       if (val) reusableBlocks.push(scrubSensitiveText(val));
+    } else if (lower.startsWith("node-")) {
+      const val = sec.slice(sec.indexOf("-") + 1).replace(/[-_]+/g, "_").trim();
+      if (val) {
+        nodeFacet.node_name = scrubSensitiveText(val);
+        reusableBlocks.push(scrubSensitiveText(val));
+      }
+    } else if (lower.startsWith("prob-") || lower.startsWith("problem-")) {
+      nodeFacet.problem = scrubSensitiveText(sec.slice(sec.indexOf("-") + 1).replace(/[-_]+/g, " ").trim());
+    } else if (lower.startsWith("sol-") || lower.startsWith("solution-")) {
+      nodeFacet.solution = scrubSensitiveText(sec.slice(sec.indexOf("-") + 1).replace(/[-_]+/g, " ").trim());
+    } else if (lower.startsWith("in-") || lower.startsWith("intype-")) {
+      nodeFacet.input_type = scrubSensitiveText(sec.slice(sec.indexOf("-") + 1).trim());
+    } else if (lower.startsWith("out-") || lower.startsWith("outtype-")) {
+      nodeFacet.output_type = scrubSensitiveText(sec.slice(sec.indexOf("-") + 1).trim());
+    } else if (lower.startsWith("use-") || lower.startsWith("usecase-")) {
+      nodeFacet.common_use_cases = scrubSensitiveText(sec.slice(sec.indexOf("-") + 1).replace(/[-_]+/g, " ").trim());
     } else {
       notes.push(scrubSensitiveText(sec.replace(/[-_]+/g, " ").trim()));
     }
   }
   const summary = scrubSensitiveText(notes.join("; ") || scrubbedDecoded.replace(/[-_]+/g, " ").trim());
+  const hasNodeSpec = Boolean(nodeFacet.node_name || nodeFacet.problem || nodeFacet.input_type || nodeFacet.output_type);
   return {
     summary: summary || "ack",
     subtasks,
     generated_tasks: generatedTasks,
     reusable_blocks: reusableBlocks,
+    node_spec: hasNodeSpec ? nodeFacet : null,
   };
 }
 
@@ -200,11 +226,25 @@ function normalizeReplyObject(obj) {
   const blocks = Array.isArray(safeObj.reusable_blocks)
     ? safeObj.reusable_blocks.slice(0, BRIDGE_GRID_CONFIG.max_subtasks).map((x) => scrubSensitiveText(x))
     : [];
+  const rawNode = safeObj.node_spec && typeof safeObj.node_spec === "object" ? safeObj.node_spec : null;
+  const nodeSpec = rawNode
+    ? {
+        node_name: scrubSensitiveText(rawNode.node_name || rawNode.name || ""),
+        problem: scrubSensitiveText(rawNode.problem || ""),
+        solution: scrubSensitiveText(rawNode.solution || ""),
+        input_type: scrubSensitiveText(rawNode.input_type || ""),
+        output_type: scrubSensitiveText(rawNode.output_type || ""),
+        common_use_cases: scrubSensitiveText(
+          Array.isArray(rawNode.common_use_cases) ? rawNode.common_use_cases.join("; ") : rawNode.common_use_cases || ""
+        ),
+      }
+    : null;
   return {
     summary: scrubSensitiveText(safeObj.summary || safeObj.message || safeObj.reply || "structured-reply"),
     subtasks,
     generated_tasks: generated,
     reusable_blocks: blocks,
+    node_spec: nodeSpec,
   };
 }
 
@@ -249,7 +289,32 @@ async function ensureBridgeTables(db) {
       claimed_by TEXT,
       created_at TEXT NOT NULL
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS herma_bridge_nodes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel_id TEXT NOT NULL,
+      agent_name TEXT NOT NULL,
+      node_name TEXT NOT NULL,
+      description TEXT NOT NULL,
+      problem TEXT NOT NULL,
+      solution TEXT NOT NULL,
+      input_type TEXT NOT NULL,
+      output_type TEXT NOT NULL,
+      common_use_cases TEXT NOT NULL,
+      simhash64_hex TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`),
   ]);
+}
+
+function extractClientTelemetry(request) {
+  return {
+    user_agent: scrubSensitiveText(request.headers.get("user-agent") || "unknown").slice(
+      0,
+      BRIDGE_GRID_CONFIG.max_summary_chars
+    ),
+    accept: scrubSensitiveText(request.headers.get("accept") || "").slice(0, BRIDGE_GRID_CONFIG.max_summary_chars),
+    cf_colo: String(request.cf?.colo || "edge"),
+  };
 }
 
 async function callTessera(env, path, { method = "GET", token = null, body = null, idempotencyKey = null } = {}) {
@@ -520,6 +585,17 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
             .all()
         ).results || []
       : [];
+    const nodes = db
+      ? (
+          await db
+            .prepare(
+              `SELECT id, agent_name, node_name, description, problem, solution, input_type, output_type, common_use_cases, simhash64_hex, created_at
+               FROM herma_bridge_nodes WHERE channel_id = ? ORDER BY id DESC LIMIT ?`
+            )
+            .bind(channelId, BRIDGE_GRID_CONFIG.max_inbox_batch)
+            .all()
+        ).results || []
+      : [];
     return bridgeJsonResponse(
       {
         ok: true,
@@ -528,6 +604,7 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
         connected_agents: sessions.length,
         sessions,
         inbox,
+        registered_nodes: nodes,
         recent_turns: turns.map((t) => ({
           ...t,
           payload: (() => {
@@ -540,6 +617,40 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
           payload_json: undefined,
         })),
       },
+      withSecurity
+    );
+  }
+
+  // 1b. Interchangeable Node Catalog Query (`GET /bridge/<channel_id>/nodes?in=<type>&out=<type>&q=<problem>`)
+  if (action === "nodes") {
+    if (method !== "GET" && method !== "HEAD") {
+      return bridgeJsonResponse({ error: "method_not_allowed" }, withSecurity, 405);
+    }
+    const wantIn = (url.searchParams.get("in") || "").toLowerCase().trim();
+    const wantOut = (url.searchParams.get("out") || "").toLowerCase().trim();
+    const queryText = (url.searchParams.get("q") || "").toLowerCase().trim();
+    const allNodes = db
+      ? (
+          await db
+            .prepare(
+              `SELECT id, channel_id, agent_name, node_name, description, problem, solution, input_type, output_type, common_use_cases, simhash64_hex, created_at
+               FROM herma_bridge_nodes ORDER BY id DESC LIMIT ?`
+            )
+            .bind(BRIDGE_GRID_CONFIG.max_status_turns)
+            .all()
+        ).results || []
+      : [];
+    const filtered = allNodes.filter((n) => {
+      if (wantIn && !String(n.input_type).toLowerCase().includes(wantIn)) return false;
+      if (wantOut && !String(n.output_type).toLowerCase().includes(wantOut)) return false;
+      if (queryText) {
+        const hay = `${n.node_name} ${n.description} ${n.problem} ${n.solution} ${n.common_use_cases}`.toLowerCase();
+        return queryText.split(/\s+/).some((tok) => hay.includes(tok));
+      }
+      return true;
+    });
+    return bridgeJsonResponse(
+      { ok: true, channel_id: channelId, count: filtered.length, nodes: filtered },
       withSecurity
     );
   }
@@ -698,7 +809,11 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
           nextSeq,
           method,
           `Handshake connected (${agentName}) -> claimed ${claimed.taskId}`,
-          JSON.stringify({ prompt_source: taskSpec.source, assigned_prompt: taskSpec.prompt }),
+          JSON.stringify({
+            prompt_source: taskSpec.source,
+            assigned_prompt: taskSpec.prompt,
+            client_telemetry: extractClientTelemetry(request),
+          }),
           fp.simhash64_hex,
           claimed.taskId,
           claimed.mode,
@@ -805,6 +920,34 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
       }
     }
 
+    // Persist any 8-facet interchangeable node descriptor contributed by the agent!
+    if (db && structuredReply.node_spec) {
+      const ns = structuredReply.node_spec;
+      const nodeFp = await computeTaskFingerprint(
+        `${ns.node_name} ${ns.problem} ${ns.solution} ${ns.input_type} ${ns.output_type} ${ns.common_use_cases}`
+      );
+      await db
+        .prepare(
+          `INSERT INTO herma_bridge_nodes
+             (channel_id, agent_name, node_name, description, problem, solution, input_type, output_type, common_use_cases, simhash64_hex, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .bind(
+          channelId,
+          agentName,
+          ns.node_name || structuredReply.reusable_blocks[0] || `node_t${currentSeq}`,
+          structuredReply.summary.slice(0, BRIDGE_GRID_CONFIG.max_summary_chars),
+          ns.problem || structuredReply.summary.slice(0, BRIDGE_GRID_CONFIG.max_summary_chars),
+          ns.solution || structuredReply.subtasks.join("; "),
+          ns.input_type || "json_object",
+          ns.output_type || "json_object",
+          ns.common_use_cases || "durable_task_pipeline",
+          nodeFp.simhash64_hex,
+          now
+        )
+        .run();
+    }
+
     // Prepare the next task lease so bilateral conversation can continue seamlessly on `t<currentSeq + 1>`
     const nextSeq = currentSeq + 1;
     const nextClaim = await openOrClaimTesseraTask(env, existing, agentName, nextSeq);
@@ -823,7 +966,11 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
           currentSeq,
           method,
           structuredReply.summary.slice(0, BRIDGE_GRID_CONFIG.max_summary_chars),
-          JSON.stringify({ turn_tag: turnTag, ...structuredReply }),
+          JSON.stringify({
+            turn_tag: turnTag,
+            ...structuredReply,
+            client_telemetry: extractClientTelemetry(request),
+          }),
           fp.simhash64_hex,
           existing?.active_task_id || nextClaim.taskId,
           submitResult.receiptHash,
