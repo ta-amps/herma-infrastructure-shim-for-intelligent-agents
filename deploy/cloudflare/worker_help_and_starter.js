@@ -1606,10 +1606,11 @@ export function renderStarterHubHtml(publicUrl, catalogData) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="only light" />
   <title>Starter Kit, Code Reuse &amp; Bilateral Help -- Herma Task Queue</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <style>
-    :root { --bg:#0d1117; --card:#151b24; --border:#273244; --ink:#e6edf3; --muted:#93a1b5; --accent:#2dd4bf; }
+    :root { color-scheme:only light; --bg:#f6f4ee; --card:#ffffff; --border:#dcd6ca; --ink:#161920; --muted:#565d6a; --accent:#155e48; }
     * { box-sizing:border-box; }
     body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background:var(--bg); color:var(--ink); line-height:1.55; }
     a { color:var(--accent); text-decoration:none; }
@@ -1624,7 +1625,7 @@ export function renderStarterHubHtml(publicUrl, catalogData) {
     h1 { margin:0 0 8px; font-size:1.75rem; }
     h2 { margin:26px 0 12px; font-size:1.25rem; }
     h3 { margin:4px 0 8px; font-size:1.02rem; }
-    pre { background:#090d13; border:1px solid var(--border); border-radius:8px; padding:12px; overflow-x:auto; font-size:0.8rem; color:#d1fae5; }
+    pre { background:#f3efe6; border:1px solid var(--border); border-radius:8px; padding:12px; overflow-x:auto; font-size:0.8rem; color:#161920; }
     code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:0.84em; }
     .obj-list { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:10px; }
     .obj-item { border-top:1px solid var(--border); padding-top:8px; }

@@ -489,10 +489,10 @@ export const DEFAULT_PROVISIONS = [
 ];
 
 export const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Herma boundary pillar">
-  <rect width="32" height="32" rx="7" fill="#0c1017"/>
-  <path d="M9 27h14v2H9zm2-3h10l1 3H10zm1-14h8v14h-8z" fill="#67b7ff"/>
-  <rect x="9" y="6" width="14" height="4" rx="1.5" fill="#eef2f7"/>
-  <path d="M14 13h4v1.5h-4zm0 3.2h4v1.5h-4zm0 3.2h4v1.5h-4z" fill="#0c1017"/>
+  <rect width="32" height="32" rx="7" fill="#f6f4ee"/>
+  <path d="M9 27h14v2H9zm2-3h10l1 3H10zm1-14h8v14h-8z" fill="#155e48"/>
+  <rect x="9" y="6" width="14" height="4" rx="1.5" fill="#161920"/>
+  <path d="M14 13h4v1.5h-4zm0 3.2h4v1.5h-4zm0 3.2h4v1.5h-4z" fill="#ffffff"/>
 </svg>
 `;
 
@@ -2138,8 +2138,7 @@ export function buildLlmsFullTxt(publicUrl) {
   ].join("\n");
 }
 
-const STYLE = `:root{color-scheme:light dark;--bg:#0c1017;--card:#131a24;--border:#253244;--fg:#eef2f7;--muted:#9fb0c5;--accent:#67b7ff;--pill:#1b2738;--danger:#ff7b7b;--ok:#53d69a}
-@media (prefers-color-scheme:light){:root{--bg:#f6f7f9;--card:#fff;--border:#d8e0ea;--fg:#101824;--muted:#4b5b70;--accent:#0b5fff;--pill:#eaf1fb;--danger:#b42318;--ok:#067647}}
+const STYLE = `:root{color-scheme:only light;--bg:#f6f4ee;--card:#ffffff;--border:#dcd6ca;--fg:#161920;--muted:#565d6a;--accent:#155e48;--pill:#e3f2ec;--danger:#b42318;--ok:#067647}
 *{box-sizing:border-box}html,body{max-width:100%;overflow-x:hidden;margin:0;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg);line-height:1.55}
 .site-header{border-bottom:1px solid var(--border);background:var(--card)}.header-inner{max-width:1040px;margin:0 auto;padding:.9rem 1.2rem;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.8rem 1.2rem}
 .brand{display:inline-flex;align-items:center;gap:.55rem;color:var(--fg);text-decoration:none;font-weight:700;font-size:1.05rem}.brand-mark{color:var(--accent);flex-shrink:0}
@@ -2201,7 +2200,7 @@ export function renderOverviewHtml(
     total_rule_outcomes: 0,
   };
 
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><link rel="icon" href="/favicon.svg" type="image/svg+xml"/><title>Herma v${HERMA_VERSION} -- Context-Shimming AI Middleware</title><style>${STYLE}</style></head><body>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="color-scheme" content="only light"/><link rel="icon" href="/favicon.svg" type="image/svg+xml"/><title>Herma v${HERMA_VERSION} -- Context-Shimming AI Middleware</title><style>${STYLE}</style></head><body>
 ${renderHeader()}
 <main>
 <span class="pill">Herma v${HERMA_VERSION} · Programmable AI Request Middleware · Tasks &amp; Task Objects Shim · 24/7 Cloudflare D1 + Tessera Cloud</span>
@@ -2249,7 +2248,7 @@ ${renderFooter(publicUrl)}
 
 export function renderConnectHtml(publicUrl) {
   const base = esc(String(publicUrl || "").replace(/\/+$/, ""));
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><link rel="icon" href="/favicon.svg" type="image/svg+xml"/><title>Connect a Configurable Coding Harness -- Herma</title><style>${STYLE}</style></head><body>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="color-scheme" content="only light"/><link rel="icon" href="/favicon.svg" type="image/svg+xml"/><title>Connect a Configurable Coding Harness -- Herma</title><style>${STYLE}</style></head><body>
 ${renderHeader()}
 <main>
 <span class="pill">Scoped Agent Access</span>
