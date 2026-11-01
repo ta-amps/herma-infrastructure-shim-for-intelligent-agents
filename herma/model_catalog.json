@@ -1,0 +1,69 @@
+{
+  "catalog_id": "models.meta",
+  "title": "Which Meta models do what",
+  "as_of": "2026-11-01",
+  "source": "Display names follow the shared Models used list (models.meta v1); ids follow GET https://api.meta.ai/v1/models",
+  "models_used_url": "https://agora.ta-amps.workers.dev/models/",
+  "api_base_url": "https://api.meta.ai/v1",
+  "tier": "standard",
+  "default_model": "muse-spark-1.3",
+  "routing_note": "Herma routes model requests to the Meta API at the standard tier only: point it at https://api.meta.ai/v1 (X-Upstream-Base-Url) and bring your own Meta API key. Any model id containing contributor is refused with HTTP 403 contributor_tier_refused. Other standard-tier ids that the Meta API lists, such as muse-spark-1.2, pass through unchanged. Operator-funded typed conversations need an explicit per-caller grant.",
+  "harness_note": "Muse Code (Meta's coding agent) and nanoMuse (an open-source agent, not from Meta) are agent programs, not models, so they are not in this table; in the measured run both ran Muse Spark 1.3.",
+  "models": [
+    {
+      "id": "muse-wonder-1.0",
+      "name": "Muse Wonder 1.0",
+      "role": "Frontier",
+      "use": "Meta's frontier model, for the hardest work: long multi-step reasoning, architecture and planning.",
+      "api_listed": true,
+      "routed": true,
+      "route": "Yes. Meta API, standard tier."
+    },
+    {
+      "id": "muse-spark-1.3",
+      "name": "Muse Spark 1.3",
+      "role": "Fast",
+      "use": "Meta's fast Muse model, for everyday coding turns, tool calls and quick answers.",
+      "api_listed": true,
+      "routed": true,
+      "route": "Yes. Meta API, standard tier. This is the default model."
+    },
+    {
+      "id": "muse-glimmer-30b",
+      "name": "Muse Glimmer 30B, fine-tuned by ta-amps",
+      "role": "Tool calls",
+      "use": "Tool calling: exact, schema-valid arguments for Task Object tools. Meta's open-weight model, fine-tuned by ta-amps.",
+      "evidence": "93.3% to 99.3% exact match on a fixed 150-task evaluation, measured once.",
+      "api_listed": false,
+      "routed": false,
+      "route": "No. Not served by Herma: run it on your own endpoint and add that host to the upstream allowlist."
+    },
+    {
+      "id": "sam-3.1",
+      "name": "SAM 3.1",
+      "role": "Segmentation",
+      "use": "Segmentation: finds and outlines objects in images and video.",
+      "api_listed": true,
+      "routed": false,
+      "route": "No. Herma shims text requests only; call the Meta API directly."
+    },
+    {
+      "id": "muse-image-1.0",
+      "name": "Muse Image 1.0",
+      "role": "Image",
+      "use": "Image generation and editing.",
+      "api_listed": true,
+      "routed": false,
+      "route": "No. Herma shims text requests only; call the Meta API directly."
+    },
+    {
+      "id": "muse-voice-transcribe-1.0",
+      "name": "Muse Voice Transcribe 1.0",
+      "role": "Speech to text",
+      "use": "Speech to text: turns audio into a transcript.",
+      "api_listed": true,
+      "routed": false,
+      "route": "No. Herma shims text requests only; call the Meta API directly."
+    }
+  ]
+}

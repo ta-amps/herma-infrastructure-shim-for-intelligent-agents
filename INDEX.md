@@ -79,17 +79,17 @@ Every file in this repo with a one-line description taken from the file itself. 
 
 | File | What it is |
 |---|---|
-| [examples/provisions/PROV-DIRECT-NOUN-VERB-SCHEMA.json](examples/provisions/PROV-DIRECT-NOUN-VERB-SCHEMA.json) | Direct Tasks & Task Objects (Canonical Noun/Verb Schema) Lookup |
+| [examples/provisions/PROV-DIRECT-NOUN-VERB-SCHEMA.json](examples/provisions/PROV-DIRECT-NOUN-VERB-SCHEMA.json) | Direct Tasks & Task Objects Schema Lookup |
 | [examples/provisions/PROV-EDGE-ORIGIN-LOCKDOWN.json](examples/provisions/PROV-EDGE-ORIGIN-LOCKDOWN.json) | Cloudflare Worker x-edge-auth & Security Header Contract |
 | [examples/provisions/PROV-HARNESS-FEEDS-GUIDE.json](examples/provisions/PROV-HARNESS-FEEDS-GUIDE.json) | Agent Harness Research Feeds & HarnessTax Benchmark Context |
 | [examples/provisions/PROV-LORA-MEMORY-ROUTING.json](examples/provisions/PROV-LORA-MEMORY-ROUTING.json) | Prompt Shimming vs LoRAs as Parametric Memory vs Frontier Routing |
 | [examples/provisions/PROV-NGO-HUMAN-BOUNDARY.json](examples/provisions/PROV-NGO-HUMAN-BOUNDARY.json) | NGO Kit Human-Only Crisis & Two-Donor Review Boundary |
-| [examples/provisions/PROV-RISK-REVIEW-NON-ACCUSATORY.json](examples/provisions/PROV-RISK-REVIEW-NON-ACCUSATORY.json) | Non-Accusatory Risk Indicators & Synthetic Bundle Guard |
+| [examples/provisions/PROV-RISK-REVIEW-NON-ACCUSATORY.json](examples/provisions/PROV-RISK-REVIEW-NON-ACCUSATORY.json) | Non-Accusatory Risk Indicators & Example-Case Guard |
 | [examples/provisions/PROV-TESSERA-FENCING.json](examples/provisions/PROV-TESSERA-FENCING.json) | Tessera Atomic Lease Fencing & Compare-and-Set Storage |
-| [examples/provisions/README.md](examples/provisions/README.md) | Example Provisions & Atomic Noun/Verb Context |
+| [examples/provisions/README.md](examples/provisions/README.md) | Example Provisions & Atomic Task Object / Task Context |
 | [examples/provisions/context/CONTEXT-TESSERA-NOUNS-VERBS.json](examples/provisions/context/CONTEXT-TESSERA-NOUNS-VERBS.json) | JSON object: entries |
 
-## herma/ (28)
+## herma/ (30)
 
 | File | What it is |
 |---|---|
@@ -109,6 +109,8 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [herma/harness_gate.py](herma/harness_gate.py) | Configurable-harness access gate: authenticates scoped agent and personal-assistant clients. |
 | [herma/injector.py](herma/injector.py) | Extracts signals and deterministic entities from payloads and shims rules, URIs, and noun/verb context. |
 | [herma/memory.py](herma/memory.py) | Deterministic Anti-RAG top-of-mind entity extraction and candidate rule synthesis (0 LLM calls). |
+| [herma/model_catalog.json](herma/model_catalog.json) | Which Meta models do what |
+| [herma/model_catalog.py](herma/model_catalog.py) | The Meta model catalog: one data file that pages, discovery text and routing checks all read. |
 | [herma/profiles.py](herma/profiles.py) | Adaptive CallerProfile shimming lenses, deterministic strategy ranking, and budget enforcement. |
 | [herma/provider_diagnostics.py](herma/provider_diagnostics.py) | Bounded provider-reported error categories, never raw messages or identifiers. |
 | [herma/provider_health.py](herma/provider_health.py) | Deterministic operator availability inside the existing provider allowance lifecycle. |
@@ -142,11 +144,11 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/provider_health.test.js](test/provider_health.test.js) |  |
 | [test/triggers.test.js](test/triggers.test.js) |  |
 
-## tests/ (21)
+## tests/ (22)
 
 | File | What it is |
 |---|---|
-| [tests/conftest.py](tests/conftest.py) | Synthetic operator grants for managed conversation tests; no provider is ever contacted. |
+| [tests/conftest.py](tests/conftest.py) | Example operator grants for managed conversation tests; no provider is ever contacted. |
 | [tests/test_api_and_proxy.py](tests/test_api_and_proxy.py) | Tests for multi-protocol payload augmentation, deduplication, edge lockdown, and HTTP endpoints. |
 | [tests/test_builtin_starters.py](tests/test_builtin_starters.py) | Starters synced from Tessera fire for routed callers only when they carry fabricgovernance, and natural-langu… |
 | [tests/test_cli_demo.py](tests/test_cli_demo.py) | The CI demo verifies the supported client policy and its real provision pipeline. |
@@ -158,6 +160,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [tests/test_harness_gate_and_store.py](tests/test_harness_gate_and_store.py) | Tests for configurable-harness access gate, CAS store, Tessera sync, and remote handshake sync. |
 | [tests/test_herma.py](tests/test_herma.py) | Tests for multi-caller isolation, CAS, governance lens, entity memory, insights, preview, and MCP parity. |
 | [tests/test_index_portability.py](tests/test_index_portability.py) | The index CLI produces the same bytes in differently named checkouts. |
+| [tests/test_model_policy.py](tests/test_model_policy.py) | Muse-first routing policy: Herma names Meta's latest Muse models and nothing from the retired family. |
 | [tests/test_provider_accounting.py](tests/test_provider_accounting.py) | Known skips do not spend allowance; nonfinal provider outcomes keep reservations. |
 | [tests/test_provider_contracts.py](tests/test_provider_contracts.py) | Provider selection, native generation and exception allowance stay explicit. |
 | [tests/test_provider_diagnostics.py](tests/test_provider_diagnostics.py) | Provider error evidence is bounded, private and never a raw response echo. |
@@ -172,6 +175,6 @@ Every file in this repo with a one-line description taken from the file itself. 
 
 | File | What it is |
 |---|---|
-| [training/README.md](training/README.md) | Herma Shim Router & LoRAs as Parametric Memory (training/) |
-| [training/requirements-train.txt](training/requirements-train.txt) | Reproducible PEFT LoRA & QLoRA training dependencies for Herma Shim Router |
+| [training/README.md](training/README.md) | Herma LoRA as Parametric Memory (training/) |
+| [training/requirements-train.txt](training/requirements-train.txt) | Reproducible PEFT LoRA & QLoRA training dependencies for Herma |
 | [training/shim-router-lora-spec.json](training/shim-router-lora-spec.json) | JSON object: spec_id, primitive_kind, plain_language_kind, status, as_of, summary |

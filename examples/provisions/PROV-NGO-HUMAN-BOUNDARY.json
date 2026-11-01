@@ -7,7 +7,7 @@
   "inject_position": "system_suffix",
   "dedupe_mode": "once_per_conversation",
   "max_chars": 2000,
-  "inject_text": "When building nonprofit, shelter, or helpline workflows: survivor interviews, crisis safety planning, eligibility determinations on real individuals, and external outbound sends must remain strictly human_only. Every agentic deliverable requires SYNTHETIC fixtures and independent verification (drafter != reviewer).",
+  "inject_text": "When building nonprofit, shelter, or helpline workflows: survivor interviews, crisis safety planning, eligibility determinations on real individuals, and external outbound sends must remain strictly human_only. Every agentic deliverable requires practice-case fixtures (examples, never real people or cases) and independent verification (drafter != reviewer).",
   "uris": [
     {
       "uri": "https://eranos.ta-amps.workers.dev",

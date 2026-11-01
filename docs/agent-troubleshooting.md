@@ -38,7 +38,7 @@ Stop after a bounded number of failures and ask for the missing information.
 Do not turn an unknown outcome into success or repeatedly spend model credits.
 
 For server credentials use [Cloudflare secrets](https://developers.cloudflare.com/workers/configuration/secrets/),
-with names `META_API_KEY` and `OLLAMA_API_KEY` on the Herma Worker. Use the pinned
+with names such as `META_API_KEY` on the Herma Worker. Use the pinned
 Wrangler's interactive `secret put` command from the reviewed checkout, with
 `--config deploy/cloudflare/wrangler.jsonc`. Never include values in arguments,
 source, browser bundles or transcripts. Secret changes deploy a Worker version;

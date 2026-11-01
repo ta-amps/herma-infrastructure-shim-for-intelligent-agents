@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import SYNTHETIC_CHOICES, grant
+from conftest import EXAMPLE_CHOICES, grant
 from test_conversation import seed, tool_reply, turn
 from test_provider_plan import PLAN_CHOICES, plan_entry, planned_turn, prepared
 
@@ -19,23 +19,23 @@ from herma.harness_gate import is_contributor_model
 from herma.provider_plan import operator_grants, upstream_identity
 from herma.store import ProvisionStore
 
-READY = {"value": {"message": "SYNTHETIC", "synthetic": True}}
-GPT = {"provider": "openai", "model": "synthetic-gpt"}
+READY = {"value": {"message": "EXAMPLE", "example": True}}
+GPT = {"provider": "openai", "model": "example-gpt"}
 ROUTED_GPT = {
     "provider": "openrouter",
-    "model": "openai/synthetic-gpt",
+    "model": "openai/example-gpt",
     "routing_provider": "openai",
 }
-OTHER = {"provider": "openrouter", "model": "synthetic/other", "routing_provider": "synthetic-host"}
+OTHER = {"provider": "openrouter", "model": "example/other", "routing_provider": "example-host"}
 
 
 @pytest.fixture(autouse=True)
-def synthetic_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("META", "OLLAMA", "OPENAI", "ANTHROPIC", "OPENROUTER"):
-        monkeypatch.setenv(name + "_API_KEY", "synthetic-provider-key")
+def example_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("META", "OPENAI", "ANTHROPIC", "OPENROUTER"):
+        monkeypatch.setenv(name + "_API_KEY", "example-provider-key")
 
 
-def openai(model: str = "synthetic-gpt") -> ProviderConfig:
+def openai(model: str = "example-gpt") -> ProviderConfig:
     return ProviderConfig(
         "openai", model, max_output=1000, openai_budget_usd=5, openai_rates=(1, 3)
     )
@@ -52,8 +52,8 @@ def openrouter(model: str, routing: str) -> ProviderConfig:
     )
 
 
-def ollama(model: str = "muse-spark-open") -> ProviderConfig:
-    return ProviderConfig("ollama", model, max_output=1000)
+def meta(model: str = "muse-spark-1.3") -> ProviderConfig:
+    return ProviderConfig("meta", model, max_output=1000, meta_budget_usd=5)
 
 
 def plan_turn(provider: str, **patch: Any) -> Any:
@@ -80,19 +80,21 @@ def test_direct_turns_need_the_callers_own_exact_grant(
         return tool_reply(READY)
 
     engine = ConversationEngine(store, call=call)
-    grant(monkeypatch, "key:alice", choices=[{"provider": "ollama", "model": "muse-spark-open"}])
+    grant(monkeypatch, "key:alice", choices=[{"provider": "meta", "model": "muse-spark-1.3"}])
     # Route scope alone is not a purchase grant, and another caller's grant does not transfer.
-    assert refused(engine, "key:bob", turn(), ollama()) == "provider_grant_required"
+    assert refused(engine, "key:bob", turn(), meta()) == "provider_grant_required"
     # An explicit configuration cannot widen the grant to another model or provider.
-    assert refused(engine, "key:alice", turn(), ollama("other-model")) == "provider_grant_required"
+    assert (
+        refused(engine, "key:alice", turn(), meta("muse-wonder-1.0")) == "provider_grant_required"
+    )
     assert (
         refused(engine, "key:alice", turn(provider="openai"), openai()) == "provider_grant_required"
     )
     assert calls == []
     assert engine.state.snapshot("key:bob", "conversation-one")["version"] == 0
     assert engine.state.snapshot("key:alice", "conversation-one")["version"] == 0
-    result = asyncio.run(engine.turn("key:alice", turn(), ollama()))
-    assert result["proposal"]["status"] == "ready" and calls == ["muse-spark-open"]
+    result = asyncio.run(engine.turn("key:alice", turn(), meta()))
+    assert result["proposal"]["status"] == "ready" and calls == ["muse-spark-1.3"]
     assert result["server_exception"]["operator_grant"]["caller_scope"] == "key:alice"
 
 
@@ -107,7 +109,7 @@ def test_openrouter_grant_pins_the_underlying_provider(
 
     grant(monkeypatch, "key:alice", choices=[OTHER])
     engine = ConversationEngine(store, call=forbidden)
-    config = openrouter("synthetic/other", "another-host")
+    config = openrouter("example/other", "another-host")
     assert refused(engine, "key:alice", turn(provider="openrouter"), config) == (
         "provider_grant_required"
     )
@@ -191,12 +193,12 @@ def test_uncertain_failover_needs_this_callers_grant_and_records_the_charged_att
         called.append(config.provider)
         if config.provider == "meta":
             raise ProviderFailure("provider_unavailable")
-        return tool_reply(READY)
+        return tool_reply(READY, "openai")
 
     engine = ConversationEngine(store, call=call)
     result = asyncio.run(engine.turn("key:alice", planned_turn()))
     first, second = result["attempts"]
-    assert called == ["meta", "ollama"]
+    assert called == ["meta", "openai"]
     # The ambiguous, possibly charged attempt stays recorded and keeps its reservation.
     assert first["outcome"] == "unknown" and first["reservation_status"] == "reserved"
     assert first["reserved_usd"] > 0 and first["follows_uncertain_attempt_id"] is None
@@ -206,7 +208,9 @@ def test_uncertain_failover_needs_this_callers_grant_and_records_the_charged_att
         "operator_grant": True,
         "allowed": True,
     }
-    assert result["reserved_usd"] == pytest.approx(first["reserved_usd"])
+    # Each attempt reserves its own allowance; the earlier, possibly charged one is never refunded.
+    assert second["reserved_usd"] > 0
+    assert result["reserved_usd"] == pytest.approx(first["reserved_usd"] + second["reserved_usd"])
 
 
 def test_uncertainty_grant_defaults_off_and_a_plan_cannot_supply_it(
@@ -236,13 +240,13 @@ def test_uncertainty_grant_defaults_off_and_a_plan_cannot_supply_it(
     [
         (("openai", "gpt-x"), ("openrouter", "openai/gpt-x")),
         (("openai", "GPT-4o-2024-08-06"), ("openrouter", "openai/gpt-4o:nitro")),
-        (("openai", "synthetic-gpt"), ("openrouter", "OpenAI/synthetic_gpt:free")),
+        (("openai", "example-gpt"), ("openrouter", "OpenAI/example_gpt:free")),
         (
             ("anthropic", "claude-sonnet-4-5-20250929"),
             ("openrouter", "anthropic/claude-sonnet-4.5"),
         ),
         (("anthropic", "claude-3-5-sonnet-latest"), ("openrouter", "anthropic/claude-3.5-sonnet")),
-        (("meta", "muse-spark-1.3"), ("openrouter", "meta-llama/muse-spark-1.3")),
+        (("meta", "muse-spark-1.3"), ("openrouter", "meta/muse-spark-1.3")),
     ],
 )
 def test_direct_and_gateway_routes_share_one_upstream_identity(
@@ -256,8 +260,8 @@ def test_direct_and_gateway_routes_share_one_upstream_identity(
     [
         (("openai", "gpt-x"), ("anthropic", "gpt-x")),
         (("openai", "gpt-x"), ("openrouter", "openai/gpt-y")),
-        # Open weights served by an independent host keep that host as their vendor.
-        (("ollama", "gpt-oss:120b"), ("openrouter", "openai/gpt-oss-120b")),
+        (("meta", "muse-spark-1.3"), ("meta", "muse-wonder-1.0")),
+        (("meta", "muse-spark-1.3"), ("openrouter", "openai/muse-spark-1.3")),
     ],
 )
 def test_distinct_upstream_models_stay_distinct(
@@ -293,7 +297,7 @@ def test_rate_limit_holds_the_upstream_model_against_other_credentials(
     monkeypatch.setattr("herma.conversation_state.time.time", lambda: clock[0])
     store = ProvisionStore(tmp_path / "state.db")
     seed(store, "key:alice")
-    grant(monkeypatch, "key:alice", choices=[GPT, ROUTED_GPT, OTHER, *SYNTHETIC_CHOICES])
+    grant(monkeypatch, "key:alice", choices=[GPT, ROUTED_GPT, OTHER, *EXAMPLE_CHOICES])
     calls = []
 
     async def call(config: ProviderConfig, _body: dict[str, Any]) -> dict[str, Any]:
@@ -312,11 +316,11 @@ def test_rate_limit_holds_the_upstream_model_against_other_credentials(
 
     limited = ask("direct", "openai", openai())
     assert limited["error_code"] == "provider_rate_limited" and len(calls) == 1
-    gateway = ask("gateway", "openrouter", openrouter("openai/synthetic-gpt", "openai"))
+    gateway = ask("gateway", "openrouter", openrouter("openai/example-gpt", "openai"))
     attempt = gateway["attempts"][0]
     assert gateway["error_code"] == "provider_identity_cooldown" and len(calls) == 1
     assert attempt["reservation_status"] == "denied" and attempt["reserved_tokens"] == 0
-    assert attempt["upstream_identity"] == "openai/synthetic-gpt"
+    assert attempt["upstream_identity"] == "openai/example-gpt"
     assert attempt["provider_health"]["scope"] == "upstream_model_identity"
     assert attempt["provider_health"]["available_after"] == clock[0] + 60
     assert not any(
@@ -324,31 +328,31 @@ def test_rate_limit_holds_the_upstream_model_against_other_credentials(
     )
     # The same route keeps its own shared health; a different model is unaffected.
     assert ask("same", "openai", openai())["error_code"] == "provider_backpressure"
-    other = ask("other", "openrouter", openrouter("synthetic/other", "synthetic-host"))
+    other = ask("other", "openrouter", openrouter("example/other", "example-host"))
     assert other["proposal"]["status"] == "ready"
     clock[0] += 61
-    later = ask("later", "openrouter", openrouter("openai/synthetic-gpt", "openai"))
+    later = ask("later", "openrouter", openrouter("openai/example-gpt", "openai"))
     assert later["proposal"]["status"] == "ready"
-    assert calls[-2:] == [("openrouter", "synthetic/other"), ("openrouter", "openai/synthetic-gpt")]
+    assert calls[-2:] == [("openrouter", "example/other"), ("openrouter", "openai/example-gpt")]
 
 
 def test_identity_cooldown_skip_lets_an_explicit_plan_continue(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = prepared(tmp_path, monkeypatch)
-    monkeypatch.setenv("HERMA_CONVERSATION_OPENAI_MODEL", "synthetic-gpt")
+    monkeypatch.setenv("HERMA_CONVERSATION_OPENAI_MODEL", "example-gpt")
     monkeypatch.setenv("HERMA_CONVERSATION_OPENAI_INPUT_USD_PER_MILLION", "1")
     monkeypatch.setenv("HERMA_CONVERSATION_OPENAI_OUTPUT_USD_PER_MILLION", "3")
     monkeypatch.setenv("HERMA_OPENAI_BUDGET_USD", "5")
     entry = plan_entry()
     assert isinstance(entry.schema_or_body, dict)
-    entry.schema_or_body["provider_plan"]["providers"] = [GPT, PLAN_CHOICES[1]]
+    entry.schema_or_body["provider_plan"]["providers"] = [GPT, PLAN_CHOICES[0]]
     store.upsert_context_entry(entry, caller_scope="key:alice", is_admin=False)
-    grant(monkeypatch, "key:alice", choices=[GPT, PLAN_CHOICES[1]])
+    grant(monkeypatch, "key:alice", choices=[GPT, PLAN_CHOICES[0]])
     with ConversationEngine(store).state.connect() as conn:
         conn.execute(
             "INSERT INTO work_provider_identity VALUES (?,?,?,?)",
-            ("openai/synthetic-gpt", 2**40, "rate_limited", "openrouter"),
+            ("openai/example-gpt", 2**40, "rate_limited", "openrouter"),
         )
     called = []
 
@@ -359,7 +363,7 @@ def test_identity_cooldown_skip_lets_an_explicit_plan_continue(
     result = asyncio.run(
         ConversationEngine(store, call=call).turn("key:alice", plan_turn("openai"))
     )
-    assert called == ["ollama"] and result["proposal"]["status"] == "ready"
+    assert called == ["meta"] and result["proposal"]["status"] == "ready"
     assert result["attempts"][0]["error_code"] == "provider_identity_cooldown"
 
 
@@ -368,8 +372,8 @@ def test_identity_cooldown_skip_lets_an_explicit_plan_continue(
     [
         "contributor",
         "muse-spark-1.3-contributor",
-        "synthetic/contributor",
-        "synthetic:contributor",
+        "example/contributor",
+        "example:contributor",
         "Muse-CONTRIBUTOR-preview",
     ],
 )
@@ -380,7 +384,7 @@ def test_contributor_models_are_refused_in_plans_grants_and_configuration(
     store = prepared(tmp_path, monkeypatch)
     entry = plan_entry()
     assert isinstance(entry.schema_or_body, dict)
-    entry.schema_or_body["provider_plan"]["providers"][1] = {"provider": "ollama", "model": model}
+    entry.schema_or_body["provider_plan"]["providers"][1] = {"provider": "openai", "model": model}
     store.upsert_context_entry(entry, caller_scope="key:alice", is_admin=False)
 
     async def forbidden(_config: ProviderConfig, _body: dict[str, Any]) -> dict[str, Any]:
@@ -390,15 +394,15 @@ def test_contributor_models_are_refused_in_plans_grants_and_configuration(
     # Otherwise valid and granted inputs, so the refusal is the contributor rule itself.
     assert refused(engine, "key:alice", planned_turn()) == "contributor_tier_refused"
     assert engine.state.snapshot("key:alice", "conversation-one")["version"] == 0
-    grant(monkeypatch, "key:alice", choices=[*PLAN_CHOICES, {"provider": "ollama", "model": model}])
+    grant(monkeypatch, "key:alice", choices=[*PLAN_CHOICES, {"provider": "openai", "model": model}])
     assert refused(engine, "key:alice", turn()) == "contributor_tier_refused"
     grant(monkeypatch, "key:alice")
-    monkeypatch.setenv("HERMA_CONVERSATION_OLLAMA_MODEL", model)
+    monkeypatch.setenv("HERMA_CONVERSATION_META_MODEL", model)
     monkeypatch.delenv("HERMA_CONVERSATION_MAX_OUTPUT")
     # The contributor refusal precedes even a missing output allowance, as in the Worker.
     assert refused(engine, "key:alice", turn()) == "contributor_tier_refused"
 
 
-@pytest.mark.parametrize("model", ["muse-spark-1.3", "synthetic/model", "contrib-utor"])
+@pytest.mark.parametrize("model", ["muse-spark-1.3", "example/model", "contrib-utor"])
 def test_standard_model_names_are_not_contributor_models(model: str) -> None:
     assert not is_contributor_model(model)

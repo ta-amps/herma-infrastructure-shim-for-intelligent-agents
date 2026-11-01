@@ -1,0 +1,96 @@
+"""The Meta model catalog: one data file that pages, discovery text and routing checks all read.
+
+`model_catalog.json` is the single list of Meta models Herma names in public, with a one-line use for
+each and whether Herma routes to it. The Worker imports the same file, so what a page says matches
+what the code does. Nothing here makes a network call, and a contributor-tier id can never be listed.
+"""
+
+from __future__ import annotations
+
+import html
+import json
+from functools import cache
+from pathlib import Path
+from typing import Any
+
+CATALOG_PATH = Path(__file__).with_name("model_catalog.json")
+HEADING = "Which Meta Models Do What"
+TABLE_HEAD = "<tr><th>Model</th><th>What it's for</th><th>Does Herma route to it?</th></tr>"
+NOTE_STYLE = "color:var(--muted);margin:0.2rem 0 0.8rem;font-size:0.9rem;max-width:820px;"
+
+
+def escape(value: object) -> str:
+    """Escape text exactly as the Worker's `esc` does, so both runtimes render the same bytes."""
+    return html.escape(str(value), quote=True).replace("&#x27;", "&#39;")
+
+
+@cache
+def load_catalog() -> dict[str, Any]:
+    """The validated catalog. Callers must treat the returned mapping as read-only."""
+    raw = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    models = raw.get("models") if isinstance(raw, dict) else None
+    if not isinstance(models, list) or not models:
+        raise ValueError("the model catalog must hold a non-empty models list")
+    for model in models:
+        ident = model.get("id")
+        if ident is not None and (not isinstance(ident, str) or "contributor" in ident.lower()):
+            raise ValueError("the model catalog may not list a contributor-tier id")
+        if not isinstance(model.get("name"), str) or not isinstance(model.get("routed"), bool):
+            raise ValueError("every catalog model needs a name and a routed flag")
+    for key in ("routing_note", "harness_note", "models_used_url"):
+        if not isinstance(raw.get(key), str) or not raw[key]:
+            raise ValueError(f"the model catalog needs {key}")
+    return dict(raw)
+
+
+def routed_model_ids() -> frozenset[str]:
+    """Meta API ids that Herma routes to."""
+    return frozenset(
+        str(model["id"]) for model in load_catalog()["models"] if model["routed"] and model["id"]
+    )
+
+
+def listed_model_ids() -> frozenset[str]:
+    """Every Meta API id the catalog names, routed or not."""
+    return frozenset(str(model["id"]) for model in load_catalog()["models"] if model["id"])
+
+
+def render_models_section() -> str:
+    """The home page section, with no whitespace between tags so both runtimes match byte for byte."""
+    catalog = load_catalog()
+    rows = []
+    for model in catalog["models"]:
+        ident = f"<br/><small><code>{escape(model['id'])}</code></small>" if model["id"] else ""
+        evidence = (
+            f"<br/><small>{escape(model['evidence'])}</small>" if model.get("evidence") else ""
+        )
+        rows.append(
+            f"<tr><td><strong>{escape(model['name'])}</strong>{ident}</td>"
+            f"<td>{escape(model['use'])}{evidence}</td>"
+            f"<td>{escape(model['route'])}</td></tr>"
+        )
+    harness_note = (
+        f'<p style="{NOTE_STYLE}">{escape(catalog["harness_note"])} '
+        f'<a href="{escape(catalog["models_used_url"])}">Models used</a> has the full list.</p>'
+    )
+    return (
+        f"<h2>{HEADING}</h2>"
+        f'<p style="{NOTE_STYLE}">{escape(catalog["routing_note"])}</p>'
+        f'<div class="table-wrap"><table><thead>{TABLE_HEAD}</thead>'
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
+        f"{harness_note}"
+    )
+
+
+def models_text() -> str:
+    """The same catalog as Markdown lines for llms-full.txt."""
+    catalog = load_catalog()
+    lines = [f"## {HEADING}", catalog["routing_note"], ""]
+    for model in catalog["models"]:
+        ident = f" (`{model['id']}`)" if model["id"] else ""
+        evidence = f" {model['evidence']}" if model.get("evidence") else ""
+        lines.append(
+            f"- {model['name']}{ident}: {model['use']}{evidence} Herma routing: {model['route']}"
+        )
+    lines += ["", catalog["harness_note"], f"Models used: {catalog['models_used_url']}"]
+    return "\n".join(lines)

@@ -9,7 +9,12 @@ from pathlib import Path
 from tessera.ontology.categories import CATEGORY_REGISTRY
 
 from herma.conversation import SYSTEM
-from herma.conversation_contracts import ConversationTurn, Proposal, WorkContract
+from herma.conversation_contracts import (
+    ConversationTurn,
+    Proposal,
+    WorkContract,
+    plain_guidance,
+)
 from herma.provider_plan import ProviderPlan
 
 
@@ -27,7 +32,7 @@ def main() -> None:
             "proposal": Proposal.model_json_schema(),
         },
         "categories": {
-            key: value.model_dump(mode="json").get("worker_guidance")
+            key: plain_guidance(value.model_dump(mode="json").get("worker_guidance"))
             for key, value in sorted(CATEGORY_REGISTRY.items())
         },
     }

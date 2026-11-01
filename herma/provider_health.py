@@ -12,7 +12,7 @@ from typing import Any
 
 from herma.errors import HermaError
 
-PROVIDERS = {"meta", "ollama", "openai", "anthropic", "openrouter"}
+PROVIDERS = {"meta", "openai", "anthropic", "openrouter"}
 PROBE_LEASE_SECONDS = 120
 # Limits that belong to the paying account rather than one model.
 ACCOUNT_LIMITS = frozenset({"credit_or_quota_exhausted", "payment_required"})
@@ -23,7 +23,6 @@ IDENTITY_LIMITS = frozenset({"rate_limited", *ACCOUNT_LIMITS})
 def provider_for_host(host: str | None) -> str | None:
     return {
         "api.meta.ai": "meta",
-        "ollama.com": "ollama",
         "api.openai.com": "openai",
         "api.anthropic.com": "anthropic",
         "openrouter.ai": "openrouter",

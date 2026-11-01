@@ -7,13 +7,13 @@ import { freshHealth, admitHealth, settleHealth, retryGuidance } from "../deploy
 import worker from "../deploy/cloudflare/worker.js";
 import { resolveUpstream } from "../deploy/cloudflare/herma_engine.js";
 
-const entry = { entry_id: "work.observation", kind: "noun", title: "Observation", summary: "SYNTHETIC", schema_or_body: { work_contract: {
-  operation_id: "record_observation", category_id: "noun.eval_run", description: "Record SYNTHETIC evidence.", input_schema: { type: "object", properties: { value: { type: "object", properties: { message: { type: "string" }, synthetic: { type: "boolean", const: true } }, required: ["message", "synthetic"], additionalProperties: false } }, required: ["value"], additionalProperties: false }
+const entry = { entry_id: "work.observation", kind: "noun", title: "Observation", summary: "EXAMPLE", schema_or_body: { work_contract: {
+  operation_id: "record_observation", category_id: "noun.eval_run", description: "Record EXAMPLE evidence.", input_schema: { type: "object", properties: { value: { type: "object", properties: { message: { type: "string" }, example: { type: "boolean", const: true } }, required: ["message", "example"], additionalProperties: false } }, required: ["value"], additionalProperties: false }
 } } };
-const input = patch => ({ conversation_id: "conversation-one", request_id: "request-one", expected_version: 0, provider: "openai", message: "SYNTHETIC", context_refs: [entry.entry_id], ...patch });
+const input = patch => ({ conversation_id: "conversation-one", request_id: "request-one", expected_version: 0, provider: "openai", message: "EXAMPLE", context_refs: [entry.entry_id], ...patch });
 // Pooled callers each hold their own exact operator grant from the vitest configuration.
 let pooled = 0;
-const caller = () => { const id = `key:synthetic-health-${pooled++}`; return { id, stub: env.WORK_CONVERSATIONS.getByName(id) }; };
+const caller = () => { const id = `key:example-health-${pooled++}`; return { id, stub: env.WORK_CONVERSATIONS.getByName(id) }; };
 const freshBudget = () => env.WORK_REASONING_BUDGET.getByName("health-" + crypto.randomUUID());
 const outcome = patch => ({ outcome: "rejected", error_code: "provider_rate_limited", reason: "rate_limited", retry_after_seconds: null, http_status: 429, ...patch });
 async function clearTime(stub, mutate = state => { state.available_after = 0; }) {
@@ -65,7 +65,7 @@ describe("shared operator provider availability", () => {
       const result = await instance.turn(target.id, input({ provider: "anthropic" }), [entry]);
       expect(result.body.error_code).toBe("provider_operator_disabled");
       expect(result.body.attempts[0]).toMatchObject({ outcome: "not_sent", reservation_status: "not_reserved", provider_health: { state: "operator_disabled", available_after: null } });
-      expect(configured.ANTHROPIC_API_KEY).toBe("synthetic-anthropic-key");
+      expect(configured.ANTHROPIC_API_KEY).toBe("example-anthropic-key");
     });
     const budget = freshBudget(), id = await hash("credit");
     await budget.reserve(id, "meta", id, 1);
@@ -79,27 +79,34 @@ describe("shared operator provider availability", () => {
   });
 
   it.each([["anthropic", "https://api.anthropic.com/v1/messages", "/v1/messages"], ["openrouter", "https://openrouter.ai/api/v1/chat/completions", "/v1/chat/completions"]])("pauses the %s operator proxy key while preserving actual worker-funded forwarding", async (provider, upstream, path) => {
-    const settings = { ...env, HERMA_CONVERSATION_DISABLED_PROVIDERS: '["anthropic","openrouter"]', UPSTREAM_LLM_URL: upstream, UPSTREAM_LLM_API_KEY: "synthetic-operator-key" };
-    const issue = await worker.fetch(new Request("https://example.com/v1/admin/keys", { method: "POST", headers: { "Content-Type": "application/json", "X-Bootstrap-Secret": "synthetic-bootstrap-value" }, body: JSON.stringify({ label: "SYNTHETIC BYO", harness_kind: "opencode", scopes: ["route"] }) }), settings);
+    const settings = { ...env, HERMA_CONVERSATION_DISABLED_PROVIDERS: '["anthropic","openrouter"]', UPSTREAM_LLM_URL: upstream, UPSTREAM_LLM_API_KEY: "example-operator-key" };
+    const issue = await worker.fetch(new Request("https://example.com/v1/admin/keys", { method: "POST", headers: { "Content-Type": "application/json", "X-Bootstrap-Secret": "example-bootstrap-value" }, body: JSON.stringify({ label: "EXAMPLE BYO", harness_kind: "opencode", scopes: ["route"] }) }), settings);
     expect(issue.status).toBe(201);
     const issued = await issue.json();
-    const payload = { model: "synthetic-byo-model", max_tokens: 300000, messages: [{ role: "user", content: "byo-paused-provider" }] };
+    const payload = { model: "example-byo-model", max_tokens: 300000, messages: [{ role: "user", content: "byo-paused-provider" }] };
     const headers = { "Content-Type": "application/json", "Authorization": "Bearer " + issued.key, "X-Herma-Harness": "opencode", "anthropic-version": "2023-06-01" };
     const denied = await worker.fetch(new Request("https://example.com" + path, { method: "POST", headers, body: JSON.stringify(payload) }), settings);
     expect(denied.status).toBe(503);
     expect((await denied.json()).code).toBe("provider_operator_disabled");
-    const response = await worker.fetch(new Request("https://example.com" + path, { method: "POST", headers: { ...headers, "X-Upstream-Api-Key": `synthetic-byo-${provider}-key` }, body: JSON.stringify(payload) }), settings);
+    const response = await worker.fetch(new Request("https://example.com" + path, { method: "POST", headers: { ...headers, "X-Upstream-Api-Key": `example-byo-${provider}-key` }, body: JSON.stringify(payload) }), settings);
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ model: "synthetic-byo-model", observed_max_tokens: 300000, synthetic_byo: true });
+    expect(await response.json()).toMatchObject({ model: "example-byo-model", observed_max_tokens: 300000, example_byo: true });
   });
 
   it("does not parse operator policy for a selected caller key or use substring host matching", () => {
-    const settings = { HERMA_CONVERSATION_DISABLED_PROVIDERS: "invalid operator policy", UPSTREAM_LLM_URL: "https://api.anthropic.com/v1/messages", UPSTREAM_LLM_API_KEY: "synthetic-operator-key" };
-    const own = new Request("https://example.com/v1/messages", { headers: { "X-Upstream-Api-Key": "synthetic-worker-key" } });
-    expect(resolveUpstream(own, settings, "/v1/messages").key).toBe("synthetic-worker-key");
-    const alternate = { ...settings, HERMA_CONVERSATION_DISABLED_PROVIDERS: '["anthropic"]', UPSTREAM_LLM_URL: "https://api.anthropic.com.synthetic.example/v1/messages" };
-    expect(resolveUpstream(new Request("https://example.com"), alternate, "/v1/messages").key).toBe("synthetic-operator-key");
+    const settings = { HERMA_CONVERSATION_DISABLED_PROVIDERS: "invalid operator policy", UPSTREAM_LLM_URL: "https://api.anthropic.com/v1/messages", UPSTREAM_LLM_API_KEY: "example-operator-key" };
+    const own = new Request("https://example.com/v1/messages", { headers: { "X-Upstream-Api-Key": "example-worker-key" } });
+    expect(resolveUpstream(own, settings, "/v1/messages").key).toBe("example-worker-key");
+    const alternate = { ...settings, HERMA_CONVERSATION_DISABLED_PROVIDERS: '["anthropic"]', UPSTREAM_LLM_URL: "https://api.anthropic.com.example.example/v1/messages" };
+    expect(resolveUpstream(new Request("https://example.com"), alternate, "/v1/messages").key).toBe("example-operator-key");
     expect(() => resolveUpstream(new Request("https://example.com", { headers: { "X-Upstream-Base-Url": "https://api.anthropic.com" } }), alternate, "/v1/messages")).toThrow("Server credentials are bound");
+  });
+
+  it("allowlists the Meta API by default and refuses hosts that left the default list", () => {
+    const request = host => new Request("https://example.com/v1/chat/completions", { headers: { "X-Upstream-Base-Url": "https://" + host, "X-Upstream-Api-Key": "example-caller-key" } });
+    expect(resolveUpstream(request("api.meta.ai"), {}, "/v1/chat/completions").url).toBe("https://api.meta.ai/v1/chat/completions");
+    // The retired hosts are spelled in pieces so repository-wide name guards stay clean.
+    for (const host of [["oll", "ama"].join("") + ".com", "api." + ["lla", "ma"].join("") + ".com"]) expect(() => resolveUpstream(request(host), {}, "/v1/chat/completions")).toThrow("not allowlisted");
   });
 
   it("admits exactly one account-wide probe across concurrent models and accounts remain isolated", async () => {

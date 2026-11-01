@@ -175,7 +175,7 @@ def test_provision_and_context_entry_schema_validation() -> None:
             "harness_kind": "opencode",
             "key_id": "k1",
             "wire_format": "chat_completions",
-            "model": "muse-spark-open",
+            "model": "muse-spark-1.3",
             "provisions_fired": ["PROV-DEFAULT-SHIM@v1"],
             "tiers_matched": ["keyword"],
             "uris_injected": [],
@@ -459,7 +459,7 @@ def test_api_context_database_and_noun_verb_shimming(
         json={
             "wire_format": "chat_completions",
             "payload": {
-                "model": "muse-spark-open",
+                "model": "muse-spark-1.3",
                 "messages": [{"role": "user", "content": "Implement volunteer kit claim handler"}],
             },
         },
@@ -529,7 +529,7 @@ def test_direct_response_short_circuits_upstream_across_all_protocols(
         "/v1/chat/completions",
         headers=headers,
         json={
-            "model": "muse-spark-open",
+            "model": "muse-spark-1.3",
             "messages": [{"role": "user", "content": "What is /herma-verify-cmd?"}],
         },
     )
@@ -557,7 +557,9 @@ def test_direct_response_short_circuits_upstream_across_all_protocols(
     assert r_resp.headers["x-herma-direct-response"] == "true"
     assert HEX64_RE.match(r_resp.headers["x-herma-receipt-sha256"])
     resp_body = r_resp.json()
-    assert "Canonical Herma + Tessera Noun/Verb Contract" in resp_body["output_text"]
+    assert (
+        "Canonical Herma + Tessera Contract -- Tasks and Task Objects" in resp_body["output_text"]
+    )
     assert "[NOUN] noun:tessera.lease_fence" in resp_body["output_text"]
     assert "[VERB] verb:tessera.claim" in resp_body["output_text"]
     assert resp_body["output"][0]["content"][0]["text"] == resp_body["output_text"]
@@ -631,7 +633,7 @@ const dryResp = await worker.fetch(new Request("https://herma.ta-amps.workers.de
   headers: hdrs,
   body: JSON.stringify({
     wire_format: "chat_completions",
-    payload: { model: "muse-spark-open", messages: [{ role: "user", content: "Check Tessera fencing tokens" }] },
+    payload: { model: "muse-spark-1.3", messages: [{ role: "user", content: "Check Tessera fencing tokens" }] },
   }),
 }), env);
 const dryJson = await dryResp.json();
@@ -639,7 +641,7 @@ const dryJson = await dryResp.json();
 const dChat = await worker.fetch(new Request("https://herma.ta-amps.workers.dev/v1/chat/completions", {
   method: "POST",
   headers: hdrs,
-  body: JSON.stringify({ model: "muse-spark-open", messages: [{ role: "user", content: "Show canonical noun/verb schema" }] }),
+  body: JSON.stringify({ model: "muse-spark-1.3", messages: [{ role: "user", content: "Show canonical noun/verb schema" }] }),
 }), env);
 const dResp = await worker.fetch(new Request("https://herma.ta-amps.workers.dev/v1/responses", {
   method: "POST",
@@ -678,10 +680,16 @@ console.log(JSON.stringify({
     assert HEX64_RE.match(out["chatReceiptSha"])
     assert out["chatBody"]["object"] == "chat.completion"
     assert out["chatBody"]["usage"]["total_tokens"] == 0
-    assert "Canonical Herma + Tessera Noun/Verb Contract" in out["respBody"]["output_text"]
+    assert (
+        "Canonical Herma + Tessera Contract -- Tasks and Task Objects"
+        in out["respBody"]["output_text"]
+    )
     assert out["respBody"]["output"][0]["content"][0]["text"] == out["respBody"]["output_text"]
     assert out["msgBody"]["content"][0]["type"] == "text"
-    assert "Canonical Herma + Tessera Noun/Verb Contract" in out["msgBody"]["content"][0]["text"]
+    assert (
+        "Canonical Herma + Tessera Contract -- Tasks and Task Objects"
+        in out["msgBody"]["content"][0]["text"]
+    )
     assert out["homeHasFraming"] is True
 
 
@@ -1005,7 +1013,7 @@ def test_multi_caller_non_poisoning_builtin_lock_admin_keys_and_cas_parity(
         json={
             "wire_format": "chat_completions",
             "payload": {
-                "model": "muse-spark-open",
+                "model": "muse-spark-1.3",
                 "messages": [{"role": "user", "content": "Please deploy production now"}],
             },
         },
@@ -1022,7 +1030,7 @@ def test_multi_caller_non_poisoning_builtin_lock_admin_keys_and_cas_parity(
         json={
             "wire_format": "chat_completions",
             "payload": {
-                "model": "muse-spark-open",
+                "model": "muse-spark-1.3",
                 "messages": [{"role": "user", "content": "Please deploy production now"}],
             },
         },
@@ -1117,10 +1125,10 @@ const pConflict = await worker.fetch(new Request("https://herma.ta-amps.workers.
 }), env);
 
 const dryA = await (await worker.fetch(new Request("https://herma.ta-amps.workers.dev/v1/dry-run", {
-  method: "POST", headers: ha, body: JSON.stringify({ payload: { model: "muse-spark-open", messages: [{ role: "user", content: "deploy production" }] } }),
+  method: "POST", headers: ha, body: JSON.stringify({ payload: { model: "muse-spark-1.3", messages: [{ role: "user", content: "deploy production" }] } }),
 }), env)).json();
 const dryB = await (await worker.fetch(new Request("https://herma.ta-amps.workers.dev/v1/dry-run", {
-  method: "POST", headers: hb, body: JSON.stringify({ payload: { model: "muse-spark-open", messages: [{ role: "user", content: "deploy production" }] } }),
+  method: "POST", headers: hb, body: JSON.stringify({ payload: { model: "muse-spark-1.3", messages: [{ role: "user", content: "deploy production" }] } }),
 }), env)).json();
 const homeTxt = await (await worker.fetch(new Request("https://herma.ta-amps.workers.dev/"), env)).text();
 
@@ -1459,7 +1467,7 @@ async def test_governance_lens_blob_sha256_integrity_and_contributor_offline_ref
         headers=hdrs,
         json={
             "payload": {
-                "model": "muse-spark-open",
+                "model": "muse-spark-1.3",
                 "messages": [{"role": "user", "content": "Draft a safety plan checklist"}],
             }
         },
@@ -1472,7 +1480,7 @@ async def test_governance_lens_blob_sha256_integrity_and_contributor_offline_ref
         headers={**hdrs, "X-Herma-Cohort": "ngo-helpline"},
         json={
             "payload": {
-                "model": "muse-spark-open",
+                "model": "muse-spark-1.3",
                 "messages": [{"role": "user", "content": "Draft a safety plan checklist"}],
             }
         },
@@ -1535,7 +1543,7 @@ const h = { "content-type": "application/json", "x-herma-key": k.key, "x-herma-h
 const contribEnv = { ...env, HERMA_MICROMODEL_MODEL: "contributor" };
 const contribResp = await worker.fetch(new Request("https://herma.ta-amps.workers.dev/v1/dry-run", {
   method: "POST", headers: h,
-  body: JSON.stringify({ payload: { model: "muse-spark-open", messages: [{ role: "user", content: "Design shelter intake" }] } }),
+  body: JSON.stringify({ payload: { model: "muse-spark-1.3", messages: [{ role: "user", content: "Design shelter intake" }] } }),
 }), contribEnv);
 
 const rBadSha = await worker.fetch(new Request("https://herma.ta-amps.workers.dev/v1/sync/tessera", {
@@ -1551,11 +1559,11 @@ const rGov = await (await worker.fetch(new Request("https://herma.ta-amps.worker
 
 const dryNoCohort = await (await worker.fetch(new Request("https://herma.ta-amps.workers.dev/v1/dry-run", {
   method: "POST", headers: h,
-  body: JSON.stringify({ payload: { model: "muse-spark-open", messages: [{ role: "user", content: "safety plan" }] } }),
+  body: JSON.stringify({ payload: { model: "muse-spark-1.3", messages: [{ role: "user", content: "safety plan" }] } }),
 }), env)).json();
 const dryCohort = await (await worker.fetch(new Request("https://herma.ta-amps.workers.dev/v1/dry-run", {
   method: "POST", headers: { ...h, "x-herma-cohort": "ngo-helpline" },
-  body: JSON.stringify({ payload: { model: "muse-spark-open", messages: [{ role: "user", content: "safety plan" }] } }),
+  body: JSON.stringify({ payload: { model: "muse-spark-1.3", messages: [{ role: "user", content: "safety plan" }] } }),
 }), env)).json();
 
 console.log(JSON.stringify({
@@ -1614,7 +1622,7 @@ def test_deterministic_entity_memory_retry_outcomes_and_candidate_insights_parit
         headers=hdr_a,
         json={
             "payload": {
-                "model": "muse-spark-open",
+                "model": "muse-spark-1.3",
                 "messages": [
                     {
                         "role": "user",
@@ -1637,7 +1645,7 @@ def test_deterministic_entity_memory_retry_outcomes_and_candidate_insights_parit
         headers=hdr_a,
         json={
             "payload": {
-                "model": "muse-spark-open",
+                "model": "muse-spark-1.3",
                 "messages": [
                     {
                         "role": "user",
@@ -1657,7 +1665,7 @@ def test_deterministic_entity_memory_retry_outcomes_and_candidate_insights_parit
         "/v1/chat/completions",
         headers=hdr_a,
         json={
-            "model": "muse-spark-open",
+            "model": "muse-spark-1.3",
             "messages": [
                 {
                     "role": "user",
@@ -1729,15 +1737,15 @@ const hb = { "content-type": "application/json", "x-herma-key": kb.key, "x-herma
 
 const t1 = await (await worker.fetch(new Request("https://herma.ta-amps.workers.dev/v1/dry-run", {
   method: "POST", headers: ha,
-  body: JSON.stringify({ payload: { model: "muse-spark-open", messages: [{ role: "user", content: "Check fencing in src/tessera/_tasks.py with tessera://stores/custom.nouns/order_book and US-ROSCA-8403" }] } }),
+  body: JSON.stringify({ payload: { model: "muse-spark-1.3", messages: [{ role: "user", content: "Check fencing in src/tessera/_tasks.py with tessera://stores/custom.nouns/order_book and US-ROSCA-8403" }] } }),
 }), env)).json();
 await worker.fetch(new Request("https://herma.ta-amps.workers.dev/v1/dry-run", {
   method: "POST", headers: ha,
-  body: JSON.stringify({ payload: { model: "muse-spark-open", messages: [{ role: "user", content: "ValueError: stale fencing token\\nContext: tessera://stores/custom.nouns/order_book and US-ROSCA-8403" }] } }),
+  body: JSON.stringify({ payload: { model: "muse-spark-1.3", messages: [{ role: "user", content: "ValueError: stale fencing token\\nContext: tessera://stores/custom.nouns/order_book and US-ROSCA-8403" }] } }),
 }), env);
 await worker.fetch(new Request("https://herma.ta-amps.workers.dev/v1/chat/completions", {
   method: "POST", headers: ha,
-  body: JSON.stringify({ model: "muse-spark-open", messages: [{ role: "user", content: "canonical noun/verb schema after ValueError: stale fencing token" }] }),
+  body: JSON.stringify({ model: "muse-spark-1.3", messages: [{ role: "user", content: "canonical noun/verb schema after ValueError: stale fencing token" }] }),
 }), env);
 
 const crossOut = await worker.fetch(new Request("https://herma.ta-amps.workers.dev/v1/outcomes", {

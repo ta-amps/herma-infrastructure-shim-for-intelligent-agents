@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "observed_date": "2026-10-28",
-  "scope": "One synthetic deployed HTTP typed proposal per provider and exact replay; not native full-loop certification.",
+  "scope": "One example-task deployed HTTP typed proposal per provider and exact replay; not native full-loop certification.",
   "provider_credentials": "Worker secrets; no provider key supplied by the probe client.",
   "runs": [
     {
@@ -18,7 +18,7 @@
       "cost_reason": "Reported token usage at standard uncached tariffs, not provider billing."
     },
     {
-      "provider": "ollama",
+      "provider": "retired-hosted-open-weight",
       "model": "muse-spark-open",
       "typed_object_passed": true,
       "identical_replay": true,
@@ -35,6 +35,7 @@
     "This is a redacted observation summary; it is not the full private transcript.",
     "The live provider tests are not part of CI.",
     "A replayed proposal proves neither external execution nor semantic correctness.",
-    "Prior native fixtures used a local typed adapter; hosted native full loops remain pending."
+    "Prior native fixtures used a local typed adapter; hosted native full loops remain pending.",
+    "The second hosted provider was retired on 2026-11-01; this record is kept as observed."
   ]
 }

@@ -61,7 +61,7 @@ async def evaluate_micromodel_trigger(
 ) -> tuple[bool, list[str], float]:
     """Query a fast OpenAI-compatible micromodel classifier or run deterministic fallback."""
     url = os.environ.get("HERMA_MICROMODEL_URL", "").strip()
-    model = os.environ.get("HERMA_MICROMODEL_MODEL", "muse-spark-open").strip()
+    model = os.environ.get("HERMA_MICROMODEL_MODEL", "muse-spark-1.3").strip()
     api_key = os.environ.get("HERMA_MICROMODEL_API_KEY", "").strip()
     timeout_s = float(os.environ.get("HERMA_MICROMODEL_TIMEOUT_S", "8.0"))
 

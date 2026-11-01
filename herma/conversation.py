@@ -15,6 +15,7 @@ from herma.conversation_contracts import (
     Proposal,
     WorkContract,
     load_contracts,
+    plain_guidance,
     schema_issues,
     tools_for,
 )
@@ -102,12 +103,7 @@ def parse_proposal(
                 ), [{"path": "/", "rule": "output_budget_exhausted"}]
             message = choice["message"]
         else:
-            if reply.get("done_reason") == "length":
-                return Proposal(
-                    status="blocked",
-                    reply="The model exhausted its output allowance. Narrow the next action.",
-                ), [{"path": "/", "rule": "output_budget_exhausted"}]
-            message = reply["message"]
+            raise ValueError("unsupported provider")
         if not isinstance(message, dict):
             raise ValueError("invalid message")
         calls = message.get("tool_calls", [])
@@ -247,9 +243,11 @@ class ConversationEngine:
         guidance = [
             {
                 "category_id": item.category_id,
-                "guidance": get_category_spec(item.category_id)
-                .model_dump(mode="json")
-                .get("worker_guidance"),
+                "guidance": plain_guidance(
+                    get_category_spec(item.category_id)
+                    .model_dump(mode="json")
+                    .get("worker_guidance")
+                ),
             }
             for item in contracts
         ]
@@ -405,15 +403,11 @@ class ConversationEngine:
                     routing_provider=config.openrouter_provider
                     if config.provider == "openrouter"
                     else None,
-                    reasoning_effort=config.reasoning_effort
-                    if config.provider != "ollama"
-                    else None,
+                    reasoning_effort=config.reasoning_effort,
                     max_output_tokens=config.max_output,
                     timeout_seconds=config.timeout_seconds,
                     reservation_ceiling_tokens=attempt_tokens,
-                    reservation_ceiling_usd=attempt_cost / 1000000
-                    if config.provider != "ollama"
-                    else None,
+                    reservation_ceiling_usd=attempt_cost / 1000000,
                 )
                 try:
                     admission = self.state.reserve_attempt(
@@ -441,9 +435,7 @@ class ConversationEngine:
                     raise ProviderFailure(admission["code"], outcome="not_sent")
                 tokens += attempt_tokens
                 cost += attempt_cost
-                attempt["reserved_usd"] = (
-                    attempt_cost / 1000000 if config.provider != "ollama" else None
-                )
+                attempt["reserved_usd"] = attempt_cost / 1000000
                 attempt.update(status="in_flight", outcome="unknown")
                 actions.append(
                     {
@@ -565,7 +557,6 @@ class ConversationEngine:
                     "provider_outcome_uncertain",
                     "provider_unavailable",
                     "provider_budget_exhausted",
-                    "provider_call_budget_exhausted",
                     "provider_cooldown",
                     "provider_operator_disabled",
                     "provider_backpressure",
@@ -596,10 +587,7 @@ class ConversationEngine:
             "cost_reason": "Provider invoice is not available; reservations are conservative ceilings, not charges.",
             "reserved_tokens": tokens,
             "reserved_usd": cost / 1000000
-            if any(
-                item["provider"] != "ollama" and item["reservation_status"] == "reserved"
-                for item in attempts
-            )
+            if any(item["reservation_status"] == "reserved" for item in attempts)
             else None,
             "attempts": attempts,
             "server_exception": exception_record,

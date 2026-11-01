@@ -19,7 +19,7 @@
     {
       "entry_id": "verb:tessera.claim",
       "kind": "verb",
-      "title": "Tessera Atomic Claim Verb",
+      "title": "Tessera Atomic Claim Task",
       "summary": "Atomically leases the next highest-priority ready task in a queue and mints a fresh fence token.",
       "schema_or_body": {
         "endpoint": "POST /v1/queues/{queue}/claim",
@@ -63,11 +63,11 @@
       "entry_id": "detail:herma.lora_vs_shim",
       "kind": "detail",
       "title": "Prompt Shimming vs LoRAs as Parametric Memory Rule",
-      "summary": "Routes volatile or caller-scoped facts through zero-weight Herma context shims, stabilized post-cutoff Task Object schemas into Llama 3.2 / Muse Glimmer PEFT LoRA adapters, and novel multi-step synthesis to frontier Muse Spark 1.3 or Muse Wonder 1.0.",
+      "summary": "Routes volatile or caller-scoped facts through zero-weight Herma context shims, stabilized post-cutoff Task Object schemas into Muse Glimmer LoRA adapters, and novel multi-step synthesis to frontier Muse Wonder 1.0 or Muse Spark 1.3.",
       "schema_or_body": {
-        "herma_context_shim": "0 weight updates; volatile facts, live URIs, caller guardrails (Llama 3.2 3B 52.0% -> 64.7%)",
-        "lora_parametric_memory": "PEFT LoRA on Llama 3.2 1B/3B or Muse Glimmer 30B QLoRA; stable post-cutoff Task Object schemas with zero per-turn HarnessTax",
-        "frontier_passthrough": "Muse Spark 1.3 / Muse Wonder 1.0 in Standard mode (-contributor refused)"
+        "herma_context_shim": "0 weight updates; volatile facts, live URIs, caller guardrails",
+        "lora_parametric_memory": "LoRA on Muse Glimmer (4-bit QLoRA, fine-tuned by ta-amps); stable post-cutoff Task Object schemas with zero per-turn HarnessTax",
+        "frontier_passthrough": "Muse Wonder 1.0 / Muse Spark 1.3 through the Meta API in Standard mode (-contributor refused)"
       },
       "source_uri": "urn:ta-amps:spec:lora-memory-routing-v1",
       "updated_at": "2026-10-30T00:00:00+00:00"

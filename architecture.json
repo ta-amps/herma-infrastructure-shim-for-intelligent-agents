@@ -2,7 +2,7 @@
   "$schema": "https://github.com/ta-amps/ta-amps-hackathon/blob/main/hackathon/agents/schemas/architecture.schema.json",
   "schema_version": 1,
   "name": "herma",
-  "summary": "Herma: context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic noun, verb, and URI context from a caller-isolated database before LLM execution. Rules, deterministic entity memory, and atomic noun/verb entries load from SQLite/D1, governed Tessera stores and blobs, or remote handshake servers; personal assistants use the same scoped credentials as coding harnesses; contributor-tier models are refused.",
+  "summary": "Herma: context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic Task Object, Task, and URI context from a caller-isolated database before LLM execution. Rules, deterministic entity memory, and atomic Task Object and Task entries load from SQLite/D1, governed Tessera stores and blobs, or remote handshake servers; personal assistants use the same scoped credentials as coding harnesses; contributor-tier models are refused.",
   "status": {
     "as_of": "2026-10-30",
     "stage": "prototype",
@@ -172,11 +172,13 @@
       "path": [
         "herma/api/__init__.py",
         "herma/api/pages.py",
-        "herma/api/app.py"
+        "herma/api/app.py",
+        "herma/model_catalog.py",
+        "herma/model_catalog.json"
       ],
       "kind": "service",
       "domain": "neutral",
-      "role": "Serves caller-isolated proxy, context, memory, outcomes, insights, read-only /api/preview, SVG brand pages, discovery routes, and stateless JSON-RPC /mcp behind HERMA_EDGE_SECRET lockdown",
+      "role": "Serves caller-isolated proxy, context, memory, outcomes, insights, read-only /api/preview, SVG brand pages, discovery routes, and stateless JSON-RPC /mcp behind HERMA_EDGE_SECRET lockdown; renders the shared Meta model catalog (herma/model_catalog.json) that the Worker imports too",
       "depends_on": [
         "errors",
         "harness_gate",
@@ -190,7 +192,8 @@
       "tests": [
         "tests/test_api_and_proxy.py",
         "tests/test_herma.py",
-        "tests/test_retired_names.py"
+        "tests/test_retired_names.py",
+        "tests/test_model_policy.py"
       ]
     },
     {
@@ -209,7 +212,7 @@
       ],
       "kind": "library",
       "domain": "neutral",
-      "role": "Caller-scoped typed proposals, per-caller operator grants, explicit provider-plan nouns with one upstream model identity per route, per-attempt spend reservations in exact microdollars and private attribution; native Muse/Ollama/OpenAI/Anthropic adapters and pure Jev worker wire preparation; no generated action execution",
+      "role": "Caller-scoped typed proposals, per-caller operator grants, explicit provider-plan nouns with one upstream model identity per route, per-attempt spend reservations in exact microdollars and private attribution; native Muse/OpenAI/Anthropic adapters and pure Jev worker wire preparation; no generated action execution",
       "depends_on": [
         "errors",
         "harness_gate",
@@ -442,6 +445,26 @@
       "checked_by": [
         "tests/test_builtin_starters.py::test_synced_starters_fire_for_routed_callers_only_with_their_governance",
         "tests/test_runtime_parity.py::test_stored_provisions_pass_the_lens_the_same_way"
+      ]
+    },
+    {
+      "id": "H20",
+      "statement": "Served pages, public JSON and shipped files never name the retired model family or the banned marker word, and the public model list comes from one catalog that the Python and Worker pages render identically with agent programs kept out of the model table",
+      "enforced_by": "api",
+      "checked_by": [
+        "tests/test_model_policy.py::test_models_section_and_text_are_identical_in_both_runtimes",
+        "tests/test_model_policy.py::test_served_pages_and_public_json_name_no_retired_family_or_banned_word",
+        "tests/test_model_policy.py::test_repository_names_neither_the_retired_family_nor_the_banned_word"
+      ]
+    },
+    {
+      "id": "H21",
+      "statement": "Herma routes only catalog models that carry a standard-mode price ceiling, its default upstream and allowlist lead with the Meta API in both runtimes, and no catalog entry is a contributor-tier id",
+      "enforced_by": "proxy",
+      "checked_by": [
+        "tests/test_model_policy.py::test_catalog_lists_meta_models_first_and_keeps_agent_programs_out",
+        "tests/test_model_policy.py::test_routed_models_are_exactly_the_priced_models_in_both_runtimes",
+        "tests/test_model_policy.py::test_routing_defaults_point_at_the_meta_api_and_agree_across_runtimes"
       ]
     }
   ],

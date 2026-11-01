@@ -997,7 +997,7 @@ async function evaluatePublicPreview(db, env, body) {
       "wire_format must be 'chat_completions', 'responses', or 'messages'."
     );
   }
-  const model = String(body.model || "muse-spark-open").slice(0, 120);
+  const model = String(body.model || "muse-spark-1.3").slice(0, 120);
   const prompt = String(body.prompt || "");
   if (prompt.length > 16000) {
     throw new HermaErr(422, "validation_error", "Invalid Preview Request", "prompt must be <= 16000 chars.");

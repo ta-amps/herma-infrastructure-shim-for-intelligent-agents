@@ -26,9 +26,9 @@ describe("bounded provider-reported diagnostics", () => {
   });
 
   it("drops arbitrary fields, echoed credentials, identifiers and nested metadata", () => {
-    const privateValue = "sk-" + "synthetic".repeat(8);
+    const privateValue = "sk-" + "example".repeat(8);
     for (const value of [privateValue, { nested: privateValue }, [privateValue], true, 987654321]) {
-      expect(classify({ type: value, code: value, param: value, message: `Prompt ${privateValue} account acct_synthetic_private request req_synthetic_private`, metadata: { raw: privateValue } })).toEqual({ source: "provider_reported", body_state: "parsed", type: null, code: null, parameter: null, reason: "unknown" });
+      expect(classify({ type: value, code: value, param: value, message: `Prompt ${privateValue} account acct_example_private request req_example_private`, metadata: { raw: privateValue } })).toEqual({ source: "provider_reported", body_state: "parsed", type: null, code: null, parameter: null, reason: "unknown" });
     }
     expect(normalizeProviderError(bytes(""), privateValue).body_state).toBe("unavailable");
     expect(classify("model not found").reason).toBe("model_unavailable");
@@ -52,9 +52,9 @@ describe("bounded provider-reported diagnostics", () => {
   });
 
   it("does not expose stream errors or change unavailable diagnostics", async () => {
-    const response = new Response(new ReadableStream({ start(controller) { controller.error(new Error("SYNTHETIC private failure detail")); } }));
+    const response = new Response(new ReadableStream({ start(controller) { controller.error(new Error("EXAMPLE private failure detail")); } }));
     expect(await readProviderError(response)).toEqual({ source: "provider_reported", body_state: "unavailable", type: null, code: null, parameter: null, reason: "unknown" });
-    const locked = new Response("SYNTHETIC locked body");
+    const locked = new Response("EXAMPLE locked body");
     const reader = locked.body.getReader();
     expect((await readProviderError(locked)).body_state).toBe("unavailable");
     reader.releaseLock();

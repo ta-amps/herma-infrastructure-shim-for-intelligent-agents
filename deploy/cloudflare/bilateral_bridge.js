@@ -414,7 +414,7 @@ async function submitTesseraTurn(env, sessionRow, agentName, turnSeq, structured
         value: {
           category: "noun.eval_run",
           category_id: "noun.eval_run",
-          synthetic: true,
+          example: true,
           title: `Bilateral bridge turn ${turnSeq} from ${agentName}`,
           agent: agentName,
           turn_seq: turnSeq,
@@ -433,7 +433,7 @@ async function submitTesseraTurn(env, sessionRow, agentName, turnSeq, structured
         ok: true,
         error: null,
         output: {
-          synthetic: true,
+          example: true,
           agent: agentName,
           turn_seq: turnSeq,
           simhash64_hex: fp.simhash64_hex,

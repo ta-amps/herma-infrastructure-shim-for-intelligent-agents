@@ -167,7 +167,7 @@
       ],
       "preflight_context": [
         "Load linked noun.statute_card records and regional language/literacy constraints.",
-        "Check brief rules and SYNTHETIC disclosure requirements."
+        "Check brief rules and EXAMPLE-CASE disclosure requirements."
       ],
       "required_mcp_tools": [
         "corpus.lookup_statute",
@@ -239,7 +239,7 @@
         "Verify asset URIs, frame budgets, and non-overlapping collision bounds."
       ],
       "post_condition_receipt_rules": [
-        "Record deterministic seed, scene graph SHA-256, and SYNTHETIC watermark metadata if rendered."
+        "Record deterministic seed, scene graph SHA-256, and EXAMPLE-CASE watermark metadata if rendered."
       ],
       "preflight_context": [
         "Inspect coordinate-system convention, bounding boxes, and linked noun.motion_profile assets."
@@ -621,9 +621,8 @@
           "type": "string"
         },
         "provider": {
-          "default": "ollama",
+          "default": "meta",
           "enum": [
-            "ollama",
             "meta",
             "openai",
             "anthropic",
@@ -757,7 +756,6 @@
             "provider": {
               "enum": [
                 "meta",
-                "ollama",
                 "openai",
                 "anthropic",
                 "openrouter"

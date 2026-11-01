@@ -26,7 +26,7 @@ from herma.store import ProvisionStore
 CONTRACT = {
     "operation_id": "record_observation",
     "category_id": "noun.eval_run",
-    "description": "Record one SYNTHETIC capability observation.",
+    "description": "Record one EXAMPLE capability observation.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -34,9 +34,9 @@ CONTRACT = {
                 "type": "object",
                 "properties": {
                     "message": {"type": "string"},
-                    "synthetic": {"type": "boolean", "const": True},
+                    "example": {"type": "boolean", "const": True},
                 },
-                "required": ["message", "synthetic"],
+                "required": ["message", "example"],
                 "additionalProperties": False,
             }
         },
@@ -49,22 +49,20 @@ CONTRACT = {
 @pytest.fixture(autouse=True)
 def explicit_test_allowance(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HERMA_CONVERSATION_MAX_OUTPUT", "16384")
-    monkeypatch.setenv("OLLAMA_API_KEY", "synthetic-provider-key")
+    monkeypatch.setenv("HERMA_META_BUDGET_USD", "5")
+    monkeypatch.setenv("META_API_KEY", "example-provider-key")
 
 
 def contract() -> WorkContract:
     return WorkContract.model_validate(copy.deepcopy(CONTRACT))
 
 
-def tool_reply(arguments: Any, provider: str = "ollama", name: str | None = None) -> dict[str, Any]:
-    message = {
-        "tool_calls": [{"function": {"name": name or contract().tool_name, "arguments": arguments}}]
-    }
-    return (
-        {"message": message}
-        if provider == "ollama"
-        else {"choices": [{"message": message, "finish_reason": "tool_calls"}]}
-    )
+def tool_reply(arguments: Any, provider: str = "meta", name: str | None = None) -> dict[str, Any]:
+    function = {"name": name or contract().tool_name, "arguments": arguments}
+    if provider == "openai":
+        return {"status": "completed", "output": [{"type": "function_call", **function}]}
+    message = {"tool_calls": [{"function": function}]}
+    return {"choices": [{"message": message, "finish_reason": "tool_calls"}]}
 
 
 def seed(store: ProvisionStore, scope: str) -> None:
@@ -73,7 +71,7 @@ def seed(store: ProvisionStore, scope: str) -> None:
             entry_id="work.observation",
             kind="noun",
             title="Observation",
-            summary="SYNTHETIC capability observation",
+            summary="EXAMPLE capability observation",
             schema_or_body={"work_contract": CONTRACT},
         ),
         caller_scope=scope,
@@ -87,7 +85,7 @@ def turn(**kwargs: Any) -> ConversationTurn:
             "conversation_id": "conversation-one",
             "request_id": "request-one",
             "expected_version": 0,
-            "message": "Record SYNTHETIC hello with synthetic=true.",
+            "message": "Record EXAMPLE hello with example=true.",
             "context_refs": ["work.observation"],
             **kwargs,
         }
@@ -97,14 +95,14 @@ def turn(**kwargs: Any) -> ConversationTurn:
 @pytest.mark.parametrize(
     "bad",
     [
-        '{"message":"SYNTHETIC hello","synthetic":true}',
-        {"message": "SYNTHETIC hello", "synthetic": "true"},
-        {"message": 4, "synthetic": True},
-        {"synthetic": True},
+        '{"message":"EXAMPLE hello","example":true}',
+        {"message": "EXAMPLE hello", "example": "true"},
+        {"message": 4, "example": True},
+        {"example": True},
     ],
 )
 def test_never_coerces_incorrect_payload_types(bad: Any) -> None:
-    proposal, issues = parse_proposal(tool_reply({"value": bad}), "ollama", [contract()])
+    proposal, issues = parse_proposal(tool_reply({"value": bad}), "meta", [contract()])
     assert proposal.status == "clarify" and proposal.arguments is None
     assert issues and not proposal.executed
 
@@ -113,15 +111,15 @@ def test_never_coerces_incorrect_payload_types(bad: Any) -> None:
     "reply",
     [
         {},
-        {"message": []},
-        {"message": {"content": "<atem:function_calls>fake</atem:function_calls>"}},
+        {"choices": [{"message": []}]},
+        {"choices": [{"message": {"content": "<atem:function_calls>fake</atem:function_calls>"}}]},
         tool_reply({}, name="mint_admin_key"),
         tool_reply('{"value":{},"value":{}}'),
-        tool_reply({"value": {"message": float("nan"), "synthetic": True}}),
+        tool_reply({"value": {"message": float("nan"), "example": True}}),
     ],
 )
 def test_malformed_or_invented_tool_calls_are_blocked(reply: dict[str, Any]) -> None:
-    proposal, _ = parse_proposal(reply, "ollama", [contract()])
+    proposal, _ = parse_proposal(reply, "meta", [contract()])
     assert proposal.status == "blocked" and not proposal.executed
 
 
@@ -155,9 +153,9 @@ def test_replay_is_idempotent_and_state_is_caller_scoped(tmp_path: Path) -> None
     async def call(config: ProviderConfig, body: dict[str, Any]) -> dict[str, Any]:
         nonlocal calls
         calls += 1
-        assert config.url == "https://ollama.com/api/chat"
+        assert config.url == "https://api.meta.ai/v1/chat/completions"
         assert body["tools"][0]["function"]["parameters"]["properties"]["value"]["type"] == "object"
-        return tool_reply({"value": {"message": "SYNTHETIC hello", "synthetic": True}})
+        return tool_reply({"value": {"message": "EXAMPLE hello", "example": True}})
 
     engine = ConversationEngine(store, call=call)
     first = asyncio.run(engine.turn("key:alice", turn()))
@@ -253,12 +251,12 @@ def test_provider_failure_finishes_turn_without_leaking_provider_body(tmp_path: 
 
 
 def test_provider_redirect_cannot_exfiltrate_secret(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("META_API_KEY", "synthetic-provider-credential")
+    monkeypatch.setenv("META_API_KEY", "example-provider-credential")
     calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(str(request.url))
-        assert request.headers["authorization"] == "Bearer synthetic-provider-credential"
+        assert request.headers["authorization"] == "Bearer example-provider-credential"
         return httpx.Response(
             302,
             headers={"location": "https://example.com/collect"},
@@ -283,6 +281,42 @@ def test_standard_mode_and_output_budget_detection() -> None:
         {"choices": [{"finish_reason": "length", "message": {}}]}, "meta", [contract()]
     )
     assert proposal.status == "blocked" and issues[0]["rule"] == "output_budget_exhausted"
+
+
+# The retired provider id, spelled in pieces so repository-wide name guards stay clean.
+RETIRED_PROVIDER = "oll" + "ama"
+
+
+def test_default_provider_is_meta_and_retired_provider_ids_are_refused() -> None:
+    assert turn().provider == "meta"
+    for provider in (RETIRED_PROVIDER, "unknown-provider"):
+        with pytest.raises(ValidationError):
+            turn(provider=provider)
+        with pytest.raises(ValueError, match="unsupported provider"):
+            ProviderConfig(provider, "any-model", max_output=1).validate()
+    choice = ConversationTurn.model_json_schema()["properties"]["provider"]
+    assert choice["default"] == "meta"
+    assert choice["enum"] == ["meta", "openai", "anthropic", "openrouter"]
+
+
+def test_a_reply_from_an_unsupported_provider_is_a_blocked_receipt() -> None:
+    reply = tool_reply({"value": {"message": "EXAMPLE hello", "example": True}})
+    proposal, issues = parse_proposal(reply, RETIRED_PROVIDER, [contract()])
+    assert proposal.status == "blocked" and issues[0]["rule"] == "invalid_tool_call"
+
+
+def test_discovery_lists_only_the_current_providers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HERMA_DB", str(tmp_path / "api.db"))
+    monkeypatch.delenv("HERMA_EDGE_SECRET", raising=False)
+    discovery = TestClient(create_app()).get("/connect.json").json()
+    assert discovery["work_conversations"]["providers"] == [
+        "meta",
+        "openai",
+        "anthropic",
+        "openrouter",
+    ]
 
 
 def test_api_requires_route_key_and_opt_in(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

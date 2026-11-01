@@ -12,7 +12,7 @@
   "inject_position": "system_prefix",
   "dedupe_mode": "once_per_conversation",
   "max_chars": 2600,
-  "inject_text": "Agent Harness Research Feeds are encapsulating `Feed` Task Objects (`nouns` on the wire) that bundle dated harness capability profiles, measured `HarnessTax` static prompt/tool-schema token overhead, and reproducible benchmark receipts across Harness Square / Harness2, OpenCode, Pi, and Muse Code. Keep comparative harness claims tied to content-addressed receipts, separate static `HarnessTax` overhead from task-specific shimmed bytes, and update feed heads via compare-and-set `expected_version`.",
+  "inject_text": "Agent Harness Research Feeds are encapsulating `Feed` Task Objects that bundle dated harness capability profiles, measured `HarnessTax` static prompt/tool-schema token overhead, and reproducible benchmark receipts across Harness Square / Harness2, OpenCode, Pi, and Muse Code. Keep comparative harness claims tied to content-addressed receipts, separate static `HarnessTax` overhead from task-specific shimmed bytes, and update feed heads via compare-and-set `expected_version`.",
   "uris": [
     {
       "uri": "https://ta-amps.github.io/agora-public-overview-architecture-setup-and-contribution/",

@@ -104,10 +104,7 @@ class ProviderConfig:
     def from_env(cls, provider: str) -> ProviderConfig:
         """Read only the selected provider's settings, in the same order as the Worker."""
         prefix = "HERMA_CONVERSATION_" + provider.upper()
-        model = setting(prefix + "_MODEL") or {
-            "meta": "muse-spark-1.3",
-            "ollama": "muse-spark-open",
-        }.get(provider, "")
+        model = setting(prefix + "_MODEL") or {"meta": "muse-spark-1.3"}.get(provider, "")
         refuse_contributor_model(model)
         try:
             output = integer_setting(prefix + "_MAX_OUTPUT")
@@ -135,11 +132,7 @@ class ProviderConfig:
                 model=model,
                 max_output=output,
                 reasoning_effort=setting(prefix + "_REASONING")
-                or (
-                    setting("HERMA_CONVERSATION_REASONING")
-                    if provider not in {"ollama", "anthropic"}
-                    else None
-                ),
+                or (setting("HERMA_CONVERSATION_REASONING") if provider != "anthropic" else None),
                 meta_budget_usd=budget if provider == "meta" else 0,
                 openai_budget_usd=budget if provider == "openai" else 0,
                 openai_rates=rates if provider == "openai" else None,
@@ -164,7 +157,7 @@ class ProviderConfig:
 
     def validate(self) -> None:
         refuse_contributor_model(self.model)
-        if self.provider not in {"meta", "ollama", "openai", "anthropic", "openrouter"}:
+        if self.provider not in {"meta", "openai", "anthropic", "openrouter"}:
             raise ValueError("unsupported provider")
         if not self.model or self.model == "*" or len(self.model) > 100:
             raise ValueError("configure an explicit provider model")
@@ -286,11 +279,6 @@ class ProviderConfig:
                 "Unsupported generation configuration",
                 "Typed proposals support one output, locally scoped prompt content, and standard service tiers. Remove stored prompt/best_of/speed/inference_geo settings, use n=1 only for chat-completions providers, and use OpenAI default or Anthropic standard_only service tiers.",
             )
-        if self.provider == "ollama" and (
-            not isinstance(self.generation.get("options", {}), dict)
-            or "num_predict" in self.generation.get("options", {})
-        ):
-            raise ValueError("use the explicit output allowance for Ollama num_predict")
         if self.provider == "openai" and not isinstance(self.generation.get("reasoning", {}), dict):
             raise ValueError("OpenAI reasoning settings must be an object")
         if self.provider == "anthropic" and self.reasoning_effort is not None:
@@ -301,7 +289,6 @@ class ProviderConfig:
     def url(self) -> str:
         return {
             "meta": "https://api.meta.ai/v1/chat/completions",
-            "ollama": "https://ollama.com/api/chat",
             "openai": "https://api.openai.com/v1/responses",
             "anthropic": "https://api.anthropic.com/v1/messages",
             "openrouter": "https://openrouter.ai/api/v1/chat/completions",
@@ -362,20 +349,17 @@ class ProviderConfig:
                 body["reasoning"] = {**body.get("reasoning", {}), "effort": self.reasoning_effort}
         else:
             body.update(messages=messages, tools=tools)
-            if self.provider in {"meta", "openrouter"}:
-                body.update(max_tokens=self.max_output, parallel_tool_calls=False)
-                if self.provider == "openrouter":
-                    body["provider"] = {
-                        "only": [self.openrouter_provider],
-                        "order": [self.openrouter_provider],
-                        "allow_fallbacks": False,
-                        "require_parameters": True,
-                        "data_collection": "deny",
-                    }
-                if self.reasoning_effort is not None:
-                    body["reasoning_effort"] = self.reasoning_effort
-            else:
-                body["options"] = {**body.get("options", {}), "num_predict": self.max_output}
+            body.update(max_tokens=self.max_output, parallel_tool_calls=False)
+            if self.provider == "openrouter":
+                body["provider"] = {
+                    "only": [self.openrouter_provider],
+                    "order": [self.openrouter_provider],
+                    "allow_fallbacks": False,
+                    "require_parameters": True,
+                    "data_collection": "deny",
+                }
+            if self.reasoning_effort is not None:
+                body["reasoning_effort"] = self.reasoning_effort
         return body
 
     def reservation(self, body: dict[str, Any]) -> tuple[int, int]:
@@ -442,7 +426,6 @@ def provider_credential(provider: str) -> str:
     key = os.environ.get(
         {
             "meta": "META_API_KEY",
-            "ollama": "OLLAMA_API_KEY",
             "openai": "OPENAI_API_KEY",
             "anthropic": "ANTHROPIC_API_KEY",
             "openrouter": "OPENROUTER_API_KEY",
@@ -558,13 +541,11 @@ async def request_model(
 
 
 def usage_for(provider: str, reply: dict[str, Any]) -> dict[str, Any]:
-    data = reply.get("usage", {}) if provider != "ollama" else reply
+    data = reply.get("usage", {})
     fields = (
         ("prompt_tokens", "completion_tokens")
         if provider in {"meta", "openrouter"}
         else ("input_tokens", "output_tokens")
-        if provider in {"openai", "anthropic", "jev"}
-        else ("prompt_eval_count", "eval_count")
     )
     return {
         name: data.get(field)

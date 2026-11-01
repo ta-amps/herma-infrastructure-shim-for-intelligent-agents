@@ -4,94 +4,15 @@
   "plain_language_kind": "Task Object",
   "status": "reproducible_spec",
   "as_of": "2026-10-30",
-  "summary": "PEFT LoRA and 4-bit QLoRA specification for Herma Tier-3 Shim Router (Llama 3.2 1B) and LoRAs as Parametric Memory (Llama 3.2 3B and Muse Glimmer 30B) over synthetic post-cutoff Task Object schemas.",
+  "summary": "4-bit QLoRA specification for Muse Glimmer, fine-tuned by ta-amps as parametric memory for post-cutoff Task Object schemas and strict tool calls, trained and evaluated on example data only.",
   "data_governance": {
-    "synthetic_only": true,
+    "example_data_only": true,
     "allow_contributor_tier_outputs": false,
     "allow_private_caller_scopes": false,
     "allow_ngo_case_inputs": false,
     "privacy_guard_exception": "ContributorTierRefusedError"
   },
   "tracks": [
-    {
-      "track_id": "llama32-1b-shim-router",
-      "role": "Tier-3 Herma Micromodel Shim & Retrieval Router",
-      "base_model": "meta-llama/Llama-3.2-1B-Instruct",
-      "precision": "bfloat16",
-      "hardware_profile": "1x GPU >= 12 GB VRAM (e.g. RTX 3060)",
-      "peft_config": {
-        "peft_type": "LORA",
-        "task_type": "CAUSAL_LM",
-        "r": 16,
-        "lora_alpha": 32,
-        "lora_dropout": 0.05,
-        "bias": "none",
-        "target_modules": [
-          "q_proj",
-          "k_proj",
-          "v_proj",
-          "o_proj",
-          "gate_proj",
-          "up_proj",
-          "down_proj"
-        ]
-      },
-      "training_hyperparameters": {
-        "learning_rate": 0.0002,
-        "lr_scheduler_type": "cosine",
-        "warmup_ratio": 0.06,
-        "per_device_train_batch_size": 4,
-        "gradient_accumulation_steps": 4,
-        "num_train_epochs": 3,
-        "max_seq_length": 1024,
-        "completion_only_loss": true,
-        "seed": 20261030
-      },
-      "output_contract": {
-        "schema": {
-          "apply": "boolean",
-          "label": "apply | skip",
-          "confidence": "float in [0.0, 1.0]",
-          "reason": "short ASCII phrase"
-        },
-        "malformed_reply_policy": "fail_closed_no_fallback"
-      }
-    },
-    {
-      "track_id": "llama32-3b-parametric-memory",
-      "role": "Edge LoRA as Parametric Memory for Post-Cutoff Task Object Schemas",
-      "base_model": "meta-llama/Llama-3.2-3B-Instruct",
-      "precision": "bfloat16",
-      "hardware_profile": "1x GPU >= 12 GB VRAM (e.g. RTX 3060)",
-      "peft_config": {
-        "peft_type": "LORA",
-        "task_type": "CAUSAL_LM",
-        "r": 32,
-        "lora_alpha": 64,
-        "lora_dropout": 0.05,
-        "bias": "none",
-        "target_modules": [
-          "q_proj",
-          "k_proj",
-          "v_proj",
-          "o_proj",
-          "gate_proj",
-          "up_proj",
-          "down_proj"
-        ]
-      },
-      "training_hyperparameters": {
-        "learning_rate": 0.00015,
-        "lr_scheduler_type": "cosine",
-        "warmup_ratio": 0.05,
-        "per_device_train_batch_size": 2,
-        "gradient_accumulation_steps": 8,
-        "num_train_epochs": 3,
-        "max_seq_length": 2048,
-        "completion_only_loss": true,
-        "seed": 20261030
-      }
-    },
     {
       "track_id": "muse-glimmer-30b-qlora",
       "role": "Open-Weights Specialist QLoRA for Post-Cutoff Task Object Tool Calls",

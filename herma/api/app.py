@@ -115,7 +115,7 @@ class PreviewRequest(BaseModel):
 
     prompt: str = Field(default="", max_length=16_000)
     wire_format: Literal["chat_completions", "responses", "messages"] = "chat_completions"
-    model: str = Field(default="muse-spark-open", max_length=120)
+    model: str = Field(default="muse-spark-1.3", max_length=120)
     workspace_paths: list[str] = Field(default_factory=list, max_length=32)
     payload: dict[str, Any] | None = None
 
@@ -214,7 +214,7 @@ async def _run_readonly_preview(
     *,
     prompt: str,
     wire_format: Literal["chat_completions", "responses", "messages"] = "chat_completions",
-    model: str = "muse-spark-open",
+    model: str = "muse-spark-1.3",
     workspace_paths: list[str] | None = None,
     raw_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -940,7 +940,7 @@ def create_app() -> FastAPI:
                 "snapshot_endpoint": "/v1/conversations/{id}",
                 "credential": "hmk_",
                 "scope": "route",
-                "providers": ["meta", "ollama", "openai", "anthropic", "openrouter"],
+                "providers": ["meta", "openai", "anthropic", "openrouter"],
                 "executed": False,
                 "context": "Caller-visible context entries containing typed work_contract schemas.",
                 "documentation": "https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/t/H15-work-conversation/docs/conversations.md",

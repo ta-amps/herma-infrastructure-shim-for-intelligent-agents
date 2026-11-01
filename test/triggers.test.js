@@ -1,20 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { evaluateProvisions } from "../deploy/cloudflare/herma_engine.js";
 
-const ctx = { text: "synthetic request", file_paths: [], tool_names: [] };
+const ctx = { text: "example request", file_paths: [], tool_names: [] };
 const config = {
   HERMA_MICROMODEL_URL: "https://example.com/classify",
-  HERMA_MICROMODEL_MODEL: "muse-spark-open",
+  HERMA_MICROMODEL_MODEL: "muse-spark-1.3",
   HERMA_EMBEDDINGS_URL: "https://example.com/embeddings",
 };
 const micro = {
-  intent_question: "Should this synthetic rule apply?",
+  intent_question: "Should this example rule apply?",
   min_confidence: 0.6,
-  fallback_keywords: ["synthetic"],
+  fallback_keywords: ["example"],
 };
 const stored = triggers => ({
   version: 1,
-  provision: { prov_id: "PROV-SYNTHETIC-BOUNDARY", enabled: true, priority: 100, triggers },
+  provision: { prov_id: "PROV-EXAMPLE-BOUNDARY", enabled: true, priority: 100, triggers },
 });
 const provision = stored({ micromodel: micro });
 const reply = decision => Response.json({ choices: [{ message: { content: JSON.stringify(decision) } }] });
@@ -66,7 +66,7 @@ describe("strict model decisions and offline triggers in the Workers runtime", (
     vi.stubGlobal("fetch", call);
     const all = stored({
       mode: "all",
-      semantic: { exemplars: ["synthetic request"], threshold: 0.3 },
+      semantic: { exemplars: ["example request"], threshold: 0.3 },
       micromodel: micro,
     });
     const offline = await evaluateProvisions([all], ctx, config, { offlineOnly: true });

@@ -32,6 +32,6 @@ def test_offline_demo_accepts_scoped_assistants_and_preserves_guards(
     assert summary["synced_count"] == len(summary["tessera_published"]) > 0
     assert "noun:tessera.nouns/fenced_submit" in summary["tier1_shimmed_context_refs"]
     assert len(summary["personal_assistant_receipt"]) == 64
-    assert summary["live_ollama_excerpt"] is None
+    assert summary["live_meta_excerpt"] is None
     assert "consumer_assistant_refused" not in summary
     assert "hmk_" not in json.dumps(summary)

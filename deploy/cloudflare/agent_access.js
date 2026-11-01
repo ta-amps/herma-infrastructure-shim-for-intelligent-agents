@@ -43,7 +43,7 @@ export async function agentFetch(request, env, handler) {
       }
     }
     if (!response && new URL(request.url).pathname === "/connect.json" && request.method === "GET") response = Response.json({ ...ACCESS_INFO, work_conversations: {
-      enabled: env.HERMA_CONVERSATION_ENABLED === "true", turn_endpoint: "/v1/conversations/turn", schema_endpoint: "/api/conversation-schema", snapshot_endpoint: "/v1/conversations/{id}", credential: "hmk_", scope: "route", providers: ["meta", "ollama", "openai", "anthropic", "openrouter"], executed: false,
+      enabled: env.HERMA_CONVERSATION_ENABLED === "true", turn_endpoint: "/v1/conversations/turn", schema_endpoint: "/api/conversation-schema", snapshot_endpoint: "/v1/conversations/{id}", credential: "hmk_", scope: "route", providers: ["meta", "openai", "anthropic", "openrouter"], executed: false,
       context: "Caller-visible context entries containing typed work_contract schemas.", documentation: "https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/t/H15-work-conversation/docs/conversations.md"
     } });
     if (!response) response = await handler(request, env || {});

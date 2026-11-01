@@ -48,8 +48,8 @@ export function validateTurn(raw) {
       !Array.isArray(raw.context_refs) || !raw.context_refs.length || raw.context_refs.length > 12 ||
       raw.context_refs.some(x => typeof x !== "string" || !x.length || x.length > 160) ||
       (raw.provider_plan_ref !== undefined && raw.provider_plan_ref !== null && (typeof raw.provider_plan_ref !== "string" || raw.provider_plan_ref.length < 2 || raw.provider_plan_ref.length > 160)) ||
-      !["meta", "ollama", "openai", "anthropic", "openrouter"].includes(raw.provider ?? "ollama")) fail(422, "invalid_conversation_turn");
-  return { ...raw, provider: raw.provider ?? "ollama", provider_plan_ref: raw.provider_plan_ref ?? null };
+      !["meta", "openai", "anthropic", "openrouter"].includes(raw.provider ?? "meta")) fail(422, "invalid_conversation_turn");
+  return { ...raw, provider: raw.provider ?? "meta", provider_plan_ref: raw.provider_plan_ref ?? null };
 }
 
 // Bounded portable schema profile. No regular expressions, remote references or coercion.
@@ -105,12 +105,13 @@ export async function loadContracts(entries, refs) {
   return contracts.sort((a, b) => a.operation_id.localeCompare(b.operation_id));
 }
 
-const PROVIDERS = ["meta", "ollama", "openai", "anthropic", "openrouter"];
+const PROVIDERS = ["meta", "openai", "anthropic", "openrouter"];
 const MAX_GRANTS = 1000, MAX_GRANT_CHOICES = 16;
 // Deployment-wide grants let any caller spend on the operator's behalf; they are refused.
 const LEGACY_GRANT_SETTINGS = ["HERMA_CONVERSATION_PROVIDER_PLAN_ALLOWLIST", "HERMA_CONVERSATION_ALLOW_UNCERTAIN_FAILOVER"];
-// OpenRouter author slugs that name the same vendor as a direct provider.
-const VENDOR_ALIASES = { "meta-llama": "meta" };
+// OpenRouter author slugs that name the same vendor as a direct provider, when the slug differs
+// from the provider name. Meta's models use the author slug `meta`, which already folds to `meta`.
+const VENDOR_ALIASES = {};
 
 // Operator settings: empty or whitespace-only values are unset, exactly as in Python.
 export const setting = (env, name) => { const value = env[name]; return typeof value === "string" && value.trim() ? value.trim() : undefined; };
@@ -213,7 +214,7 @@ export function requireDirectGrant(grant, config) {
 // codes as Python's ProviderConfig.from_env and validate.
 export function providerConfig(env, provider) {
   const prefix = `HERMA_CONVERSATION_${provider.toUpperCase()}`;
-  const model = setting(env, `${prefix}_MODEL`) ?? ({ meta: "muse-spark-1.3", ollama: "muse-spark-open" }[provider] ?? "");
+  const model = setting(env, `${prefix}_MODEL`) ?? ({ meta: "muse-spark-1.3" }[provider] ?? "");
   if (isContributorModel(model)) fail(403, "contributor_tier_refused");
   const max_output = integerSetting(env, `${prefix}_MAX_OUTPUT`) ?? integerSetting(env, "HERMA_CONVERSATION_MAX_OUTPUT");
   if (max_output === undefined) fail(503, "output_allowance_required");
@@ -221,11 +222,10 @@ export function providerConfig(env, provider) {
   const paid = ["meta", "openai", "anthropic", "openrouter"].includes(provider);
   const budget_usd = paid ? decimalSetting(env, `HERMA_${provider.toUpperCase()}_BUDGET_USD`) ?? 0 : 0;
   const rates = provider === "meta" ? RATES[model] ?? null : ["openai", "anthropic", "openrouter"].includes(provider) ? [decimalSetting(env, `${prefix}_INPUT_USD_PER_MILLION`), decimalSetting(env, `${prefix}_OUTPUT_USD_PER_MILLION`)] : null;
-  const reasoning_effort = setting(env, `${prefix}_REASONING`) ?? (!["ollama", "anthropic"].includes(provider) ? setting(env, "HERMA_CONVERSATION_REASONING") : undefined) ?? null;
+  const reasoning_effort = setting(env, `${prefix}_REASONING`) ?? (provider !== "anthropic" ? setting(env, "HERMA_CONVERSATION_REASONING") : undefined) ?? null;
   const anthropic_version = setting(env, "HERMA_CONVERSATION_ANTHROPIC_VERSION") ?? "2026-10-21";
   const openrouter_provider = setting(env, "HERMA_CONVERSATION_OPENROUTER_PROVIDER") ?? null;
   const caller_token_limit = integerSetting(env, "HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR") ?? null;
-  const ollama_calls_per_day = provider === "ollama" ? integerSetting(env, "HERMA_OLLAMA_CALLS_PER_DAY") ?? 30 : null;
   let generation;
   try { generation = strictJson(setting(env, `${prefix}_GENERATION`) ?? "{}"); } catch { invalid(); }
   const reserved = ["model", "input", "messages", "instructions", "system", "tools", "stream", "store", "background", "conversation", "previous_response_id", "parallel_tool_calls", "max_tokens", "max_completion_tokens", "max_output_tokens", "models", "provider", "route", "plugins", "preset", "presets", "web_search_options", "mcp_servers", "container", "server_tools"];
@@ -237,18 +237,16 @@ export function providerConfig(env, provider) {
       (["openai", "anthropic", "openrouter"].includes(provider) && (!Number.isFinite(budget_usd) || budget_usd <= 0 || rates.some(rate => !Number.isFinite(rate) || rate < 0))) ||
       (provider === "anthropic" && !["2023-06-01", "2026-10-21"].includes(anthropic_version)) ||
       (provider === "openrouter" && (openrouter_provider === null || openrouter_provider.length > 100 || !model.includes("/") || model.startsWith("openrouter/") || model.toLowerCase().includes("@preset") || model.toLowerCase().split(":").slice(1).includes("online"))) ||
-      (provider === "ollama" && (!isInt(ollama_calls_per_day) || ollama_calls_per_day < 1 || ollama_calls_per_day > 1000)) ||
       !object(generation) || Object.keys(generation).some(k => reserved.includes(k))) invalid();
   if (["prompt", "prompt_id", "best_of", "speed", "inference_geo"].some(k => has(generation, k)) ||
       (has(generation, "n") && (!["meta", "openrouter"].includes(provider) || generation.n !== 1)) ||
       (has(generation, "service_tier") && (!["openai", "anthropic"].includes(provider) || generation.service_tier !== (provider === "openai" ? "default" : "standard_only")))) fail(503, "unsupported_generation_configuration");
-  if ((provider === "ollama" && (!object(generation.options ?? {}) || has(generation.options ?? {}, "num_predict"))) ||
-      (provider === "openai" && has(generation, "reasoning") && !object(generation.reasoning)) ||
+  if ((provider === "openai" && has(generation, "reasoning") && !object(generation.reasoning)) ||
       (provider === "anthropic" && reasoning_effort !== null)) invalid();
   const budget_microusd = scaledInteger(budget_usd, 6);
   if (Number.isNaN(budget_microusd)) invalid();
-  const url = { meta: "https://api.meta.ai/v1/chat/completions", ollama: "https://ollama.com/api/chat", openai: "https://api.openai.com/v1/responses", anthropic: "https://api.anthropic.com/v1/messages", openrouter: "https://openrouter.ai/api/v1/chat/completions" }[provider];
-  return { provider, model, max_output, reasoning_effort, ollama_calls_per_day, anthropic_version, openrouter_provider, rates, generation, caller_token_limit, budget_usd, budget_microusd, url };
+  const url = { meta: "https://api.meta.ai/v1/chat/completions", openai: "https://api.openai.com/v1/responses", anthropic: "https://api.anthropic.com/v1/messages", openrouter: "https://openrouter.ai/api/v1/chat/completions" }[provider];
+  return { provider, model, max_output, reasoning_effort, anthropic_version, openrouter_provider, rates, generation, caller_token_limit, budget_usd, budget_microusd, url };
 }
 
 export function buildRequest(config, turn, contracts, history) {
@@ -270,11 +268,9 @@ export function buildRequest(config, turn, contracts, history) {
     if (config.reasoning_effort !== null) body.reasoning = { ...body.reasoning, effort: config.reasoning_effort };
   } else {
     Object.assign(body, { messages, tools });
-    if (["meta", "openrouter"].includes(config.provider)) {
-      if (config.provider === "openrouter") body.provider = { only: [config.openrouter_provider], order: [config.openrouter_provider], allow_fallbacks: false, require_parameters: true, data_collection: "deny" };
-      Object.assign(body, { max_tokens: config.max_output, parallel_tool_calls: false });
-      if (config.reasoning_effort !== null) body.reasoning_effort = config.reasoning_effort;
-    } else body.options = { ...body.options, num_predict: config.max_output };
+    if (config.provider === "openrouter") body.provider = { only: [config.openrouter_provider], order: [config.openrouter_provider], allow_fallbacks: false, require_parameters: true, data_collection: "deny" };
+    Object.assign(body, { max_tokens: config.max_output, parallel_tool_calls: false });
+    if (config.reasoning_effort !== null) body.reasoning_effort = config.reasoning_effort;
   }
   const size = bytes(body);
   if (size > 32768) fail(413, "context_too_large");
@@ -306,10 +302,10 @@ export function parseProposal(reply, provider, contracts) {
       if (reply.status === "incomplete" && reply.incomplete_details?.reason === "max_output_tokens") return blocked("output_budget_exhausted");
       if (reply.status !== "completed" || !Array.isArray(reply.output)) return blocked("invalid_tool_call");
       reply = { message: { tool_calls: reply.output.filter(item => object(item) && item.type === "function_call").map(item => ({ function: item })) } };
-    }
+    } else if (!["meta", "openrouter"].includes(provider)) return blocked("invalid_tool_call");
     const choice = ["meta", "openrouter"].includes(provider) ? reply.choices?.[0] : reply;
     if (!object(choice)) return blocked("invalid_tool_call");
-    if ((choice.finish_reason || choice.done_reason) === "length") return blocked("output_budget_exhausted");
+    if (choice.finish_reason === "length") return blocked("output_budget_exhausted");
     const calls = choice.message?.tool_calls;
     if (!Array.isArray(calls) || calls.length !== 1 || !object(calls[0]?.function)) return blocked("invalid_tool_call");
     const fn = calls[0].function;
@@ -330,7 +326,7 @@ export function parseProposal(reply, provider, contracts) {
 }
 
 export function providerCredential(env, provider) {
-  const key = env[{ meta: "META_API_KEY", ollama: "OLLAMA_API_KEY", openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY", openrouter: "OPENROUTER_API_KEY" }[provider]];
+  const key = env[{ meta: "META_API_KEY", openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY", openrouter: "OPENROUTER_API_KEY" }[provider]];
   if (typeof key !== "string" || !key.trim()) { const error = new ConversationError(503, "provider_not_configured"); error.outcome = "not_sent"; throw error; }
   return key;
 }
@@ -382,7 +378,7 @@ export async function requestModel(env, config, body, timeoutMs = 25000) {
 }
 
 export function usageFor(provider, reply) {
-  const source = provider === "ollama" ? reply : reply.usage;
-  const fields = ["meta", "openrouter"].includes(provider) ? ["prompt_tokens", "completion_tokens"] : ["openai", "anthropic", "jev"].includes(provider) ? ["input_tokens", "output_tokens"] : ["prompt_eval_count", "eval_count"];
+  const source = reply.usage;
+  const fields = ["meta", "openrouter"].includes(provider) ? ["prompt_tokens", "completion_tokens"] : ["input_tokens", "output_tokens"];
   return Object.fromEntries(["input_tokens", "output_tokens"].map((k, i) => [k, isInt(source?.[fields[i]]) ? source[fields[i]] : null]));
 }

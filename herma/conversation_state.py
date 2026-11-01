@@ -128,7 +128,7 @@ class ConversationState:
         tokens: int,
         token_limit: int | None = None,
         turn_limit: int = 60,
-        provider: str = "ollama",
+        provider: str = "meta",
         reserve_microusd: int = 0,
         budget_microusd: int = 0,
         exception_record: dict[str, Any] | None = None,

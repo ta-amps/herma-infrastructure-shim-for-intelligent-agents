@@ -6,7 +6,10 @@ import html
 from typing import Any
 
 from herma import __version__
+from herma.model_catalog import render_models_section
 from herma.schemas import ContextEntry, StoredProvision
+
+KIND_LABELS = {"noun": "Task Object", "verb": "Task", "detail": "Detail"}
 
 FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Herma boundary pillar">
   <rect width="32" height="32" rx="7" fill="#0c1017"/>
@@ -92,7 +95,7 @@ PREVIEW_JS = """(function () {
       wire: "chat_completions"
     },
     lora: {
-      prompt: "When should we use prompt shimming vs LoRA as parametric memory on Llama 3.2 or Muse Glimmer?",
+      prompt: "When should we use prompt shimming vs LoRA as parametric memory on Muse Glimmer?",
       path: "training/shim-router-lora-spec.json",
       wire: "chat_completions"
     },
@@ -102,7 +105,7 @@ PREVIEW_JS = """(function () {
       wire: "chat_completions"
     },
     direct: {
-      prompt: "Show the canonical noun/verb schema for queue claims.",
+      prompt: "Show the canonical task and task-object schema for queue claims.",
       path: "",
       wire: "responses"
     },
@@ -270,7 +273,7 @@ def build_agent_card(public_url: str) -> dict[str, Any]:
         "name": "Herma",
         "description": (
             "Context-shimming AI middleware for configurable coding harnesses: 3-tier trigger "
-            "evaluation, caller-isolated atomic noun/verb context database, zero-token direct "
+            "evaluation, caller-isolated atomic Task Object and Task context database, zero-token direct "
             "responses, deterministic entity memory, and self-improving rule insights."
         ),
         "url": base,
@@ -404,7 +407,7 @@ def render_overview_page(
         uri_cell = f"<code>{html.escape(entry.source_uri)}</code>" if entry.source_uri else "--"
         ctx_rows.append(
             f"<tr><td><code>{html.escape(entry.entry_id)}</code></td>"
-            f"<td><code>{html.escape(entry.kind)}</code></td>"
+            f"<td>{html.escape(KIND_LABELS.get(entry.kind, entry.kind))}</td>"
             f"<td>{html.escape(entry.title)}</td>"
             f"<td>{html.escape(entry.summary)}</td>"
             f"<td>{uri_cell}</td></tr>"
@@ -412,7 +415,7 @@ def render_overview_page(
     ctx_table = (
         "\n".join(ctx_rows)
         if ctx_rows
-        else "<tr><td colspan='5'>No builtin noun/verb/detail entries configured yet.</td></tr>"
+        else "<tr><td colspan='5'>No builtin Task Object, Task or detail entries configured yet.</td></tr>"
     )
 
     total_reqs = int(counts.get("total_intercepted_requests", 0))
@@ -435,24 +438,25 @@ def render_overview_page(
     <h1>Tasks, Task Objects &amp; Context-Shimming Middleware for Coding Harnesses</h1>
     <p class="lead">
       <strong>Herma:</strong> context-shimming AI middleware for configurable coding harnesses --
-      connects <strong>Tasks (<code>verbs</code> on the wire)</strong> and <strong>Task Objects
-      (<code>nouns</code> on the wire: reusable tools, feeds, datasets, LoRA adapters, shims, and receipts)</strong>
-      to models without static prompt bloat (<code>HarnessTax</code>) or post-cutoff schema amnesia.
+      connects <strong>Tasks</strong> and <strong>Task Objects</strong> (reusable tools, feeds, datasets,
+      LoRA adapters, shims, and receipts) to Meta's Muse models without static prompt bloat
+      (<code>HarnessTax</code>) or post-cutoff schema amnesia.
       Herma intercepts requests via <strong>keyword</strong>, <strong>semantic</strong>, or
       <strong>micromodel</strong> rules to <strong>respond directly</strong> in 0 tokens or shim bounded context
-      before LLM execution (lifting frozen <code>Llama 3.2 3B</code> tool accuracy <code>52.0% -&gt; 64.7%</code> with zero weight updates).
+      before the model runs. Requests route to the Meta API at standard tier with your own key, led by
+      <code>Muse Wonder 1.0</code> and <code>Muse Spark 1.3</code>.
       Personal assistants with scoped credentials are supported; <code>*-contributor</code> models remain refused.
     </p>
     <section class="grid">
       <div class="card">
         <span class="pill">Tasks &amp; Task Objects</span>
         <h3>Plain-Language Primitives, Wire-Safe</h3>
-        <p>Independently schedulable <strong>Tasks</strong> map to fenced queue <code>verbs</code>; reusable tools, <code>Feed</code> profiles, LoRA specs, and receipts map to compare-and-set <strong>Task Objects</strong> (<code>nouns</code>).</p>
+        <p>Independently schedulable <strong>Tasks</strong> run as fenced queue work; reusable tools, <code>Feed</code> profiles, LoRA specs, and receipts are compare-and-set <strong>Task Objects</strong>.</p>
       </div>
       <div class="card">
-        <span class="pill">0-Weight Lift + LoRA Memory</span>
+        <span class="pill">0-Weight Shim + LoRA Memory</span>
         <h3>Kill Prompt Bloat &amp; Amnesia</h3>
-        <p>Shim volatile rules inline today (<code>52.0% -&gt; 64.7%</code> on <code>Llama 3.2 3B</code>), then promote stabilized post-cutoff schemas into <code>Llama 3.2</code> / <code>Muse Glimmer</code> PEFT LoRAs.</p>
+        <p>Shim volatile rules inline today with zero weight updates, then promote stabilized post-cutoff schemas into <code>Muse Glimmer</code> LoRA adapters fine-tuned by ta-amps (93.3% to 99.3% exact tool-call match on a fixed 150-task evaluation).</p>
       </div>
       <div class="card">
         <span class="pill">respond_directly</span>
@@ -472,7 +476,7 @@ def render_overview_page(
         <button class="btn" type="button" data-herma-preset="feeds">Preset: Agent Harness Feeds</button>
         <button class="btn" type="button" data-herma-preset="lora">Preset: Shim vs LoRA Memory</button>
         <button class="btn" type="button" data-herma-preset="fencing">Preset: Tessera Lease Fencing</button>
-        <button class="btn" type="button" data-herma-preset="direct">Preset: Direct Noun/Verb Schema</button>
+        <button class="btn" type="button" data-herma-preset="direct">Preset: Direct Task Object Schema</button>
         <button class="btn" type="button" data-herma-preset="statute">Preset: Statute Card &amp; Error Retry</button>
       </div>
       <div>
@@ -500,19 +504,7 @@ def render_overview_page(
       <div id="herma-preview-output"></div>
     </section>
 
-    <h2>Which Meta Models Do What</h2>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Meta Model / Harness</th><th>Role in Herma</th><th>Memory / Routing Regime</th><th>Verified Signal</th></tr></thead>
-        <tbody>
-          <tr><td><code>Muse Spark 1.3</code></td><td>Frontier multi-step coding, tool orchestration &amp; review Tasks (<code>verbs</code>)</td><td>Context Shim + Standard-mode passthrough (<code>-contributor</code> refused)</td><td>Caller-isolated microdollar budgets + SHA-256 <code>InjectionReceipt</code></td></tr>
-          <tr><td><code>Muse Wonder 1.0</code></td><td>Fast structured synthesis &amp; typed work-conversation proposals</td><td>Single schema-checked proposal (<code>executed: false</code>)</td><td>Strict duplicate-key JSON guard + exact picodollar accounting</td></tr>
-          <tr><td><code>Muse Glimmer 30B QLoRA</code></td><td>Open-weights specialist for stabilized post-cutoff Task Object schemas</td><td>4-bit QLoRA Parametric Memory (avoids repeated <code>HarnessTax</code>)</td><td><code>93.3% -&gt; 99.3%</code> exact tool-call match on 150-row synthetic holdout</td></tr>
-          <tr><td><code>Llama 3.2 1B / 3B</code></td><td>Local Tier-3 Shim Router (<code>1B</code>) &amp; edge LoRAs as Parametric Memory (<code>1B/3B</code>)</td><td>0-weight Herma Shim first, then PEFT LoRA (<code>r=16..32</code>)</td><td><code>3B</code>: <code>52.0% -&gt; 64.7%</code> shim lift (<code>72.7%</code> LoRA); <code>1B</code>: <code>12.0% -&gt; 50.7%</code></td></tr>
-          <tr><td><code>Muse Code</code></td><td>Configurable coding harness (<code>X-Herma-Harness: muse-code</code>)</td><td>Benchmarked alongside Harness Square, OpenCode &amp; Pi in <code>Feed</code> nouns</td><td>Shimmed via <code>PROV-HARNESS-FEEDS-GUIDE</code> with receipt-backed profiles</td></tr>
-        </tbody>
-      </table>
-    </div>
+    {render_models_section()}
 
     <h2>Starter Builtin Provisions ({len(builtin_provisions)})</h2>
     <div class="table-wrap">
@@ -522,7 +514,7 @@ def render_overview_page(
       </table>
     </div>
 
-    <h2>Starter Builtin Noun, Verb &amp; Detail Context ({len(entries)})</h2>
+    <h2>Starter Builtin Task Object, Task &amp; Detail Context ({len(entries)})</h2>
     <div class="table-wrap">
       <table>
         <thead><tr><th>Entry ID</th><th>Kind</th><th>Title</th><th>Summary</th><th>Source URI</th></tr></thead>
@@ -577,12 +569,12 @@ def render_connect_page(public_url: str) -> str:
       <pre>uv run herma keys issue --label dev-laptop --harness opencode --scopes route,configure</pre>
     </div>
     <div class="card" style="margin-bottom:1.2rem;">
-      <h3>2. Register Caller-Scoped Noun / Verb Context Entries</h3>
+      <h3>2. Register Caller-Scoped Task Object / Task Context Entries</h3>
       <pre>curl -fsS -X POST {base}/v1/context \\
   -H "Content-Type: application/json" \\
   -H "X-Herma-Key: hmk_&lt;id&gt;.&lt;secret&gt;" \\
   -H "X-Herma-Harness: opencode" \\
-  -d '{{"entry_id":"noun:custom.lease_contract","kind":"noun","title":"Custom Lease Contract","summary":"Caller-scoped atomic noun definition."}}'</pre>
+  -d '{{"entry_id":"noun:custom.lease_contract","kind":"noun","title":"Custom Lease Contract","summary":"Caller-scoped atomic Task Object definition."}}'</pre>
     </div>
     <div class="card" style="margin-bottom:1.2rem;">
       <h3>3. Route Turns &amp; Track Top-of-Mind Entity Memory</h3>
@@ -591,7 +583,7 @@ def render_connect_page(public_url: str) -> str:
   -H "X-Herma-Key: hmk_&lt;id&gt;.&lt;secret&gt;" \\
   -H "X-Herma-Harness: opencode" \\
   -H "X-Herma-Project: my-repo" \\
-  -d '{{"wire_format":"chat_completions","payload":{{"model":"muse-spark-open","messages":[{{"role":"user","content":"Claim a task from the Tessera queue with fencing"}}]}}'</pre>
+  -d '{{"wire_format":"chat_completions","payload":{{"model":"muse-spark-1.3","messages":[{{"role":"user","content":"Claim a task from the Tessera queue with fencing"}}]}}'</pre>
     </div>
     <div class="card">
       <h3>4. Inspect Self-Improving Rule Insights &amp; MCP Discovery</h3>

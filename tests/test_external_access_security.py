@@ -19,11 +19,11 @@ def test_operator_provider_credential_is_bound_to_origin(monkeypatch: pytest.Mon
     monkeypatch.setenv(
         "HERMA_UPSTREAM_CHAT_URL", "https://provider.example.com/v1/chat/completions"
     )
-    monkeypatch.setenv("HERMA_UPSTREAM_API_KEY", "synthetic-provider-key")
+    monkeypatch.setenv("HERMA_UPSTREAM_API_KEY", "example-provider-key")
     monkeypatch.setenv("HERMA_ALLOWED_UPSTREAM_HOSTS", "provider.example.com,alternate.example.com")
     assert (
         _resolve_upstream_headers("chat_completions", {})["Authorization"]
-        == "Bearer synthetic-provider-key"
+        == "Bearer example-provider-key"
     )
     with pytest.raises(HermaError, match="bound"):
         _resolve_upstream_headers(
@@ -48,7 +48,7 @@ def test_meta_override_uses_caller_key_without_borrowing_operator_key(
     monkeypatch.setenv(
         "HERMA_UPSTREAM_CHAT_URL", "https://provider.example.com/v1/chat/completions"
     )
-    monkeypatch.setenv("HERMA_UPSTREAM_API_KEY", "synthetic-operator-key")
+    monkeypatch.setenv("HERMA_UPSTREAM_API_KEY", "example-operator-key")
     headers = {"x-upstream-base-url": "https://api.meta.ai/v1"}
     assert (
         _resolve_upstream_url("chat_completions", headers)
@@ -58,19 +58,19 @@ def test_meta_override_uses_caller_key_without_borrowing_operator_key(
         _resolve_upstream_headers("chat_completions", headers)
     assert (
         _resolve_upstream_headers(
-            "chat_completions", {**headers, "x-upstream-api-key": "synthetic-caller-key"}
+            "chat_completions", {**headers, "x-upstream-api-key": "example-caller-key"}
         )["Authorization"]
-        == "Bearer synthetic-caller-key"
+        == "Bearer example-caller-key"
     )
 
     result = _run_worker_node_script("""
 const {resolveUpstream} = await import('./deploy/cloudflare/herma_engine.js');
-const env={UPSTREAM_LLM_URL:'https://provider.example.com/v1',UPSTREAM_LLM_API_KEY:'synthetic-operator-key'};
+const env={UPSTREAM_LLM_URL:'https://provider.example.com/v1',UPSTREAM_LLM_API_KEY:'example-operator-key'};
 const headers={'x-upstream-base-url':'https://api.meta.ai/v1'};
 let code=null;
 try { resolveUpstream(new Request('https://herma.example',{headers}),env,'/v1/chat/completions'); } catch(error) {code=error.code;}
-const owned=resolveUpstream(new Request('https://herma.example',{headers:{...headers,'x-upstream-api-key':'synthetic-caller-key'}}),env,'/v1/chat/completions');
-console.log(JSON.stringify({code,url:owned.url,callerKeyUsed:owned.key==='synthetic-caller-key'}));
+const owned=resolveUpstream(new Request('https://herma.example',{headers:{...headers,'x-upstream-api-key':'example-caller-key'}}),env,'/v1/chat/completions');
+console.log(JSON.stringify({code,url:owned.url,callerKeyUsed:owned.key==='example-caller-key'}));
 """)
     assert result == {
         "code": "upstream_credential_origin_mismatch",
@@ -139,15 +139,15 @@ def test_atomic_per_caller_route_quota_and_open_cors(
 def test_worker_provider_binding_quota_and_personal_assistant() -> None:
     result = _run_worker_node_script("""
 const db = new SqliteD1();
-const env = {HERMA_DB:db,BOOTSTRAP_SECRET:"synthetic-bootstrap",UPSTREAM_LLM_URL:"https://provider.example.com/v1/chat/completions",UPSTREAM_LLM_API_KEY:"synthetic-operator",HERMA_ALLOWED_UPSTREAM_HOSTS:"provider.example.com,alternate.example.com"};
-const mint = await worker.fetch(new Request("https://herma.example.com/v1/admin/keys",{method:"POST",headers:{"content-type":"application/json","x-bootstrap-secret":"synthetic-bootstrap"},body:JSON.stringify({label:"personal",harness_kind:"personal-assistant",scopes:["route"]})}),env);
+const env = {HERMA_DB:db,BOOTSTRAP_SECRET:"example-bootstrap",UPSTREAM_LLM_URL:"https://provider.example.com/v1/chat/completions",UPSTREAM_LLM_API_KEY:"example-operator",HERMA_ALLOWED_UPSTREAM_HOSTS:"provider.example.com,alternate.example.com"};
+const mint = await worker.fetch(new Request("https://herma.example.com/v1/admin/keys",{method:"POST",headers:{"content-type":"application/json","x-bootstrap-secret":"example-bootstrap"},body:JSON.stringify({label:"personal",harness_kind:"personal-assistant",scopes:["route"]})}),env);
 const key=(await mint.json()).key;
 let outbound=[];
 globalThis.fetch=async(url, init)=>{outbound.push({url:String(url),key:init.headers.authorization,redirect:init.redirect});return Response.json({ok:true});};
-const call=async(overrides={})=>worker.fetch(new Request("https://herma.example.com/v1/chat/completions",{method:"POST",headers:{"content-type":"application/json","x-herma-key":key,"x-herma-harness":"personal-assistant","user-agent":"Muse-Personal-Assistant/1.0",...overrides},body:JSON.stringify({model:"muse-spark-open",messages:[{role:"user",content:"ordinary synthetic request"}]})}),env);
+const call=async(overrides={})=>worker.fetch(new Request("https://herma.example.com/v1/chat/completions",{method:"POST",headers:{"content-type":"application/json","x-herma-key":key,"x-herma-harness":"personal-assistant","user-agent":"Muse-Personal-Assistant/1.0",...overrides},body:JSON.stringify({model:"muse-spark-1.3",messages:[{role:"user",content:"ordinary example request"}]})}),env);
 const denied=await call({"x-upstream-base-url":"https://alternate.example.com"});
 const allowed=await call();
-const own=await call({"x-upstream-base-url":"https://alternate.example.com","x-upstream-api-key":"synthetic-caller"});
+const own=await call({"x-upstream-base-url":"https://alternate.example.com","x-upstream-api-key":"example-caller"});
 db.sqlite.prepare("UPDATE route_quotas SET used=60").run();
 const capped=await call();
 const cors=await worker.fetch(new Request("https://herma.example.com/mcp",{method:"OPTIONS",headers:{origin:"https://agent.example.com"}}),env);
@@ -158,6 +158,6 @@ console.log(JSON.stringify({denied:denied.status,allowed:allowed.status,own:own.
     assert result["capped"] == 429 and result["retry"] == "3600"
     assert result["cors"] == 204 and result["origin"] == "*"
     assert len(result["outbound"]) == 2
-    assert result["outbound"][0]["key"] == "Bearer synthetic-operator"
-    assert result["outbound"][1]["key"] == "Bearer synthetic-caller"
+    assert result["outbound"][0]["key"] == "Bearer example-operator"
+    assert result["outbound"][1]["key"] == "Bearer example-caller"
     assert all(item["redirect"] == "manual" for item in result["outbound"])
