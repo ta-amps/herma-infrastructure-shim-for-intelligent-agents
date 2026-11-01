@@ -8,7 +8,6 @@
   "tier": "standard",
   "default_model": "muse-spark-1.3",
   "routing_note": "Herma routes model requests to the Meta API at the standard tier only: point it at https://api.meta.ai/v1 (X-Upstream-Base-Url) and bring your own Meta API key. Any model id containing contributor is refused with HTTP 403 contributor_tier_refused. Other standard-tier ids that the Meta API lists, such as muse-spark-1.2, pass through unchanged. Operator-funded typed conversations need an explicit per-caller grant.",
-  "harness_note": "Muse Code (Meta's coding agent) and nanoMuse (an open-source agent, not from Meta) are agent programs, not models, so they are not in this table; in the measured run both ran Muse Spark 1.3.",
   "models": [
     {
       "id": "muse-wonder-1.0",

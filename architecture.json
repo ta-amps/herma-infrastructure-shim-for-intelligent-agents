@@ -459,7 +459,10 @@
       "checked_by": [
         "tests/test_model_policy.py::test_models_section_and_text_are_identical_in_both_runtimes",
         "tests/test_model_policy.py::test_served_pages_and_public_json_name_no_retired_family_or_banned_word",
-        "tests/test_model_policy.py::test_repository_names_neither_the_retired_family_nor_the_banned_word"
+        "tests/test_model_policy.py::test_repository_names_neither_the_retired_family_nor_the_banned_word",
+        "tests/test_model_policy.py::test_agent_apps_are_named_nowhere_in_the_repository",
+        "tests/test_model_policy.py::test_home_page_has_no_receipt_or_hash_wording",
+        "tests/test_model_policy.py::test_live_gateway_routes_keep_working_and_name_the_muse_default"
       ]
     },
     {

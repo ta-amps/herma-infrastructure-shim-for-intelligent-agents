@@ -37,7 +37,7 @@ Herma routes model requests to the Meta API at the standard tier only: point it 
 | **Muse Image 1.0** (`muse-image-1.0`) | Image generation and editing. | No. Herma shims text requests only; call the Meta API directly. |
 | **Muse Voice Transcribe 1.0** (`muse-voice-transcribe-1.0`) | Speech to text: turns audio into a transcript. | No. Herma shims text requests only; call the Meta API directly. |
 
-Muse Code (Meta's coding agent) and nanoMuse (an open-source agent, not from Meta) are agent programs, not models, so they are not in this table; in the measured run both ran Muse Spark 1.3. [Models used](https://agora.ta-amps.workers.dev/models/) has the full list.
+See [Models used ↗](https://agora.ta-amps.workers.dev/models/) for the full list.
 
 Official inference partners are compute hosts, not models, so they are not in this table: **Baseten** (`inference.baseten.co`), **Fireworks AI** (`api.fireworks.ai`) and **Modal** sit downstream of Herma's shims. Live `HTTP 200` is verified on **Baseten** `meta-models/muse-spark-open`; the `partner-compute-cascade` and `partner-compute-telemetry-cards` packs separate `live_api` from `local_verified` receipts.
 

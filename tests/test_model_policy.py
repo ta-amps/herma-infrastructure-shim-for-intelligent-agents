@@ -52,7 +52,11 @@ META_API_IDS = frozenset(
     }
 )
 TUNED_GLIMMER_ID = "muse-glimmer-30b"
-HARNESS_NAMES = ("Muse Code", "nanoMuse")
+# Agent apps (harnesses) are not models and are listed only on the shared Models used page. The third-party
+# one is spelled in pieces so no Herma file, this one included, names it.
+AGENT_APP_NAMES = ("Muse Code", "nano" + "Muse")
+AGENT_APP_PATTERN = re.compile("nano" + "muse", re.IGNORECASE)
+RECEIPT_WORDING = re.compile(r"receipt|sha-?256|\b[0-9a-f]{12,}\b", re.IGNORECASE)
 
 SKIP_DIRS = {
     ".git",
@@ -94,6 +98,21 @@ GET_PATHS = [
     "/favicon.svg",
 ]
 BASE = "https://herma.ta-amps.workers.dev"
+# Routes only the Worker serves (the queue gateway, prompts hub, dashboard and permalinks). They are live, so
+# they must keep answering and must be as clean as the rest.
+GATEWAY_PATHS = [
+    "/prompts",
+    "/prompts.js",
+    "/get-started",
+    "/dashboard",
+    "/dashboard.js",
+    "/q",
+    "/q/pulse",
+    "/q/trust",
+    "/q/search?q=muse",
+    "/prompts/raw/master_v3",
+    "/prompts/raw/cli_swarm_100",
+]
 
 
 def repo_text_files() -> list[Path]:
@@ -161,6 +180,11 @@ const post = async (path, body) => (await worker.fetch(new Request(base + path, 
   method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), env)).text();
 const served = {};
 for (const path of __PATHS__) served[path] = await get(path);
+for (const path of __GATEWAY__) {
+  const r = await worker.fetch(new Request(base + path), env);
+  served["GATEWAY STATUS " + path] = String(r.status);
+  served["GATEWAY " + path] = await r.text();
+}
 const presets = {};
 for (const m of served["/preview.js"].matchAll(/(\w+): \{\s*prompt: "((?:[^"\\]|\\.)*)"/g)) {
   presets[m[1]] = JSON.parse('"' + m[2].replaceAll("\\`", "`") + '"');
@@ -173,7 +197,7 @@ for (const [id, method, params] of calls) {
   served["POST /mcp " + method] = await post("/mcp", { jsonrpc: "2.0", id, method, params });
 }
 console.log(JSON.stringify(served));
-""".replace("__PATHS__", json.dumps(GET_PATHS))
+""".replace("__PATHS__", json.dumps(GET_PATHS)).replace("__GATEWAY__", json.dumps(GATEWAY_PATHS))
 
 
 CONVERSATION_MODULE = (REPO_ROOT / "deploy/cloudflare/conversation.js").as_uri()
@@ -205,10 +229,11 @@ def test_catalog_lists_meta_models_first_and_keeps_agent_programs_out(tmp_path: 
     assert [m["name"] for m in models if m["id"] == TUNED_GLIMMER_ID] == [
         "Muse Glimmer 30B, fine-tuned by ta-amps"
     ]
-    for harness in HARNESS_NAMES:
-        assert all(harness.lower() not in m["name"].lower() for m in models)
-        assert harness in catalog["harness_note"]
-    assert "not models" in catalog["harness_note"] and "Muse Spark 1.3" in catalog["harness_note"]
+    for app in AGENT_APP_NAMES:
+        assert all(app.lower() not in m["name"].lower() for m in models)
+    assert "harness_note" not in catalog, (
+        "agent apps are listed only on the shared Models used page"
+    )
     assert catalog["models_used_url"] == "https://agora.ta-amps.workers.dev/models/"
     assert catalog["tier"] == "standard"
     assert routed_model_ids() == {"muse-wonder-1.0", "muse-spark-1.3"}
@@ -291,10 +316,10 @@ def test_models_section_and_text_are_identical_in_both_runtimes(
     assert models_text() in worker_pages["/llms-full.txt"]
     for page in (python_pages["/"], worker_pages["/"]):
         assert "<h2>Which Meta Models Do What</h2>" in page
-        assert 'href="https://agora.ta-amps.workers.dev/models/">Models used</a>' in page
-        table = section[section.index("<tbody>") : section.index("</tbody>")]
-        for harness in HARNESS_NAMES:
-            assert harness not in table
+        assert 'href="https://agora.ta-amps.workers.dev/models/">Models used ↗</a>' in page
+    for app in AGENT_APP_NAMES:
+        assert app not in section, "the models section names models only"
+        assert app not in models_text()
     for model in load_catalog()["models"]:
         assert model["name"] in python_pages["/llms-full.txt"], (
             "the README table feeds llms-full.txt"
@@ -391,3 +416,39 @@ def test_category_guidance_respells_the_banned_word_for_both_runtimes() -> None:
         (REPO_ROOT / "deploy/cloudflare/conversation_data.json").read_text(encoding="utf-8")
     )
     assert not BANNED_WORD.search(json.dumps(data["categories"]))
+
+
+def test_agent_apps_are_named_nowhere_in_the_repository() -> None:
+    offenders = []
+    for path in repo_text_files():
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        offenders += [
+            f"{path.relative_to(REPO_ROOT).as_posix()}:{number}"
+            for number, line in enumerate(text.splitlines(), start=1)
+            if AGENT_APP_PATTERN.search(line)
+        ]
+    assert offenders == []
+
+
+def test_home_page_has_no_receipt_or_hash_wording(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for runtime, served in (
+        ("python", python_surface(tmp_path, monkeypatch)),
+        ("worker", worker_surface()),
+    ):
+        assert RECEIPT_WORDING.findall(visible_prose(served["/"])) == [], runtime
+
+
+def test_live_gateway_routes_keep_working_and_name_the_muse_default() -> None:
+    served = worker_surface()
+    for path in GATEWAY_PATHS:
+        assert served[f"GATEWAY STATUS {path}"] == "200", path
+        assert served[f"GATEWAY {path}"], path
+    assert "Muse via the Meta API" in served["GATEWAY /prompts"]
+    assert "meta/muse-spark-1.3" in served["GATEWAY /prompts/raw/cli_swarm_100"]
+    for path in ("/q/pulse", "/q/trust", "/q/search?q=muse"):
+        json.loads(served[f"GATEWAY {path}"])

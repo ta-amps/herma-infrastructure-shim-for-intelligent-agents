@@ -439,7 +439,7 @@ def render_overview_page(
     <p class="lead">
       <strong>Herma:</strong> context-shimming AI middleware for configurable coding harnesses --
       connects <strong>Tasks</strong> and <strong>Task Objects</strong> (reusable tools, feeds, datasets,
-      LoRA adapters, shims, and receipts) to Meta's Muse models without static prompt bloat
+      LoRA adapters and shims) to Meta's Muse models without static prompt bloat
       (<code>HarnessTax</code>) or post-cutoff schema amnesia.
       Herma intercepts requests via <strong>keyword</strong>, <strong>semantic</strong>, or
       <strong>micromodel</strong> rules to <strong>respond directly</strong> in 0 tokens or shim bounded context
@@ -451,7 +451,7 @@ def render_overview_page(
       <div class="card">
         <span class="pill">Tasks &amp; Task Objects</span>
         <h3>Plain-Language Primitives, Wire-Safe</h3>
-        <p>Independently schedulable <strong>Tasks</strong> run as fenced queue work; reusable tools, <code>Feed</code> profiles, LoRA specs, and receipts are compare-and-set <strong>Task Objects</strong>.</p>
+        <p>Independently schedulable <strong>Tasks</strong> run as fenced queue work; reusable tools, <code>Feed</code> profiles and LoRA specs are compare-and-set <strong>Task Objects</strong>.</p>
       </div>
       <div class="card">
         <span class="pill">0-Weight Shim + LoRA Memory</span>
@@ -461,7 +461,7 @@ def render_overview_page(
       <div class="card">
         <span class="pill">respond_directly</span>
         <h3>Zero-Token Direct Responses</h3>
-        <p>Answers natural-language Task / Task-Object and contract lookups directly across OpenAI, Responses, and Anthropic wire formats while minting a SHA-256 <code>InjectionReceipt</code>.</p>
+        <p>Answers natural-language Task / Task-Object and contract lookups directly across OpenAI, Responses, and Anthropic wire formats, without calling a model.</p>
       </div>
     </section>
 
@@ -469,7 +469,7 @@ def render_overview_page(
       <span class="pill">Read-Only Inspector · persisted: false</span>
       <h2 id="inspector-heading">Shim Trigger &amp; Entity Extractor Preview</h2>
       <p style="color:var(--muted);margin:0.2rem 0 0.8rem;font-size:0.9rem;">
-        Test starter <code>system_builtin</code> provisions and deterministic regex entity extraction in memory without writing receipts or reading caller state.
+        Test starter <code>system_builtin</code> provisions and deterministic regex entity extraction in memory without saving anything or reading caller state.
       </p>
       <div class="preset-row">
         <button class="btn" type="button" data-herma-preset="tasks">Preset: Tasks &amp; Task Objects</button>
@@ -522,7 +522,7 @@ def render_overview_page(
       </table>
     </div>
 
-    <h2>Aggregate Middleware Telemetry (Caller Receipts Isolated)</h2>
+    <h2>Aggregate Middleware Telemetry (Caller Data Isolated)</h2>
     <div class="table-wrap">
       <table>
         <thead><tr><th>Builtin Provisions</th><th>Builtin Context Entries</th><th>Intercepted Turns</th><th>Tracked Entities</th><th>Outcome Signals</th></tr></thead>

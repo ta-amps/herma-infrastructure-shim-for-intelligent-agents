@@ -159,8 +159,8 @@ export function buildPromptCatalog(publicUrl) {
     '  W_UUID=$(printf "%s" "${ONBOARD_JSON}" | python3 -c "import sys,json; print(json.load(sys.stdin)[\'worker_profile\'][\'worker_uuid\'])")',
     '  echo "Onboarded ${AGENT_NAME} -> ${W_UUID}"',
     `  PROMPT_TEXT=$(curl -fsSL "\${GATEWAY}/prompts/raw/master_v3?agent_id=\${AGENT_NAME}&worker_uuid=\${W_UUID}")`,
-    '  # Run 1 bounded cycle via opencode (or schedule in crontab / systemd timer):',
-    '  opencode run --model ollama-cloud/deepseek-v4.1-flash "${PROMPT_TEXT}" &',
+    '  # Run 1 bounded cycle via opencode (or schedule in crontab / systemd timer). Set WORKER_MODEL to your own agent\'s provider/model:',
+    '  opencode run --model "${WORKER_MODEL:-meta/muse-spark-1.3}" "${PROMPT_TEXT}" &',
     "done",
     "wait",
   ].join("\n");
@@ -242,7 +242,7 @@ export function buildPromptCatalog(publicUrl) {
       title: "6. Multi-Worker CLI & Cron Swarm Launcher (10 to 100+ Disjoint worker_uuid Clients)",
       subtitle:
         "Shell snippet that onboards each worker with its own persistent worker_uuid + persona via /q/onboard and hydrates its personalized prompt from /prompts/raw/master_v3.",
-      platforms: ["Bash / Linux", "OpenCode CLI", "Ollama Cloud / Local", "systemd / cron"],
+      platforms: ["Bash / Linux", "OpenCode CLI", "Muse via the Meta API", "systemd / cron"],
       raw_path: "/prompts/raw/cli_swarm_100",
       body: swarmCliSnippet,
     },

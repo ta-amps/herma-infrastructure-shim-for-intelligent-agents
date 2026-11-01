@@ -2192,8 +2192,8 @@ export function renderModelsSection() {
       return `<tr><td><strong>${esc(m.name)}</strong>${ident}</td><td>${esc(m.use)}${evidence}</td><td>${esc(m.route)}</td></tr>`;
     })
     .join("");
-  const harnessNote = `<p style="${MODELS_NOTE_STYLE}">${esc(MODEL_CATALOG.harness_note)} <a href="${esc(MODEL_CATALOG.models_used_url)}">Models used</a> has the full list.</p>`;
-  return `<h2>${MODELS_HEADING}</h2><p style="${MODELS_NOTE_STYLE}">${esc(MODEL_CATALOG.routing_note)}</p><div class="table-wrap"><table><thead>${MODELS_TABLE_HEAD}</thead><tbody>${rows}</tbody></table></div>${harnessNote}`;
+  const modelsUsed = `<p style="${MODELS_NOTE_STYLE}">See <a href="${esc(MODEL_CATALOG.models_used_url)}">Models used ↗</a> for the full list.</p>`;
+  return `<h2>${MODELS_HEADING}</h2><p style="${MODELS_NOTE_STYLE}">${esc(MODEL_CATALOG.routing_note)}</p><div class="table-wrap"><table><thead>${MODELS_TABLE_HEAD}</thead><tbody>${rows}</tbody></table></div>${modelsUsed}`;
 }
 
 // The same lines as herma/model_catalog.py models_text().
@@ -2204,7 +2204,7 @@ export function modelsText() {
     const evidence = m.evidence ? ` ${m.evidence}` : "";
     lines.push(`- ${m.name}${ident}: ${m.use}${evidence} Herma routing: ${m.route}`);
   }
-  lines.push("", MODEL_CATALOG.harness_note, `Models used: ${MODEL_CATALOG.models_used_url}`);
+  lines.push("", `See Models used for the full list: ${MODEL_CATALOG.models_used_url}`);
   return lines.join("\n");
 }
 
@@ -2246,16 +2246,16 @@ ${renderHeader()}
 <main>
 <span class="pill">Herma v${HERMA_VERSION} · Programmable AI Request Middleware · Tasks &amp; Task Objects Shim · 24/7 Cloudflare D1 + Tessera Cloud</span>
 <h1>Tasks, Task Objects &amp; Context-Shimming Middleware for Coding Harnesses</h1>
-<p class="lead"><strong>Herma:</strong> context-shimming AI middleware for configurable coding harnesses -- connects <strong>Tasks</strong> and <strong>Task Objects</strong> (reusable tools, feeds, datasets, LoRA adapters, shims, and receipts) to Meta's Muse models without static prompt bloat (<code>HarnessTax</code>) or post-cutoff schema amnesia. Herma intercepts requests via <strong>keyword</strong>, <strong>semantic</strong>, or <strong>micromodel</strong> rules to <strong>respond directly</strong> in 0 tokens or shim bounded context before the model runs. Requests route to the Meta API at standard tier with your own key, led by <code>Muse Wonder 1.0</code> and <code>Muse Spark 1.3</code>. Personal assistants with scoped credentials are supported; <code>*-contributor</code> models remain refused.</p>
+<p class="lead"><strong>Herma:</strong> context-shimming AI middleware for configurable coding harnesses -- connects <strong>Tasks</strong> and <strong>Task Objects</strong> (reusable tools, feeds, datasets, LoRA adapters and shims) to Meta's Muse models without static prompt bloat (<code>HarnessTax</code>) or post-cutoff schema amnesia. Herma intercepts requests via <strong>keyword</strong>, <strong>semantic</strong>, or <strong>micromodel</strong> rules to <strong>respond directly</strong> in 0 tokens or shim bounded context before the model runs. Requests route to the Meta API at standard tier with your own key, led by <code>Muse Wonder 1.0</code> and <code>Muse Spark 1.3</code>. Personal assistants with scoped credentials are supported; <code>*-contributor</code> models remain refused.</p>
 <section class="grid">
-<div class="card"><span class="pill">Tasks &amp; Task Objects</span><h3>Plain-Language Primitives, Wire-Safe</h3><p>Independently schedulable <strong>Tasks</strong> run as fenced queue work; reusable tools, <code>Feed</code> profiles, LoRA specs, and receipts are compare-and-set <strong>Task Objects</strong>.</p></div>
+<div class="card"><span class="pill">Tasks &amp; Task Objects</span><h3>Plain-Language Primitives, Wire-Safe</h3><p>Independently schedulable <strong>Tasks</strong> run as fenced queue work; reusable tools, <code>Feed</code> profiles and LoRA specs are compare-and-set <strong>Task Objects</strong>.</p></div>
 <div class="card"><span class="pill">0-Weight Shim + LoRA Memory</span><h3>Kill Prompt Bloat &amp; Amnesia</h3><p>Shim volatile rules inline today with zero weight updates, then promote stabilized post-cutoff schemas into <code>Muse Glimmer</code> LoRA adapters fine-tuned by ta-amps (93.3% to 99.3% exact tool-call match on a fixed 150-task evaluation).</p></div>
-<div class="card"><span class="pill">respond_directly</span><h3>Zero-Token Direct Responses</h3><p>Answers natural-language Task / Task-Object and contract lookups directly across OpenAI, Responses, and Anthropic wire formats while minting a SHA-256 <code>InjectionReceipt</code>.</p></div>
+<div class="card"><span class="pill">respond_directly</span><h3>Zero-Token Direct Responses</h3><p>Answers natural-language Task / Task-Object and contract lookups directly across OpenAI, Responses, and Anthropic wire formats, without calling a model.</p></div>
 </section>
 <section class="card inspector" aria-labelledby="inspector-heading">
 <span class="pill">Read-Only Inspector · persisted: false</span>
 <h2 id="inspector-heading">Shim Trigger &amp; Entity Extractor Preview</h2>
-<p style="color:var(--muted);margin:0.2rem 0 0.8rem;font-size:0.9rem;">Test starter <code>system_builtin</code> provisions and deterministic regex entity extraction in memory without writing receipts or reading caller state.</p>
+<p style="color:var(--muted);margin:0.2rem 0 0.8rem;font-size:0.9rem;">Test starter <code>system_builtin</code> provisions and deterministic regex entity extraction in memory without saving anything or reading caller state.</p>
 <div class="preset-row">
 <button class="btn" type="button" data-herma-preset="tasks">Preset: Tasks &amp; Task Objects</button>
 <button class="btn" type="button" data-herma-preset="feeds">Preset: Agent Harness Feeds</button>
@@ -2278,7 +2278,7 @@ ${renderModelsSection()}
 <div class="table-wrap"><table><thead><tr><th>ID</th><th>Title &amp; Action</th><th>Triggers</th><th>URIs &amp; Priority</th><th>Store</th></tr></thead><tbody>${pRows || "<tr><td colspan='5'>No builtin provisions seeded yet.</td></tr>"}</tbody></table></div>
 <h2>Starter Builtin Task Object, Task &amp; Detail Context (${(contextEntries || []).length})</h2>
 <div class="table-wrap"><table><thead><tr><th>Entry ID</th><th>Kind</th><th>Title</th><th>Summary</th><th>Source URI</th></tr></thead><tbody>${cRows || "<tr><td colspan='5'>No builtin Task Object, Task or detail entries configured yet.</td></tr>"}</tbody></table></div>
-<h2>Aggregate Middleware Telemetry (Caller Receipts Isolated)</h2>
+<h2>Aggregate Middleware Telemetry (Caller Data Isolated)</h2>
 <div class="table-wrap"><table><thead><tr><th>Builtin Provisions</th><th>Builtin Context Entries</th><th>Intercepted Turns</th><th>Tracked Entities</th><th>Outcome Signals</th></tr></thead><tbody><tr><td><code>${builtinProvs.length}</code></td><td><code>${(contextEntries || []).length}</code></td><td><code>${Number(counts.total_intercepted_requests || 0)}</code></td><td><code>${Number(counts.total_working_entities || 0)}</code></td><td><code>${Number(counts.total_rule_outcomes || 0)}</code></td></tr></tbody></table></div>
 </main>
 ${renderFooter(publicUrl)}

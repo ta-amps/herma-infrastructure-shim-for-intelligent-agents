@@ -37,7 +37,9 @@ def load_catalog() -> dict[str, Any]:
             raise ValueError("the model catalog may not list a contributor-tier id")
         if not isinstance(model.get("name"), str) or not isinstance(model.get("routed"), bool):
             raise ValueError("every catalog model needs a name and a routed flag")
-    for key in ("routing_note", "harness_note", "models_used_url"):
+    if "harness_note" in raw:
+        raise ValueError("agent apps are listed only on the shared Models used page")
+    for key in ("routing_note", "models_used_url"):
         if not isinstance(raw.get(key), str) or not raw[key]:
             raise ValueError(f"the model catalog needs {key}")
     return dict(raw)
@@ -69,16 +71,16 @@ def render_models_section() -> str:
             f"<td>{escape(model['use'])}{evidence}</td>"
             f"<td>{escape(model['route'])}</td></tr>"
         )
-    harness_note = (
-        f'<p style="{NOTE_STYLE}">{escape(catalog["harness_note"])} '
-        f'<a href="{escape(catalog["models_used_url"])}">Models used</a> has the full list.</p>'
+    models_used = (
+        f'<p style="{NOTE_STYLE}">See '
+        f'<a href="{escape(catalog["models_used_url"])}">Models used ↗</a> for the full list.</p>'
     )
     return (
         f"<h2>{HEADING}</h2>"
         f'<p style="{NOTE_STYLE}">{escape(catalog["routing_note"])}</p>'
         f'<div class="table-wrap"><table><thead>{TABLE_HEAD}</thead>'
         f"<tbody>{''.join(rows)}</tbody></table></div>"
-        f"{harness_note}"
+        f"{models_used}"
     )
 
 
@@ -92,5 +94,5 @@ def models_text() -> str:
         lines.append(
             f"- {model['name']}{ident}: {model['use']}{evidence} Herma routing: {model['route']}"
         )
-    lines += ["", catalog["harness_note"], f"Models used: {catalog['models_used_url']}"]
+    lines += ["", f"See Models used for the full list: {catalog['models_used_url']}"]
     return "\n".join(lines)
