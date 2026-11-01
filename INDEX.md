@@ -12,7 +12,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [Dockerfile](Dockerfile) | Reproducible standalone container image for Herma (Python FastAPI + SQLite WAL). |
 | [LICENSE](LICENSE) | MIT License |
 | [Makefile](Makefile) | Herma. |
-| [README.md](README.md) | Herma -- the context & capability shim for any agent |
+| [README.md](README.md) | Herma -- the < 2 ms context & capability shim for any agent |
 | [architecture.json](architecture.json) | herma |
 | [package.json](package.json) | herma-worker |
 | [pyproject.toml](pyproject.toml) |  |
