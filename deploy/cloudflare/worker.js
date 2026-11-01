@@ -1,6 +1,7 @@
 import { agentStartAsset, withAgentStart } from "./agent_start.js";
 import { agentFetch } from "./agent_access.js";
 import { handleBilateralBridge } from "./bilateral_bridge.js";
+import { handlePriorityWorkGateway } from "./priority_work_gateway.js";
 import { ConversationError, conversationSchemas, strictJson, validateTurn } from "./conversation.js";
 // Cloudflare Cloud Worker for Herma: 24/7 caller-isolated context-shimming AI middleware backed by
 // Cloudflare D1 (`ta-amps-herma`) + direct Service Binding to `tessera` Cloud (`env.TESSERA`),
@@ -1529,6 +1530,21 @@ const application = {
       }
       if (path === "/bridge" || path.startsWith("/bridge/")) {
         return await handleBilateralBridge(request, env, db, publicUrl, { withSecurity });
+      }
+      if (
+        path === "/q" ||
+        path.startsWith("/q/") ||
+        path === "/prompts" ||
+        path.startsWith("/prompts/") ||
+        path === "/prompts.js" ||
+        path === "/get-started" ||
+        path === "/dashboard" ||
+        path.startsWith("/dashboard/") ||
+        path === "/dashboard.js" ||
+        path.startsWith("/c/") ||
+        path.startsWith("/w/")
+      ) {
+        return await handlePriorityWorkGateway(request, env, db, publicUrl, { withSecurity });
       }
       if (path === "/api/preview") {
         if (method !== "POST") return methodNotAllowed(["POST"]);
