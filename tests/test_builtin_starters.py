@@ -85,7 +85,7 @@ const queries = [
   "/herma-schema",
   "agent harness feeds",
   "Compare HarnessTax across Harness Square, OpenCode, Pi, and Muse Code",
-  "When should we use prompt shimming vs LoRA as parametric memory on Llama 3.2 or Muse Glimmer?",
+  "When should we use prompt shimming vs LoRA as parametric memory on Muse Spark Open or Muse Glimmer?",
 ];
 const previews = {};
 for (const q of queries) {
@@ -231,7 +231,7 @@ def test_all_builtin_starters_and_natural_language_queries_match_across_python_a
         assert py_feed["shimmed_context_refs"] == wk_feed["shimmed_refs"]
         assert "HarnessTax" in wk_feed["system_text"]
 
-    lora_q = "When should we use prompt shimming vs LoRA as parametric memory on Llama 3.2 or Muse Glimmer?"
+    lora_q = "When should we use prompt shimming vs LoRA as parametric memory on Muse Spark Open or Muse Glimmer?"
     py_lora = client.post(
         "/api/preview", json={"prompt": lora_q, "wire_format": "chat_completions"}
     ).json()

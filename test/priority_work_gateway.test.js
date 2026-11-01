@@ -33,8 +33,14 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
   });
 
   it("persists task_objects and enqueues deferred branch verbs over both GET and POST while blocking public infra writes", async () => {
+    const claimFirstRes = await callGateway("/q/claim/muse?format=json");
+    expect(claimFirstRes.status).toBe(200);
+    const claimFirst = await claimFirstRes.json();
+    const claimedId = claimFirst.lease.task_id;
+    const claimedFence = claimFirst.lease.fencing_token;
+
     const getSub = await callGateway(
-      "/q/submit/muse/ngo_seed_990n_directory_audit/summary-verified-990n-eligibility-rubric--object-rubric_990n:primary-irs-epostcard-check--ngo-verb-audit-multilingual-hotline-hours--verb-normalize-zip-service-radius?format=json"
+      `/q/submit/muse/${encodeURIComponent(claimedId)}/fence-${claimedFence}--summary-verified-990n-eligibility-rubric--object-rubric_990n:primary-irs-epostcard-check--ngo-verb-audit-multilingual-hotline-hours--verb-normalize-zip-service-radius?format=json`
     );
     expect(getSub.status).toBe(200);
     const subJson = await getSub.json();
@@ -388,8 +394,15 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
   });
 
   it("enforces atomic CAS /q/claim without double-leases, rejects stale fencing_token with 409, and indexes pure CJK & Devanagari search queries", async () => {
-    // 1. Seed 8 isolated tasks + CJK/Devanagari task_objects
-    const raceOwner = "w_casrace_unit01";
+    // 1. Onboard raceOwner to get an authorized worker_token, then seed 8 isolated tasks + CJK/Devanagari task_objects
+    const raceObRes = await callGateway("/q/onboard", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent_id: "cas-seeder", mint_new: true }),
+    });
+    const raceOb = await raceObRes.json();
+    const raceOwner = raceOb.worker_profile.worker_uuid;
+    const raceWorkerToken = raceOb.worker_token;
     const seedVerbs = Array.from({ length: 8 }, (_, idx) => ({
       tier: "public_general",
       verb_kind: "worker_self_directed",
@@ -403,6 +416,7 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
       body: JSON.stringify({
         agent_id: "cas-seeder",
         worker_uuid: raceOwner,
+        worker_token: raceWorkerToken,
         task_id: "self_seed",
         summary: "Seed CAS & multi-script objects",
         task_objects: [
@@ -433,6 +447,7 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
           body: JSON.stringify({
             agent_id: `racer-${idx}`,
             worker_uuid: raceOwner,
+            worker_token: raceWorkerToken,
             slot: "own",
           }),
         }).then((r) => r.json())
@@ -450,6 +465,7 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
       body: JSON.stringify({
         agent_id: "stale-worker",
         worker_uuid: raceOwner,
+        worker_token: raceWorkerToken,
         task_id: targetLease.task_id,
         fencing_token: 0,
         summary: "stale before completion",
@@ -463,6 +479,7 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
       body: JSON.stringify({
         agent_id: "racer-0",
         worker_uuid: raceOwner,
+        worker_token: raceWorkerToken,
         task_id: targetLease.task_id,
         fencing_token: targetLease.fencing_token,
         summary: "authoritative completion",
@@ -476,6 +493,7 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
       body: JSON.stringify({
         agent_id: "late-zombie",
         worker_uuid: raceOwner,
+        worker_token: raceWorkerToken,
         task_id: targetLease.task_id,
         fencing_token: targetLease.fencing_token,
         summary: "attempted overwrite after done",
@@ -504,7 +522,7 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     const statusRes = await callGateway("/status");
     expect(statusRes.status).toBe(200);
     const statusJson = await statusRes.json();
-    expect(statusJson.schema).toBe("herma.priority_work_gateway.grid.v6_2");
+    expect(statusJson.schema).toBe("herma.priority_work_gateway.grid.v6_6");
 
     const missingWorkerRes = await callGateway("/w/w_nonexistent_unit_probe_404");
     expect(missingWorkerRes.status).toBe(404);

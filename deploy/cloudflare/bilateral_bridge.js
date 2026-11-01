@@ -42,7 +42,7 @@ export const BRIDGE_GRID_CONFIG = Object.freeze({
 const SAFE_CHANNEL_RE = /^[A-Za-z0-9_-]+$/;
 const SAFE_AGENT_RE = /^[A-Za-z0-9._-]+$/;
 const SECRET_SCRUB_RE =
-  /\b(?:tsk_[A-Za-z0-9_-]{8,}|tan_[A-Za-z0-9_-]{8,}|hmk_[A-Za-z0-9_-]{8,}|sk-[A-Za-z0-9_-]{12,}|ghp_[A-Za-z0-9]{12,}|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g;
+  /\b(?:tsk_[A-Za-z0-9_-]{8,}|tan_[A-Za-z0-9_-]{8,}|hmk_[A-Za-z0-9_-]{8,}|hk_(?:wrk|ep|inf)_[A-Za-z0-9_-]{16,}|wt_[a-f0-9]{24,}|sk-[A-Za-z0-9_-]{12,}|ghp_[A-Za-z0-9]{12,}|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g;
 
 function expectedChallenge() {
   return String(BRIDGE_GRID_CONFIG.challenge_addend_a + BRIDGE_GRID_CONFIG.challenge_addend_b);

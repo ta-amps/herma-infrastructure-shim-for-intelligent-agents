@@ -92,7 +92,7 @@ PREVIEW_JS = """(function () {
       wire: "chat_completions"
     },
     lora: {
-      prompt: "When should we use prompt shimming vs LoRA as parametric memory on Llama 3.2 or Muse Glimmer?",
+      prompt: "When should we use prompt shimming vs LoRA as parametric memory on Muse Spark Open or Muse Glimmer?",
       path: "training/shim-router-lora-spec.json",
       wire: "chat_completions"
     },
@@ -440,7 +440,7 @@ def render_overview_page(
       to models without static prompt bloat (<code>HarnessTax</code>) or post-cutoff schema amnesia.
       Herma intercepts requests via <strong>keyword</strong>, <strong>semantic</strong>, or
       <strong>micromodel</strong> rules to <strong>respond directly</strong> in 0 tokens or shim bounded context
-      before LLM execution (lifting frozen <code>Llama 3.2 3B</code> tool accuracy <code>52.0% -&gt; 64.7%</code> with zero weight updates).
+      before LLM execution (lifting <code>Muse Spark Open</code> blind NGO accuracy <code>87.5% -&gt; 95.8%</code> and compact 3B tool accuracy <code>52.0% -&gt; 64.7%</code> with zero weight updates).
       Personal assistants with scoped credentials are supported; <code>*-contributor</code> models remain refused.
     </p>
     <section class="grid">
@@ -452,7 +452,7 @@ def render_overview_page(
       <div class="card">
         <span class="pill">0-Weight Lift + LoRA Memory</span>
         <h3>Kill Prompt Bloat &amp; Amnesia</h3>
-        <p>Shim volatile rules inline today (<code>52.0% -&gt; 64.7%</code> on <code>Llama 3.2 3B</code>), then promote stabilized post-cutoff schemas into <code>Llama 3.2</code> / <code>Muse Glimmer</code> PEFT LoRAs.</p>
+        <p>Shim volatile rules inline today (<code>87.5% -&gt; 95.8%</code> on <code>Muse Spark Open</code>; <code>52.0% -&gt; 64.7%</code> on compact 3B), then promote stabilized post-cutoff schemas into <code>Muse Glimmer 30B</code> PEFT LoRAs.</p>
       </div>
       <div class="card">
         <span class="pill">respond_directly</span>
@@ -507,8 +507,8 @@ def render_overview_page(
         <tbody>
           <tr><td><code>Muse Spark 1.3</code></td><td>Frontier multi-step coding, tool orchestration &amp; review Tasks (<code>verbs</code>)</td><td>Context Shim + Standard-mode passthrough (<code>-contributor</code> refused)</td><td>Caller-isolated microdollar budgets + SHA-256 <code>InjectionReceipt</code></td></tr>
           <tr><td><code>Muse Wonder 1.0</code></td><td>Fast structured synthesis &amp; typed work-conversation proposals</td><td>Single schema-checked proposal (<code>executed: false</code>)</td><td>Strict duplicate-key JSON guard + exact picodollar accounting</td></tr>
-          <tr><td><code>Muse Glimmer 30B QLoRA</code></td><td>Open-weights specialist for stabilized post-cutoff Task Object schemas</td><td>4-bit QLoRA Parametric Memory (avoids repeated <code>HarnessTax</code>)</td><td><code>93.3% -&gt; 99.3%</code> exact tool-call match on 150-row synthetic holdout</td></tr>
-          <tr><td><code>Llama 3.2 1B / 3B</code></td><td>Local Tier-3 Shim Router (<code>1B</code>) &amp; edge LoRAs as Parametric Memory (<code>1B/3B</code>)</td><td>0-weight Herma Shim first, then PEFT LoRA (<code>r=16..32</code>)</td><td><code>3B</code>: <code>52.0% -&gt; 64.7%</code> shim lift (<code>72.7%</code> LoRA); <code>1B</code>: <code>12.0% -&gt; 50.7%</code></td></tr>
+          <tr><td><code>Muse Spark Open</code></td><td>Default autonomous swarm worker, <code>/q/help</code> &amp; <code>/q/chat</code> reasoning</td><td>Herma Context Shim + reusable <code>reasoning_suggestion</code> Task Objects</td><td><code>87.5% -&gt; 95.8%</code> blind NGO stance accuracy (+25 pp ambiguous calibration)</td></tr>
+          <tr><td><code>Muse Glimmer 30B QLoRA</code></td><td>Open-weights specialist for stabilized post-cutoff Task Object schemas</td><td>4-bit QLoRA Parametric Memory on Modal GPU (avoids repeated <code>HarnessTax</code>)</td><td><code>93.3% -&gt; 99.3%</code> exact tool-call match on 150-row synthetic holdout</td></tr>
           <tr><td><code>Muse Code</code></td><td>Configurable coding harness (<code>X-Herma-Harness: muse-code</code>)</td><td>Benchmarked alongside Harness Square, OpenCode &amp; Pi in <code>Feed</code> nouns</td><td>Shimmed via <code>PROV-HARNESS-FEEDS-GUIDE</code> with receipt-backed profiles</td></tr>
         </tbody>
       </table>

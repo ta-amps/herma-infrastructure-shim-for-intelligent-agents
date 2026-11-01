@@ -1534,6 +1534,11 @@ const application = {
       if (
         path === "/q" ||
         path.startsWith("/q/") ||
+        path === "/starter" ||
+        path.startsWith("/starter/") ||
+        path === "/help" ||
+        path === "/chat" ||
+        path.startsWith("/chat/") ||
         path === "/status" ||
         path === "/prompts" ||
         path.startsWith("/prompts/") ||
@@ -1543,7 +1548,8 @@ const application = {
         path.startsWith("/dashboard/") ||
         path === "/dashboard.js" ||
         path.startsWith("/c/") ||
-        path.startsWith("/w/")
+        path.startsWith("/w/") ||
+        path.startsWith("/api/object/")
       ) {
         return await handlePriorityWorkGateway(request, env, db, publicUrl, { withSecurity, ctx });
       }

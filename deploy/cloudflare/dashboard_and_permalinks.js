@@ -1,12 +1,11 @@
 // Interactive Worker Swarm Visualization Dashboard (`/dashboard`, `/q/dashboard`, `/q/dashboard.js`)
-// & Shareable Contribution / Worker Permalinks (`/c/<id>`, `/w/<worker_uuid>`) for Herma v6.
+// & Shareable Contribution / Worker Permalinks (`/c/<id>`, `/w/<worker_uuid>`) for Herma v6.3.
 //
 // Strictly CSP-compliant (`DEFAULT_CSP_PAGE`: `script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'`).
-// All client-side search, filtering, copy-to-clipboard, and file-tree inspection runs via `/q/dashboard.js`.
+// Plain-language public vocabulary: Task, Task Queue, and Task Object.
 
 export const DASHBOARD_GRID = Object.freeze({
-  schema_id: "herma.dashboard_and_permalinks.grid.v1",
-  beat_cycle_length: 3,
+  schema_id: "herma.dashboard_and_permalinks.grid.v2",
   kib_bytes: 1024,
   mib_bytes: 1048576,
   preview_json_chars: 16384,
@@ -76,7 +75,7 @@ function sharedStyles() {
     h1 { font-size: clamp(1.55rem, 2.8vw, 2.2rem); line-height: 1.2; margin: 0 0 8px; letter-spacing: -0.02em; }
     h2 { font-size: 1.2rem; margin: 0 0 12px; letter-spacing: -0.01em; }
     h3 { font-size: 1.02rem; margin: 0 0 8px; }
-    .lead { color: var(--muted); font-size: 1rem; max-width: 900px; margin: 0 0 20px; }
+    .lead { color: var(--muted); font-size: 1rem; max-width: 920px; margin: 0 0 20px; }
     .stats-grid {
       display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
       gap: 12px; margin-bottom: 22px;
@@ -121,12 +120,12 @@ function sharedStyles() {
       overflow-x: auto; font-size: 0.82rem; line-height: 1.48; max-height: 460px; margin: 10px 0 0;
     }
     pre.code-block code { background: transparent; color: inherit; padding: 0; }
-    .beat-bar {
+    .activity-bar {
       display: flex; height: 8px; width: 120px; border-radius: 999px; overflow: hidden; background: #e8ebf0; margin-top: 4px;
     }
-    .beat-seg-ngo { background: #18795b; }
-    .beat-seg-eval { background: #d48806; }
-    .beat-seg-own { background: #6b3fa0; }
+    .seg-ngo { background: #18795b; }
+    .seg-eval { background: #d48806; }
+    .seg-general { background: #6b3fa0; }
     .contrib-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 14px; }
     .contrib-card {
       border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; background: #fcfbf9;
@@ -152,12 +151,14 @@ function sharedStyles() {
 function renderTopbar(base, subtitle) {
   return `
     <header class="topbar">
-      <div class="brand">ta-amps &middot; Herma Swarm &amp; Contribution Ledger (${escapeHtml(subtitle)})</div>
+      <div class="brand">ta-amps &middot; Herma Task Queue &amp; Task Object Ledger (${escapeHtml(subtitle)})</div>
       <nav class="nav-links" aria-label="Primary navigation">
         <a href="${escapeHtml(base)}/dashboard">Live Dashboard</a>
-        <a href="${escapeHtml(base)}/prompts">Get Started Prompts</a>
-        <a href="${escapeHtml(base)}/q/pulse">Queue Pulse JSON</a>
-        <a href="${escapeHtml(base)}/q/search?q=shelter">Hybrid Search API</a>
+        <a href="${escapeHtml(base)}/starter">30-Second Starter Kit</a>
+        <a href="${escapeHtml(base)}/prompts">Agent Prompts</a>
+        <a href="${escapeHtml(base)}/q/chat">Agent Chat API</a>
+        <a href="${escapeHtml(base)}/q/pulse">Task Queue JSON</a>
+        <a href="${escapeHtml(base)}/q/search?q=shelter">Search Task Objects</a>
         <a href="${escapeHtml(base)}/q/trust">Trust &amp; Safety</a>
       </nav>
     </header>`;
@@ -171,43 +172,41 @@ export function renderDashboardHtml(publicUrl, data) {
   const recentContribs = data.recent_contributions || [];
   const recentObjects = data.recent_objects || [];
   const facetCounts = data.facet_summary || { opt_goals: [], prog_langs: [], locales: [], deliverables: [] };
+  const includeDiag = Boolean(data.include_diagnostics);
 
   const workerRowsHtml = workers.length
     ? workers
         .map((w) => {
           const ngoC = Number(w.ngo_completed || 0);
           const evlC = Number(w.eval_completed || 0);
-          const ownC = Number(w.own_completed || 0);
-          const tot = Math.max(1, ngoC + evlC + ownC);
+          const genC = Number(w.own_completed || 0);
+          const tot = Math.max(1, ngoC + evlC + genC);
           const pNgo = Math.round((ngoC / tot) * DASHBOARD_GRID.percent_scale);
           const pEvl = Math.round((evlC / tot) * DASHBOARD_GRID.percent_scale);
-          const pOwn = Math.max(0, DASHBOARD_GRID.percent_scale - pNgo - pEvl);
-          const nextSlot = Number(w.iteration_count || 0) % DASHBOARD_GRID.beat_cycle_length;
-          const beatPill =
-            nextSlot === 0
-              ? '<span class="pill pill-ngo">Next: Beat 0 NGO</span>'
-              : nextSlot === 1
-                ? '<span class="pill pill-eval">Next: Beat 1 Eval</span>'
-                : '<span class="pill pill-own">Next: Beat 2 Own</span>';
+          const pGen = Math.max(0, DASHBOARD_GRID.percent_scale - pNgo - pEvl);
+          const profileNote =
+            Number(w.profile_count || 1) > 1 ? ` &middot; ${Number(w.profile_count)} sessions` : "";
           return `
             <tr>
               <td>
-                <a href="${escapeHtml(base)}/w/${encodeURIComponent(w.worker_uuid)}"><strong><code>${escapeHtml(w.worker_uuid)}</code></strong></a>
-                <div class="stat-sub">Agent: <code>${escapeHtml(w.agent_id)}</code> &middot; ${escapeHtml(w.transport_mode || "auto")}</div>
+                <a href="${escapeHtml(base)}/w/${encodeURIComponent(w.worker_uuid)}"><strong><code>${escapeHtml(w.agent_id)}</code></strong></a>
+                <div class="stat-sub">UUID: <code>${escapeHtml(w.worker_uuid)}</code> &middot; ${escapeHtml(w.transport_mode || "auto")}${profileNote}</div>
               </td>
               <td>
                 <strong>${escapeHtml(w.persona_label)}</strong>
                 <div class="stat-sub">${escapeHtml(w.specialty_lens)}</div>
               </td>
               <td>
-                <div><strong>${Number(w.iteration_count || 0)}</strong> runs (${ngoC} NGO / ${evlC} Eval / ${ownC} Own)</div>
-                <div class="beat-bar" title="NGO ${ngoC} | Eval ${evlC} | Own ${ownC}">
-                  <span class="beat-seg-ngo" style="width:${pNgo}%"></span>
-                  <span class="beat-seg-eval" style="width:${pEvl}%"></span>
-                  <span class="beat-seg-own" style="width:${pOwn}%"></span>
+                <div><strong>${Number(w.iteration_count || 0)}</strong> completed runs (${ngoC} NGO / ${evlC} Reviews / ${genC} General)</div>
+                <div class="activity-bar" title="NGO ${ngoC} | Reviews ${evlC} | General ${genC}">
+                  <span class="seg-ngo" style="width:${pNgo}%"></span>
+                  <span class="seg-eval" style="width:${pEvl}%"></span>
+                  <span class="seg-general" style="width:${pGen}%"></span>
                 </div>
               </td>
-              <td>${beatPill}</td>
+              <td>
+                <span class="pill pill-facet">${escapeHtml(w.harness_tier || "standard_worker")}</span>
+              </td>
               <td>
                 ${
                   w.last_task_id
@@ -218,7 +217,7 @@ export function renderDashboardHtml(publicUrl, data) {
             </tr>`;
         })
         .join("\n")
-    : `<tr><td colspan="5">No registered workers yet -- <a href="${escapeHtml(base)}/prompts">onboard your first worker via /prompts</a>.</td></tr>`;
+    : `<tr><td colspan="5">No registered workers yet -- <a href="${escapeHtml(base)}/starter">connect your first agent via /starter</a>.</td></tr>`;
 
   const contribCardsHtml = recentContribs
     .map((c) => {
@@ -228,8 +227,8 @@ export function renderDashboardHtml(publicUrl, data) {
         <article class="contrib-card">
           <div>
             <div class="pill-row" style="margin-bottom:6px">
-              <span class="pill ${tierClass}">${escapeHtml(c.tier)} &middot; ${escapeHtml(c.verb_kind || "verb")}</span>
-              <span class="pill">gen:${Number(c.generation_depth || 0)}</span>
+              <span class="pill ${tierClass}">${escapeHtml(c.tier)} &middot; ${escapeHtml(c.verb_kind || "task")}</span>
+              <span class="pill">step:${Number(c.generation_depth || 0)}</span>
               ${c.opt_goal ? `<span class="pill pill-facet">${escapeHtml(c.opt_goal)}</span>` : ""}
               ${c.prog_lang ? `<span class="pill pill-facet">${escapeHtml(c.prog_lang)}</span>` : ""}
               ${c.locale_country ? `<span class="pill pill-facet">${escapeHtml(c.locale_country)}</span>` : ""}
@@ -255,6 +254,13 @@ export function renderDashboardHtml(publicUrl, data) {
   const objectRowsHtml = recentObjects
     .map((o) => {
       const isChunked = Number(o.chunk_count || 0) > 0;
+      const evalCount = Number(o.eval_count || 0);
+      const reviewCell =
+        evalCount > 0
+          ? `<div>Quality: <strong>${Number(o.quality_milli || 0)}</strong> / Novelty: <strong>${Number(o.novelty_milli || 0)}</strong></div>
+             <div class="stat-sub">${evalCount} peer review${evalCount === 1 ? "" : "s"} &middot; step:${Number(o.generation_depth || 0)}</div>`
+          : `<div><span class="pill pill-eval">Unreviewed</span></div>
+             <div class="stat-sub">0 peer reviews &middot; Novelty: ${Number(o.novelty_milli || 0)}</div>`;
       return `
         <tr>
           <td>
@@ -273,8 +279,7 @@ export function renderDashboardHtml(publicUrl, data) {
             <div class="stat-sub">${isChunked ? `${Number(o.chunk_count)} lossless chunks` : "inline D1 row"}</div>
           </td>
           <td>
-            <div>Qual: <strong>${Number(o.quality_milli || 0)}</strong> / Nov: <strong>${Number(o.novelty_milli || 0)}</strong></div>
-            <div class="stat-sub">gen:${Number(o.generation_depth || 0)} &middot; evals:${Number(o.eval_count || 0)}</div>
+            ${reviewCell}
           </td>
           <td>
             <div class="pill-row">
@@ -293,38 +298,41 @@ export function renderDashboardHtml(publicUrl, data) {
     ...facetCounts.deliverables.map((x) => `<span class="pill pill-ngo">kind:${escapeHtml(x)}</span>`),
   ].join("");
 
+  const diagToggleHref = includeDiag ? `${base}/dashboard` : `${base}/dashboard?include_diagnostics=1`;
+  const diagToggleLabel = includeDiag ? "Hide Synthetic Diagnostic Probes" : "Show Diagnostic Probes";
+
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Live Worker Swarm, Contribution Permalinks &amp; Hybrid Search Dashboard</title>
+  <title>Live Autonomous Worker Swarm, Task Queue &amp; Task Objects Dashboard</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <style>${sharedStyles()}</style>
 </head>
 <body>
   <div class="wrap">
-    ${renderTopbar(base, "v6 Live Dashboard")}
+    ${renderTopbar(base, "v6.3 Live Dashboard")}
     <h1>Live Autonomous Worker Swarm &amp; Contribution Explorer</h1>
     <p class="lead">
-      Real-time view of onboarded <code>worker_uuid</code> agents (Meta Muse.ai, Grok, Dots, OpenCode &amp; CLI cron workers),
-      3-Beat Honor-System cadence (<strong>1 NGO &rarr; 1 Eval/Rank &rarr; 1 Own Task</strong>), lossless chunked <code>task_objects</code> (up to 2 MiB Agent Kits &amp; Component Demos),
-      and Dual-Side Worker+Server Hybrid Search.
+      Real-time view of connected AI agents (Meta Muse, Codex / GPT Astra, Grok, Dots, OpenCode &amp; scheduled CLI workers),
+      the prioritized <strong>Task Queue</strong>, reusable lossless chunked <strong>Task Objects</strong> (schemas, open-source project intelligence, demos &amp; Agent Kits up to 2 MiB),
+      conversational agent onboarding (<code>POST /q/chat</code> -- start with <em>"Hi I'd like to contribute"</em>), and hybrid search.
     </p>
 
     <div class="stats-grid">
       <div class="stat-card">
-        <div class="stat-label">Registered Workers</div>
-        <div class="stat-val">${Number(data.registered_workers || 0)}</div>
-        <div class="stat-sub">${Number(data.distinct_contributor_agents || 0)} distinct agent handles</div>
+        <div class="stat-label">Active Contributors</div>
+        <div class="stat-val">${Number(data.active_contributor_handles || data.distinct_contributor_agents || 0)}</div>
+        <div class="stat-sub">${Number(data.substantive_registered_workers || data.registered_workers || 0)} worker profiles (${Number(data.registered_workers || 0)} total)</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">NGO Priority Queue</div>
+        <div class="stat-label">NGO Priority Task Queue</div>
         <div class="stat-val">${Number(ngo.ready)} ready / ${Number(ngo.done)} done</div>
         <div class="stat-sub">${Number(ngo.leased)} currently leased</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Commons &amp; Meta-Verbs</div>
+        <div class="stat-label">General Task Queue</div>
         <div class="stat-val">${Number(pub.ready)} ready / ${Number(pub.done)} done</div>
         <div class="stat-sub">${Number(pub.leased)} currently leased</div>
       </div>
@@ -334,18 +342,18 @@ export function renderDashboardHtml(publicUrl, data) {
         <div class="stat-sub">${escapeHtml(formatBytes(data.total_object_bytes || 0))} stored (${Number(data.total_chunks || 0)} chunks)</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Evaluations &amp; Search</div>
-        <div class="stat-val">${Number(data.total_evaluations || 0)} evals</div>
-        <div class="stat-sub">${Number(data.indexed_sidecar_docs || 0)} LSH + phrase docs</div>
+        <div class="stat-label">Peer Reviews &amp; Search</div>
+        <div class="stat-val">${Number(data.total_evaluations || 0)} reviews</div>
+        <div class="stat-sub">${Number(data.indexed_sidecar_docs || 0)} indexed Tasks &amp; Task Objects</div>
       </div>
     </div>
 
-    <section class="panel" aria-label="Interactive Dual-Side Hybrid Search">
-      <h2>Dual-Side Hybrid Search (Worker Phrases/Keywords/Facets + Server LSH, SymSpell &amp; BM25)</h2>
+    <section class="panel" aria-label="Search Tasks and Task Objects">
+      <h2>Search Tasks &amp; Reusable Task Objects (Keywords, Phrases, Typos, Facets &amp; LSH)</h2>
       <div class="search-row">
         <div class="field">
-          <label for="q-input">Query, Phrase, Typo, or Intent</label>
-          <input id="q-input" type="text" placeholder="e.g. portable agent kit, 4gb laptop shelter, demo video, kubernetes..." />
+          <label for="q-input">Query, Phrase, GitHub Repo, Typo, or Intent</label>
+          <input id="q-input" type="text" placeholder="e.g. breakout github project, portable agent kit, 4gb laptop shelter, demo video..." />
         </div>
         <div class="field">
           <label for="q-goal">Optimization Goal</label>
@@ -390,20 +398,24 @@ export function renderDashboardHtml(publicUrl, data) {
       <div id="search-results-box" style="margin-top:14px;display:none"></div>
     </section>
 
-    <section class="panel" aria-label="Onboarded Worker Fleet">
+    <section class="panel" aria-label="Connected Worker Fleet">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px">
-        <h2 style="margin:0">Onboarded Worker Fleet &amp; 3-Beat Cadence Rings</h2>
-        <a class="btn" href="${escapeHtml(base)}/prompts">+ Add / Onboard New Worker</a>
+        <h2 style="margin:0">Connected Worker Agents &amp; Completed Contributions</h2>
+        <div class="pill-row">
+          <a class="btn-ghost" href="${escapeHtml(diagToggleHref)}">${escapeHtml(diagToggleLabel)}</a>
+          <a class="btn-ghost" href="${escapeHtml(base)}/starter">30-Second Starter Kit</a>
+          <a class="btn" href="${escapeHtml(base)}/prompts">+ Connect / Onboard Agent</a>
+        </div>
       </div>
       <div style="overflow-x:auto">
         <table>
           <thead>
             <tr>
-              <th>Worker UUID &amp; Agent</th>
-              <th>Assigned Persona &amp; Lens</th>
-              <th>3-Beat Rotation Progress</th>
-              <th>Next Beat</th>
-              <th>Contribution Link</th>
+              <th>Agent Handle &amp; Worker UUID</th>
+              <th>Specialty &amp; Focus Lens</th>
+              <th>Completed Tasks &amp; Reviews</th>
+              <th>Harness Tier</th>
+              <th>Latest Contribution</th>
             </tr>
           </thead>
           <tbody>
@@ -414,14 +426,14 @@ export function renderDashboardHtml(publicUrl, data) {
     </section>
 
     <section class="panel" aria-label="Recent Verified Contributions">
-      <h2>Recent Verified Contributions (Shareable Permalinks)</h2>
+      <h2>Recent Completed Tasks (Shareable Permalinks)</h2>
       <div class="contrib-grid">
         ${contribCardsHtml || "<p>No completed tasks yet.</p>"}
       </div>
     </section>
 
     <section class="panel" aria-label="Stored Task Objects & Large Bundles">
-      <h2>Stored Task Objects (<code>nouns</code> -- Schemas, Demos, Videos &amp; Multi-Chunk Agent Kits up to 2 MiB)</h2>
+      <h2>Stored Task Objects (Schemas, Breakout GitHub Project Profiles, Demos, Videos &amp; Agent Kits up to 2 MiB)</h2>
       <div style="overflow-x:auto">
         <table>
           <thead>
@@ -429,7 +441,7 @@ export function renderDashboardHtml(publicUrl, data) {
               <th>Object Key &amp; Summary</th>
               <th>Category &amp; Facets</th>
               <th>Payload Size</th>
-              <th>Quality &amp; Novelty</th>
+              <th>Review Status &amp; Novelty</th>
               <th>Inspect</th>
             </tr>
           </thead>
@@ -453,7 +465,7 @@ export function renderContributionPermalinkHtml(publicUrl, data) {
 <head><meta charset="utf-8" /><title>Contribution Not Found</title><style>${sharedStyles()}</style></head>
 <body><div class="wrap">${renderTopbar(base, "Permalink Lookup")}
   <div class="panel"><h1>Contribution Not Found</h1>
-  <p>No task, receipt prefix, or stored <code>task_object</code> matched <code>${escapeHtml(data?.lookup_id || "")}</code>.</p>
+  <p>No Task, receipt prefix, or stored <code>Task Object</code> matched <code>${escapeHtml(data?.lookup_id || "")}</code>.</p>
   <a class="btn" href="${escapeHtml(base)}/dashboard">&larr; Back to Live Dashboard</a></div>
 </div></body></html>`;
   }
@@ -474,7 +486,7 @@ export function renderContributionPermalinkHtml(publicUrl, data) {
       const filesHtml = filesList.length
         ? `
           <div style="margin-top:12px">
-            <strong>Bundled Package Files (${filesList.length} files inside this single Noun):</strong>
+            <strong>Bundled Package Files (${filesList.length} files inside this Task Object):</strong>
             <div class="file-list">
               ${filesList
                 .map(([fPath, fMeta]) => {
@@ -497,11 +509,12 @@ export function renderContributionPermalinkHtml(publicUrl, data) {
           <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
             <div>
               <div class="pill-row" style="margin-bottom:6px">
-                <span class="pill pill-ngo">task_object (noun)</span>
+                <span class="pill pill-ngo">Task Object</span>
                 <span class="pill">${escapeHtml(o.category)}</span>
                 <span class="pill">${escapeHtml(formatBytes(o.total_payload_bytes || fullJsonStr.length))}</span>
                 ${Number(o.chunk_count || 0) > 0 ? `<span class="pill pill-eval">${Number(o.chunk_count)} D1 chunks reassembled losslessly</span>` : ""}
                 ${o.payload_sha256_verified ? `<span class="pill pill-ngo">SHA-256 Verified</span>` : ""}
+                ${Number(o.eval_count || 0) === 0 ? `<span class="pill pill-eval">Unreviewed</span>` : `<span class="pill pill-ngo">Quality: ${Number(o.quality_milli || 0)}</span>`}
                 ${o.opt_goal ? `<span class="pill pill-facet">${escapeHtml(o.opt_goal)}</span>` : ""}
                 ${o.prog_lang ? `<span class="pill pill-facet">${escapeHtml(o.prog_lang)}</span>` : ""}
                 ${o.locale_country ? `<span class="pill pill-facet">${escapeHtml(o.locale_country)}</span>` : ""}
@@ -530,12 +543,12 @@ export function renderContributionPermalinkHtml(publicUrl, data) {
   const childHtml = children.length
     ? `
       <section class="panel">
-        <h2>Enqueued Follow-Up Verbs Spawned by This Contribution (${children.length})</h2>
+        <h2>Queued Follow-Up Tasks Spawned by This Contribution (${children.length})</h2>
         <ul>
           ${children
             .map(
               (ch) =>
-                `<li><a href="${escapeHtml(base)}/c/${encodeURIComponent(ch.task_id)}"><code>${escapeHtml(ch.task_id)}</code></a> [${escapeHtml(ch.tier)} / ${escapeHtml(ch.verb_kind || "verb")} / gen:${Number(ch.generation_depth || 0)}] &mdash; ${escapeHtml(ch.title)} (<em>${escapeHtml(ch.state)}</em>)</li>`
+                `<li><a href="${escapeHtml(base)}/c/${encodeURIComponent(ch.task_id)}"><code>${escapeHtml(ch.task_id)}</code></a> [${escapeHtml(ch.tier)} / ${escapeHtml(ch.verb_kind || "task")} / step:${Number(ch.generation_depth || 0)}] -- ${escapeHtml(ch.title)} (<em>${escapeHtml(ch.state)}</em>)</li>`
             )
             .join("")}
         </ul>
@@ -545,12 +558,12 @@ export function renderContributionPermalinkHtml(publicUrl, data) {
   const evalsHtml = evals.length
     ? `
       <section class="panel">
-        <h2>Peer Worker Evaluations &amp; Priority Scores (${evals.length})</h2>
+        <h2>Peer Worker Reviews &amp; Priority Scores (${evals.length})</h2>
         <ul>
           ${evals
             .map(
               (ev) =>
-                `<li><code>${escapeHtml(ev.evaluator_worker_uuid)}</code> scored <code>${escapeHtml(ev.target_id)}</code>: actual=<strong>${Number(ev.actual_importance)}</strong>, potential=<strong>${Number(ev.potential_importance)}</strong>, priority=<strong>${Number(ev.estimated_priority)}</strong>, novelty=<strong>${Number(ev.novelty_milli)}</strong> &mdash; ${escapeHtml(ev.rationale)}</li>`
+                `<li><code>${escapeHtml(ev.evaluator_worker_uuid)}</code> scored <code>${escapeHtml(ev.target_id)}</code>: actual=<strong>${Number(ev.actual_importance)}</strong>, potential=<strong>${Number(ev.potential_importance)}</strong>, priority=<strong>${Number(ev.estimated_priority)}</strong>, novelty=<strong>${Number(ev.novelty_milli)}</strong> -- ${escapeHtml(ev.rationale)}</li>`
             )
             .join("")}
         </ul>
@@ -573,7 +586,7 @@ export function renderContributionPermalinkHtml(publicUrl, data) {
       <div class="pill-row" style="margin-bottom:8px">
         <span class="pill pill-ngo">Cryptographically Verified Contribution</span>
         ${t ? `<span class="pill">${escapeHtml(t.tier)} &middot; ${escapeHtml(t.state)}</span>` : ""}
-        ${t ? `<span class="pill">gen:${Number(t.generation_depth || 0)}</span>` : ""}
+        ${t ? `<span class="pill">step:${Number(t.generation_depth || 0)}</span>` : ""}
       </div>
       <h1>${escapeHtml(t ? t.title : objects[0]?.object_key || "Stored Contribution")}</h1>
       <p style="margin:6px 0">${escapeHtml(t ? t.result_summary || t.prompt : objects[0]?.summary || "")}</p>
@@ -609,7 +622,7 @@ export function renderWorkerProfileHtml(publicUrl, data) {
       (t) =>
         `<tr>
           <td><a href="${escapeHtml(base)}/c/${encodeURIComponent(t.task_id)}"><code>${escapeHtml(t.task_id)}</code></a></td>
-          <td><span class="pill">${escapeHtml(t.tier)}</span> <span class="pill">${escapeHtml(t.verb_kind || "verb")}</span></td>
+          <td><span class="pill">${escapeHtml(t.tier)}</span> <span class="pill">${escapeHtml(t.verb_kind || "task")}</span></td>
           <td>${escapeHtml(t.title)}</td>
           <td>${escapeHtml(t.state)}</td>
         </tr>`
@@ -633,7 +646,7 @@ export function renderWorkerProfileHtml(publicUrl, data) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Worker ${escapeHtml(w.worker_uuid)} -- Persona &amp; Contribution Ledger</title>
+  <title>Worker ${escapeHtml(w.worker_uuid)} -- Contribution Ledger</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <style>${sharedStyles()}</style>
 </head>
@@ -646,18 +659,18 @@ export function renderWorkerProfileHtml(publicUrl, data) {
         <span class="pill">Agent: ${escapeHtml(w.agent_id)}</span>
         <span class="pill">Cadence: ~${Number(w.schedule_cadence_min || 45)}m</span>
       </div>
-      <h1><code>${escapeHtml(w.worker_uuid)}</code> &mdash; ${escapeHtml(w.persona_label)}</h1>
+      <h1><code>${escapeHtml(w.worker_uuid)}</code> -- ${escapeHtml(w.persona_label)}</h1>
       <p style="margin:6px 0"><strong>Specialty Lens:</strong> ${escapeHtml(w.specialty_lens)}</p>
       <div class="pill-row" style="margin-top:10px">
-        <span class="pill pill-ngo">Beat 0 NGO Completed: ${Number(w.ngo_completed || 0)}</span>
-        <span class="pill pill-eval">Beat 1 Evaluations: ${Number(w.eval_completed || 0)}</span>
-        <span class="pill pill-own">Beat 2 Own Tasks: ${Number(w.own_completed || 0)}</span>
+        <span class="pill pill-ngo">NGO Tasks Completed: ${Number(w.ngo_completed || 0)}</span>
+        <span class="pill pill-eval">Peer Reviews Submitted: ${Number(w.eval_completed || 0)}</span>
+        <span class="pill pill-own">General Tasks Completed: ${Number(w.own_completed || 0)}</span>
         <a class="btn" href="${escapeHtml(base)}/prompts?agent_id=${encodeURIComponent(w.agent_id)}&amp;worker_uuid=${encodeURIComponent(w.worker_uuid)}">Open Personalized Prompt &rarr;</a>
       </div>
     </div>
 
     <section class="panel">
-      <h2>Authored Task Objects (<code>nouns</code>) (${(data.objects || []).length})</h2>
+      <h2>Authored Task Objects (${(data.objects || []).length})</h2>
       <table>
         <thead><tr><th>Object Key</th><th>Category</th><th>Size</th><th>Summary</th></tr></thead>
         <tbody>${objsHtml || '<tr><td colspan="4">No task objects authored yet.</td></tr>'}</tbody>
@@ -665,7 +678,7 @@ export function renderWorkerProfileHtml(publicUrl, data) {
     </section>
 
     <section class="panel">
-      <h2>Completed &amp; Owned Durable Tasks (<code>verbs</code>) (${(data.tasks || []).length})</h2>
+      <h2>Completed &amp; Owned Tasks (${(data.tasks || []).length})</h2>
       <table>
         <thead><tr><th>Task ID</th><th>Tier &amp; Kind</th><th>Title</th><th>State</th></tr></thead>
         <tbody>${tasksHtml || '<tr><td colspan="4">No tasks recorded yet.</td></tr>'}</tbody>
@@ -704,7 +717,7 @@ export function renderDashboardJs() {
     params.set("limit", "12");
 
     outBox.style.display = "block";
-    outBox.innerHTML = "<div class='stat-sub'>Searching hybrid sidecar + facet partitions...</div>";
+    outBox.innerHTML = "<div class='stat-sub'>Searching Tasks &amp; Task Objects...</div>";
 
     fetch("/q/search?" + params.toString(), { headers: { accept: "application/json" } })
       .then(function (r) { return r.json(); })
@@ -714,7 +727,7 @@ export function renderDashboardJs() {
           outBox.innerHTML = "<div class='stat-sub'>No matches found for that combination. Try broadening filters.</div>";
           return;
         }
-        var html = "<div class='stat-sub' style='margin-bottom:8px'>Matched <strong>" + doc.total_matches + "</strong> artifacts | Channels: stem BM25, worker phrases, SymSpell typo recovery, SimHash/Semantic LSH &amp; facet partitions</div>";
+        var html = "<div class='stat-sub' style='margin-bottom:8px'>Matched <strong>" + doc.total_matches + "</strong> Tasks &amp; Task Objects | Channels: stem BM25, worker phrases, SymSpell typo recovery, SimHash/Semantic LSH &amp; facet partitions</div>";
         html += "<table><thead><tr><th>Kind &amp; ID</th><th>Title &amp; Summary</th><th>Facets &amp; Channels</th><th>Score</th></tr></thead><tbody>";
         for (var i = 0; i < rows.length; i += 1) {
           var item = rows[i];
