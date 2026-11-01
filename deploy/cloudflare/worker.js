@@ -1488,7 +1488,7 @@ const application = {
         if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
         return jsonResp(buildAgentCard(publicUrl));
       }
-      if (path === "/api/health" || path === "/v1/health" || path === "/healthz") {
+      if (path === "/health" || path === "/api/health" || path === "/v1/health" || path === "/healthz") {
         if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
         const [active, ctxEntries] = await Promise.all([
           listProvisionsForCaller(db, SYSTEM_BUILTIN_SCOPE, { includeBuiltin: true, enabledOnly: true }),
@@ -1537,6 +1537,8 @@ const application = {
         path === "/starter" ||
         path.startsWith("/starter/") ||
         path === "/help" ||
+        path === "/feedback" ||
+        path.startsWith("/feedback/") ||
         path === "/chat" ||
         path.startsWith("/chat/") ||
         path === "/status" ||

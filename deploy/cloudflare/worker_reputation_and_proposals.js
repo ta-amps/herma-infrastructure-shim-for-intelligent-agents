@@ -222,7 +222,7 @@ export function extractProposalMetadata(item = {}, payloadObj = null) {
 let _schemaReady = new WeakSet();
 
 export async function ensureReputationAndProposalsSchema(db) {
-  if (!db || _schemaReady.has(db)) return;
+  if (!db || db.__hermaSchemaV69Ready || _schemaReady.has(db)) return;
   const ddl = [
     `CREATE TABLE IF NOT EXISTS herma_task_attempt_ledger (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

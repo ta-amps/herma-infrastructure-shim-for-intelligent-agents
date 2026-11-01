@@ -353,7 +353,7 @@ export function containsRawCapabilitySecret(rawText) {
 }
 
 export async function ensureOnDemandApiSchema(db) {
-  if (!db || INITIALIZED_ON_DEMAND_DBS.has(db)) return;
+  if (!db || db.__hermaSchemaV69Ready || INITIALIZED_ON_DEMAND_DBS.has(db)) return;
 
   await db
     .prepare(

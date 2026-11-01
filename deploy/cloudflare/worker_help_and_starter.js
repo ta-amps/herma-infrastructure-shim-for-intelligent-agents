@@ -153,7 +153,7 @@ function cleanSessionId(raw) {
 }
 
 export async function ensureHelpAndStarterSchema(db) {
-  if (db && typeof db === "object" && INITIALIZED_HELP_DBS.has(db)) {
+  if (db && typeof db === "object" && (db.__hermaSchemaV69Ready || INITIALIZED_HELP_DBS.has(db))) {
     return;
   }
   await db

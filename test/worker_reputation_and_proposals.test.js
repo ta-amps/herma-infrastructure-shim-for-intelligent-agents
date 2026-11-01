@@ -416,7 +416,7 @@ describe("Herma v6.7 Reputation, Cooperative Relay, Multimodal & Light-UI-Only G
       expect(html, `Missing only-light declaration in ${name}`).toMatch(/only light/i);
     }
     const catalog = buildPromptCatalog("https://herma.ta-amps.workers.dev");
-    expect(catalog[0].id).toBe("codex_unlimited_frontier_loop_v7");
+    expect(catalog[0].id).toBe("codex_unlimited_frontier_loop_v8");
     expect(catalog[0].body).toContain("ecosyste.ms");
     expect(catalog[0].body).toContain("mesh_3d_stl");
   });
