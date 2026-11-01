@@ -16,7 +16,7 @@ export async function agentFetch(request, env, handler) {
   const path = new URL(request.url).pathname;
   if (
     request.method === "OPTIONS" &&
-    (path === "/mcp" || path === "/bridge" || path.startsWith("/bridge/") || path.startsWith("/api/") || path.startsWith("/v1/"))
+    (path === "/mcp" || path === "/bridge" || path.startsWith("/bridge/") || path === "/q" || path.startsWith("/q/") || path.startsWith("/api/") || path.startsWith("/v1/"))
   ) {
     response = new Response(null, {status:204});
   } else {
