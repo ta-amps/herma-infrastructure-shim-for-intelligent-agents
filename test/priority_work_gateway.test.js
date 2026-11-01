@@ -84,6 +84,12 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
   });
 
   it("supports typo-tolerant SymSpell + semantic alias + LSH RRF search on /q/search while hiding infra_private from public", async () => {
+    const trustRes = await callGateway("/q/trust");
+    expect(trustRes.status).toBe(200);
+    const trustJson = await trustRes.json();
+    expect(trustJson.schema).toBe("herma.priority_work_gateway.trust.v1");
+    expect(trustJson.tier_isolation.infra_private_hidden_from_public).toBe(true);
+
     // 1. Severe multi-typo search ("shlter accesibility harmnizer") recovers canonical terms & ranks shelter seed #1
     const typoRes = await callGateway("/q/search?q=shlter+accesibility+harmnizer");
     expect(typoRes.status).toBe(200);
