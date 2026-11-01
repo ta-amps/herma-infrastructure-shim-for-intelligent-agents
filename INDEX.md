@@ -31,13 +31,14 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) |  |
 
-## deploy/ (15)
+## deploy/ (16)
 
 | File | What it is |
 |---|---|
 | [deploy/bootstrap-hosting.sh](deploy/bootstrap-hosting.sh) | One-time hosting setup for one service on Fly.io behind a Cloudflare Worker: the Fly app and its |
 | [deploy/cloudflare/agent_access.js](deploy/cloudflare/agent_access.js) |  |
 | [deploy/cloudflare/agent_start.js](deploy/cloudflare/agent_start.js) | Versioned onboarding instructions. |
+| [deploy/cloudflare/bilateral_bridge.js](deploy/cloudflare/bilateral_bridge.js) | Bilateral Agent Transport Shim (/bridge/) for Herma Cloud Worker. |
 | [deploy/cloudflare/conversation.js](deploy/cloudflare/conversation.js) | Typed proposals only. |
 | [deploy/cloudflare/conversation_data.json](deploy/cloudflare/conversation_data.json) | JSON object: categories, schemas, system_prompt |
 | [deploy/cloudflare/conversation_state.js](deploy/cloudflare/conversation_state.js) | Conversation coordination, not a work queue. |
@@ -130,10 +131,11 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/check_architecture.py](scripts/check_architecture.py) | Check that architecture.json still describes this repo truthfully. |
 | [scripts/check_public.py](scripts/check_public.py) | Fail if a file headed for a public repo holds a secret or a private name. |
 
-## test/ (5)
+## test/ (6)
 
 | File | What it is |
 |---|---|
+| [test/bilateral_bridge.test.js](test/bilateral_bridge.test.js) |  |
 | [test/conversation.test.js](test/conversation.test.js) |  |
 | [test/provider_diagnostics.test.js](test/provider_diagnostics.test.js) |  |
 | [test/provider_grants.test.js](test/provider_grants.test.js) |  |

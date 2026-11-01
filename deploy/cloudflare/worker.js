@@ -1,5 +1,6 @@
 import { agentStartAsset, withAgentStart } from "./agent_start.js";
 import { agentFetch } from "./agent_access.js";
+import { handleBilateralBridge } from "./bilateral_bridge.js";
 import { ConversationError, conversationSchemas, strictJson, validateTurn } from "./conversation.js";
 // Cloudflare Cloud Worker for Herma: 24/7 caller-isolated context-shimming AI middleware backed by
 // Cloudflare D1 (`ta-amps-herma`) + direct Service Binding to `tessera` Cloud (`env.TESSERA`),
@@ -1525,6 +1526,9 @@ const application = {
             headers: { "content-type": "text/html; charset=utf-8" },
           })
         );
+      }
+      if (path === "/bridge" || path.startsWith("/bridge/")) {
+        return await handleBilateralBridge(request, env, db, publicUrl, { withSecurity });
       }
       if (path === "/api/preview") {
         if (method !== "POST") return methodNotAllowed(["POST"]);

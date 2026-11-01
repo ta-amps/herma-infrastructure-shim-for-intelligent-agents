@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "check": "node --check deploy/cloudflare/conversation.js && node --check deploy/cloudflare/conversation_state.js && vitest run",
+    "check": "node --check deploy/cloudflare/bilateral_bridge.js && node --check deploy/cloudflare/conversation.js && node --check deploy/cloudflare/conversation_state.js && vitest run",
     "build": "wrangler deploy --dry-run --config deploy/cloudflare/wrangler.jsonc"
   },
   "dependencies": {"@cfworker/json-schema": "4.1.1"},

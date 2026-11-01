@@ -254,6 +254,7 @@
         "deploy/cloudflare/d1-herma.sql",
         "deploy/cloudflare/wrangler.jsonc",
         "deploy/cloudflare/entry.js",
+        "deploy/cloudflare/bilateral_bridge.js",
         "deploy/cloudflare/conversation.js",
         "deploy/cloudflare/provider_diagnostics.js",
         "deploy/cloudflare/provider_health.js",
@@ -269,6 +270,7 @@
       "tests": [
         "tests/test_herma.py",
         "test/conversation.test.js",
+        "test/bilateral_bridge.test.js",
         "test/provider_diagnostics.test.js",
         "test/provider_health.test.js",
         "test/provider_grants.test.js",

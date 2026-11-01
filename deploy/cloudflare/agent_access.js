@@ -14,7 +14,10 @@ export async function agentFetch(request, env, handler) {
   const requestId = /^[A-Za-z0-9_.:-]{1,100}$/.test(rawId) ? rawId : crypto.randomUUID();
   let response;
   const path = new URL(request.url).pathname;
-  if (request.method === "OPTIONS" && (path === "/mcp" || path.startsWith("/api/") || path.startsWith("/v1/"))) {
+  if (
+    request.method === "OPTIONS" &&
+    (path === "/mcp" || path === "/bridge" || path.startsWith("/bridge/") || path.startsWith("/api/") || path.startsWith("/v1/"))
+  ) {
     response = new Response(null, {status:204});
   } else {
     if (request.body && ["POST", "PUT", "PATCH"].includes(request.method)) {
