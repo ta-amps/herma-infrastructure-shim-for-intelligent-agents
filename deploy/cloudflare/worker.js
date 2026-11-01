@@ -1531,7 +1531,14 @@ const application = {
       if (path === "/bridge" || path.startsWith("/bridge/")) {
         return await handleBilateralBridge(request, env, db, publicUrl, { withSecurity });
       }
-      if (path === "/q" || path.startsWith("/q/")) {
+      if (
+        path === "/q" ||
+        path.startsWith("/q/") ||
+        path === "/prompts" ||
+        path.startsWith("/prompts/") ||
+        path === "/prompts.js" ||
+        path === "/get-started"
+      ) {
         return await handlePriorityWorkGateway(request, env, db, publicUrl, { withSecurity });
       }
       if (path === "/api/preview") {

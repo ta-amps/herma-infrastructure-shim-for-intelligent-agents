@@ -128,4 +128,153 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
       expect(affClaim.lease.lsh_band_0).toBe(targetBand);
     }
   });
+
+  it("drives bilateral /q/onboard, 3-beat worker_uuid rotation (NGO -> Eval/Rank -> Own Task), runtime mutations, and /prompts hub", async () => {
+    // 1. Onboard Worker A & Worker B -> distinct worker_uuid + persona/entropy kits
+    const obARes = await callGateway("/q/onboard", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent_id: "cron-client-a", capabilities: ["post", "cron"] }),
+    });
+    expect(obARes.status).toBe(200);
+    const obA = await obARes.json();
+    const uuidA = obA.worker_profile.worker_uuid;
+    expect(uuidA.startsWith("w_")).toBe(true);
+    expect(obA.calibration_questions.length).toBe(3);
+
+    const obBRes = await callGateway("/q/onboard/cron-client-b?format=json");
+    expect(obBRes.status).toBe(200);
+    const obB = await obBRes.json();
+    const uuidB = obB.worker_profile.worker_uuid;
+    expect(uuidB).not.toBe(uuidA);
+
+    // 2. Beat 0 (iteration 0 -> ngo): claims ngo_priority task & enqueues an own-UUID tagged continuation verb for Beat 2
+    const beat0ClaimRes = await callGateway(`/q/claim/cron-client-a?worker_uuid=${encodeURIComponent(uuidA)}&slot=auto&format=json`);
+    expect(beat0ClaimRes.status).toBe(200);
+    const beat0Claim = await beat0ClaimRes.json();
+    expect(beat0Claim.bilateral_guidance.current_beat_slot).toBe("ngo");
+    expect(beat0Claim.lease.tier).toBe("ngo_priority");
+
+    const beat0SubRes = await callGateway("/q/submit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent_id: "cron-client-a",
+        worker_uuid: uuidA,
+        task_id: beat0Claim.lease.task_id,
+        fencing_token: beat0Claim.lease.fencing_token,
+        summary: "Solved 1 atomic NGO shelter intake field mapping",
+        task_objects: [
+          {
+            object_key: "atomic_shelter_intake_v1",
+            category: "canonical_schema",
+            summary: "Atomic intake schema tagged to worker A",
+            payload: { version: "1.0.0", fields: ["facility_id", "wheelchair_ramp"] },
+          },
+        ],
+        queued_verbs: [
+          {
+            tier: "public_general",
+            verb_kind: "worker_self_directed",
+            owner_worker_uuid: uuidA,
+            title: "Worker A Personal Thread Step 2: Backup-Battery Telemetry",
+            prompt: "Narrow wheelchair ramp power-backup telemetry for sub-freezing shelters.",
+          },
+        ],
+      }),
+    });
+    expect(beat0SubRes.status).toBe(200);
+    const beat0Sub = await beat0SubRes.json();
+    expect(beat0Sub.worker_iteration_state.next_honor_beat_slot).toBe("eval");
+    const ownVerbId = beat0Sub.enqueued_followup_verbs[0].task_id;
+
+    // Verify Worker B on Beat 0 does NOT steal Worker A's private owner_worker_uuid task
+    const bClaimRes = await callGateway(`/q/claim/cron-client-b?worker_uuid=${encodeURIComponent(uuidB)}&slot=own&format=json`);
+    const bClaim = await bClaimRes.json();
+    if (bClaim.lease) {
+      expect(bClaim.lease.task_id).not.toBe(ownVerbId);
+    }
+
+    // 3. Beat 1 (iteration 1 -> eval): Worker A claims evaluation task & ranks both a task and a task_object
+    const beat1ClaimRes = await callGateway(`/q/claim/cron-client-a?worker_uuid=${encodeURIComponent(uuidA)}&slot=auto&format=json`);
+    expect(beat1ClaimRes.status).toBe(200);
+    const beat1Claim = await beat1ClaimRes.json();
+    expect(beat1Claim.bilateral_guidance.current_beat_slot).toBe("eval");
+    expect(beat1Claim.lease.verb_kind).toBe("eval_and_rank");
+    expect(beat1Claim.bilateral_guidance.evaluation_candidates.tasks_to_evaluate.length).toBeGreaterThanOrEqual(1);
+
+    const beat1SubRes = await callGateway("/q/submit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent_id: "cron-client-a",
+        worker_uuid: uuidA,
+        task_id: beat1Claim.lease.task_id,
+        fencing_token: beat1Claim.lease.fencing_token,
+        summary: "Evaluated & ranked own verb and shelter intake object",
+        evaluations: [
+          {
+            target_kind: "task",
+            target_id: ownVerbId,
+            actual_importance: 90,
+            potential_importance: 96,
+            estimated_priority: 92,
+            novelty_milli: 910,
+            convergence_flag: false,
+            rationale: "High-novelty cold-weather battery telemetry continuation",
+          },
+          {
+            target_kind: "object",
+            target_id: "atomic_shelter_intake_v1",
+            actual_importance: 88,
+            potential_importance: 90,
+            estimated_priority: 89,
+            novelty_milli: 840,
+            convergence_flag: false,
+            rationale: "Reusable canonical intake fields",
+          },
+        ],
+      }),
+    });
+    expect(beat1SubRes.status).toBe(200);
+    const beat1Sub = await beat1SubRes.json();
+    expect(beat1Sub.applied_evaluations.length).toBe(2);
+    expect(beat1Sub.worker_iteration_state.next_honor_beat_slot).toBe("own");
+
+    // 4. Beat 2 (iteration 2 -> own): Worker A automatically claims its own UUID-tagged continuation verb!
+    const beat2ClaimRes = await callGateway(`/q/claim/cron-client-a?worker_uuid=${encodeURIComponent(uuidA)}&slot=auto&format=json`);
+    expect(beat2ClaimRes.status).toBe(200);
+    const beat2Claim = await beat2ClaimRes.json();
+    expect(beat2Claim.bilateral_guidance.current_beat_slot).toBe("own");
+    expect(beat2Claim.lease.task_id).toBe(ownVerbId);
+    expect(beat2Claim.lease.owner_worker_uuid).toBe(uuidA);
+
+    // 5. Verify /q/seeds, /q/runtimes, and CSP-compliant /prompts + /q/prompts.js + /prompts/raw/master_v3
+    const seedsRes = await callGateway(`/q/seeds?worker_uuid=${encodeURIComponent(uuidA)}`);
+    expect(seedsRes.status).toBe(200);
+    const seedsJson = await seedsRes.json();
+    expect(seedsJson.anti_convergence_kit.atomic_remix_operator.operator_id).toBeTruthy();
+
+    const runtimesRes = await callGateway("/q/runtimes?limit=5");
+    expect(runtimesRes.status).toBe(200);
+    const runtimesJson = await runtimesRes.json();
+    expect(runtimesJson.runtimes.length).toBeGreaterThanOrEqual(1);
+
+    const promptsPageRes = await callGateway("/prompts");
+    expect(promptsPageRes.status).toBe(200);
+    expect(promptsPageRes.headers.get("content-security-policy")).toContain("script-src 'self'");
+    const promptsHtml = await promptsPageRes.text();
+    expect(promptsHtml).toContain("Copy &amp; Paste Agent Worker Prompts");
+    expect(promptsHtml).toContain('<script src="/q/prompts.js" defer></script>');
+
+    const promptsJsRes = await callGateway("/q/prompts.js");
+    expect(promptsJsRes.status).toBe(200);
+    expect(promptsJsRes.headers.get("content-type")).toContain("application/javascript");
+
+    const rawPromptRes = await callGateway(`/prompts/raw/master_v3?agent_id=muse-cron&worker_uuid=${encodeURIComponent(uuidA)}`);
+    expect(rawPromptRes.status).toBe(200);
+    const rawPromptTxt = await rawPromptRes.text();
+    expect(rawPromptTxt).toContain("muse-cron");
+    expect(rawPromptTxt).toContain(uuidA);
+  });
 });

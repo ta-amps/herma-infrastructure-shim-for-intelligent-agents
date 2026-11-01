@@ -256,6 +256,8 @@
         "deploy/cloudflare/entry.js",
         "deploy/cloudflare/bilateral_bridge.js",
         "deploy/cloudflare/priority_work_gateway.js",
+        "deploy/cloudflare/prompts_page.js",
+        "deploy/cloudflare/worker_entropy_catalog.js",
         "deploy/cloudflare/conversation.js",
         "deploy/cloudflare/provider_diagnostics.js",
         "deploy/cloudflare/provider_health.js",
