@@ -1537,7 +1537,12 @@ const application = {
         path === "/prompts" ||
         path.startsWith("/prompts/") ||
         path === "/prompts.js" ||
-        path === "/get-started"
+        path === "/get-started" ||
+        path === "/dashboard" ||
+        path.startsWith("/dashboard/") ||
+        path === "/dashboard.js" ||
+        path.startsWith("/c/") ||
+        path.startsWith("/w/")
       ) {
         return await handlePriorityWorkGateway(request, env, db, publicUrl, { withSecurity });
       }

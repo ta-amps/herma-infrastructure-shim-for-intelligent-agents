@@ -1,6 +1,7 @@
 const ACCESS_INFO = {"authenticated_access": {"clients": ["coding_harness", "personal-assistant", "custom-harness"], "credential": "hmk_", "provider_credentials": "Server keys are bound to the configured provider origin; alternate providers require an allowlisted host and a caller-owned key.", "route_requests_per_key_hour": 60, "scopes": ["route", "configure"]}, "http_limits": {"cors": "bearer-only; wildcard origin; no cookies", "request_bytes": 262144}, "public_access": {"authentication_required": false, "mcp": "/mcp", "mode": "deterministic_preview", "persistence": false}, "surface": "herma", "tessera_access": {"anonymous_namespace": "demo.<principal>", "anonymous_session_endpoint": "https://tessera.ta-amps.workers.dev/v1/session/anonymous", "connect_url": "https://tessera.ta-amps.workers.dev/connect", "discovery_url": "https://tessera.ta-amps.workers.dev/connect.json", "key_prefix": "tsk_", "persistence": "Use your own Tessera principal to save returned artifacts; this surface never borrows a server credential for public writes.", "session_prefix": "tan_"}};
 // Bounded stateless CORS transport. Authorization is evaluated by the application routes.
 export const MAX_REQUEST_BYTES = 262144;
+export const MAX_QUEUE_CHUNKED_REQUEST_BYTES = 2359296;
 const CORS_HEADERS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, HEAD, POST, PUT, DELETE, OPTIONS",
@@ -21,6 +22,8 @@ export async function agentFetch(request, env, handler) {
     response = new Response(null, {status:204});
   } else {
     if (request.body && ["POST", "PUT", "PATCH"].includes(request.method)) {
+      const routeMaxBytes =
+        path === "/q/submit" || path === "/q/enqueue" ? MAX_QUEUE_CHUNKED_REQUEST_BYTES : MAX_REQUEST_BYTES;
       const reader = request.body.getReader();
       const chunks = [];
       let size = 0;
@@ -28,9 +31,9 @@ export async function agentFetch(request, env, handler) {
         const {value, done} = await reader.read();
         if (done) break;
         size += value.byteLength;
-        if (size > MAX_REQUEST_BYTES) {
+        if (size > routeMaxBytes) {
           await reader.cancel();
-          response = Response.json({code:"request_too_large",max_bytes:MAX_REQUEST_BYTES},{status:413});
+          response = Response.json({code:"request_too_large",max_bytes:routeMaxBytes},{status:413});
           break;
         }
         chunks.push(value);

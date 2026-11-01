@@ -1,12 +1,12 @@
 // Bilateral Worker Onboarding Personas, Calibration Questions, Single-Step Atomic Remix Operators,
-// Random Job Descriptions, Esoteric Topic Seeds & 100-Client Orthogonal Selector.
+// Optimization Goals, Programming Languages, Global Environments, Demo/Agent-Kit Seeds & 100-Client Orthogonal Selector.
 //
 // Ensures 100+ simultaneous cron workers running on overlapping base LLMs receive disjoint
-// `(persona, atomic_remix_operator, random_job_description, random_esoteric_topic, counterfactual_constraint)`
+// `(persona, atomic_remix_operator, opt_goal, prog_lang, locale_country, deliverable_kind, random_job_description, random_esoteric_topic, counterfactual_constraint)`
 // assignments per `(worker_uuid, iteration_count)` without mode collapse.
 
 export const ENTROPY_CATALOG_GRID = Object.freeze({
-  schema_id: "herma.worker_entropy_catalog.grid.v1",
+  schema_id: "herma.worker_entropy_catalog.grid.v2",
   beat_cycle_length: 3,
   beat_ngo: 0,
   beat_eval: 1,
@@ -20,6 +20,10 @@ export const ENTROPY_CATALOG_GRID = Object.freeze({
   salt_job: 3,
   salt_topic: 4,
   salt_constraint: 5,
+  salt_goal: 6,
+  salt_lang: 7,
+  salt_locale: 8,
+  salt_deliverable: 9,
 });
 
 export const PERSONA_CATALOG = Object.freeze([
@@ -103,6 +107,116 @@ export const PERSONA_CATALOG = Object.freeze([
     persona_label: "Durable Queue, Lease-Fencing & Idempotency Architect",
     specialty_lens: "monotonic fencing tokens, outbox atomicity, LSH work coalescing, and deterministic replay checkpoints",
   },
+  {
+    persona_id: "interactive_demo_choreographer",
+    persona_label: "Deterministic Component Demo & Visual QA Engineer",
+    specialty_lens: "self-contained runnable demos, frame-accurate visual proof sheets, zero-dependency walkthroughs, and learner clarity",
+  },
+  {
+    persona_id: "portable_agent_kit_builder",
+    persona_label: "Portable Agent-Kit, Skill & Kubernetes Systems Packager",
+    specialty_lens: "packaging harness configs, skills, conformance rules, hooks, 4GB-laptop CLI runners, and K8s manifests into verifiable bundles",
+  },
+]);
+
+export const OPTIMIZATION_GOALS = Object.freeze([
+  {
+    goal_id: "cheapest_per_1k_ops",
+    label: "Cheapest Total Cost per 1,000 Verified Operations",
+    constraint_hint: "Minimize CPU milliseconds, row reads, and network egress; prefer static B-tree lookups and zero external paid APIs.",
+  },
+  {
+    goal_id: "fastest_p99_sub10ms",
+    label: "Fastest Deterministic p99 Latency (<10ms Local / Edge)",
+    constraint_hint: "Precompute lookup tables/sketches, avoid dynamic allocations on hot paths, and bound worst-case loop iterations.",
+  },
+  {
+    goal_id: "runs_on_small_4gb_laptop",
+    label: "Runs Offline on a Small 4 GB RAM Laptop (Zero GPU / Zero Docker)",
+    constraint_hint: "Keep resident memory <120 MB, require zero heavyweight daemon dependencies, and include a single-command local runner.",
+  },
+  {
+    goal_id: "single_maintainer_zero_dep",
+    label: "Maintainable by 1 Volunteer Engineer (Zero Third-Party Dependencies)",
+    constraint_hint: "Use clear standard-library code (<250 lines per module) with inline self-tests so a solo maintainer can audit it in 10 minutes.",
+  },
+  {
+    goal_id: "works_with_legacy_csv_sms",
+    label: "Drop-In Compatible with Legacy CSV Spreadsheets, POSIX Pipes & SMS/USSD",
+    constraint_hint: "Accept messy UTF-8/Latin-1 CSV or 160-char SMS text on stdin/HTTP and emit deterministic JSON + plain-text receipts.",
+  },
+  {
+    goal_id: "full_end_to_end_runnable_process",
+    label: "Complete End-to-End Runnable Process (Ingest -> Validate -> Transform -> QA Proof)",
+    constraint_hint: "Provide the full closed-loop pipeline contract including sample fixture input, deterministic transform, and verification check.",
+  },
+  {
+    goal_id: "kubernetes_production_ready",
+    label: "Kubernetes Production-Ready (CronJob/StatefulSet + Probes + Resource Quotas)",
+    constraint_hint: "Specify liveness/readiness probes, non-root securityContext, CPU/memory requests+limits, PodDisruptionBudget, and graceful SIGTERM drain.",
+  },
+]);
+
+export const PROGRAMMING_LANGUAGES = Object.freeze([
+  { lang_id: "Python_3_12_Stdlib", label: "Python 3.12 (Standard Library + Deterministic CLI)" },
+  { lang_id: "TypeScript_Cloudflare_Workers", label: "TypeScript / ES Modules (Cloudflare Workers + D1)" },
+  { lang_id: "Rust_ZeroAlloc_CLI", label: "Rust (Memory-Safe Static Binary / WASM)" },
+  { lang_id: "Go_Static_Binary", label: "Go (Single Static Binary + Bounded Goroutines)" },
+  { lang_id: "SQLite_D1_Pure_SQL", label: "SQLite / Cloudflare D1 Pure Declarative SQL + Triggers" },
+  { lang_id: "POSIX_Shell_Awk", label: "POSIX sh + awk (Universal Unix / Rescue-System Compatible)" },
+  { lang_id: "Kubernetes_YAML_Helm", label: "Kubernetes Manifests + Container Entrypoint Spec" },
+  { lang_id: "HTML5_Canvas_ZeroDep_Demo", label: "Self-Contained HTML5 + Canvas Interactive Demo & Frame Renderer" },
+]);
+
+export const GLOBAL_ENVIRONMENTS = Object.freeze([
+  {
+    locale_id: "Kenya_Rural_USSD_2G",
+    label: "Kenya / East Africa -- Intermittent 2G & USSD Solar Kiosk",
+    env_notes: "Bilingual Swahili/English shortcodes, 160-byte USSD session budgets, M-Pesa/mobile receipt reconciliation, solar battery brownouts.",
+  },
+  {
+    locale_id: "Japan_Municipal_Disaster_CJK",
+    label: "Japan -- Municipal Earthquake Shelter & CJK Full-Width Intake",
+    env_notes: "Half-width vs full-width katakana/kanji normalization, ward-level evacuation shelter rosters, elderly walking-speed clearance.",
+  },
+  {
+    locale_id: "Brazil_Riverine_CivilDefense",
+    label: "Brazil -- Riverine Flood Defense & Delayed Satellite Sync",
+    env_notes: "Portuguese diacritic folding, intermittent boat-hub batch sync every 6 hours, municipal civil-defense alert thresholds.",
+  },
+  {
+    locale_id: "India_Multiscript_DPI",
+    label: "India -- Multi-Script Phonetic Clinic & Public-Good Triage",
+    env_notes: "Cross-script Latin/Devanagari/Tamil phonetic matching, low-RAM Android WebView budgets, offline village health worker queues.",
+  },
+  {
+    locale_id: "Nordic_Arctic_SubZero_Microgrid",
+    label: "Arctic / High-Latitude -- Sub-Zero Microgrid & VHF Packet Relay",
+    env_notes: "-30C LFP/lead-acid battery derating, glove-operated 3-key interfaces, sub-1KB VHF packet burst framing.",
+  },
+  {
+    locale_id: "EU_Airgapped_LocalFirst_Civic",
+    label: "European Union -- Strict Local-First GDPR Privacy & Air-Gapped Audit",
+    env_notes: "Zero PII retention, salted Bloom/hash eligibility proofs, deterministic offline reproducibility, WCAG AAA screen-reader compliance.",
+  },
+  {
+    locale_id: "Small_Laptop_4GB_Offline_Lab",
+    label: "Universal 4 GB RAM Student/Field Laptop (Offline CLI + Local SQLite)",
+    env_notes: "Zero cloud credentials required, runs in <120 MB RAM on Windows/macOS/Linux, outputs self-verifying JSON + HTML report.",
+  },
+  {
+    locale_id: "Kubernetes_MultiZone_HA_Cluster",
+    label: "Multi-Zone Kubernetes Cluster (Fenced Leases + Zero-Downtime Rollout)",
+    env_notes: "3-zone topologySpreadConstraints, CAS fencing tokens across pod restarts, Prometheus metrics, strict network policies.",
+  },
+]);
+
+export const DELIVERABLE_ARCHETYPES = Object.freeze([
+  { kind_id: "verified_schema_and_tests", label: "Canonical JSON Schema + Boundary Test Vectors" },
+  { kind_id: "runnable_cli_pipeline", label: "Runnable Single-File CLI Pipeline + Self-Test Suite" },
+  { kind_id: "demo_and_video", label: "Interactive Runnable Demo + Deterministic Demo-Video Storyboard/Renderer" },
+  { kind_id: "portable_agent_kit", label: "Portable Agent Kit Noun (Harness + Skills + Rules + Hooks + Tests + K8s/Laptop Runners)" },
+  { kind_id: "mutated_isomorphic_verb_pack", label: "Cross-Domain Isomorphic Mapping + Chained Follow-Up Verbs" },
 ]);
 
 export const ATOMIC_REMIX_OPERATORS = Object.freeze([
@@ -111,6 +225,12 @@ export const ATOMIC_REMIX_OPERATORS = Object.freeze([
     label: "Isolate 1 <=150-Word Chunk -> Extract 1 Concrete Mechanism",
     instruction:
       "Select ONLY ONE paragraph or sub-section (<= 150 words; never summarize the whole document), extract 1 testable mechanism or structural invariant as a task_object, and queue 1 narrow follow-up verb.",
+  },
+  {
+    operator_id: "chat_context_safe_distillation",
+    label: "De-Identified Technical Context Distillation (From Prior Discussion)",
+    instruction:
+      "If running in an existing technical/engineering chat thread, distill 1 non-sensitive, public-safe mathematical invariant, QA check, schema, or algorithmic pattern from earlier turns (zero PII/credentials/private text) into 1 reusable task_object + 1 follow-up verb.",
   },
   {
     operator_id: "problem_to_opportunity_flip",
@@ -126,39 +246,39 @@ export const ATOMIC_REMIX_OPERATORS = Object.freeze([
   },
   {
     operator_id: "alternative_reality_constraint_flip",
-    label: "Alternative-Reality / Assumption Inversion (1 Variable Only)",
+    label: "Alternative-Reality / Optimization-Goal Inversion (1 Variable Only)",
     instruction:
-      "Flip EXACTLY ONE baseline assumption (e.g., zero internet, zero grid power, 100x latency, paper-only handoff, or untrusted spoofed caller) and solve/queue the resulting single boundary case.",
+      "Flip EXACTLY ONE baseline constraint toward your assigned optimization_goal or global_environment (e.g., 4GB laptop offline, cheapest per 1k ops, Kubernetes HA, or 2G SMS) and solve/queue that single boundary case.",
   },
   {
     operator_id: "synonym_and_domain_isomorphism",
     label: "Prior Verb Runtime -> Synonym & Structural Domain Transfer",
     instruction:
-      "Pull 1 prior verb runtime from /q/runtimes, preserve its abstract control structure, replace its surface domain nouns/terms with an isomorphic operational problem in a distinct setting, and enqueue the mutated verb.",
+      "Pull 1 prior verb runtime from /q/runtimes, preserve its abstract control structure, replace its surface domain nouns/terms with an isomorphic operational problem in a distinct setting/country, and enqueue the mutated verb.",
   },
   {
     operator_id: "prior_runtime_constraint_mutation",
-    label: "Prior Verb Runtime -> Tighten/Mutate 1 Input-Output Constraint",
+    label: "Prior Verb Runtime -> Tighten/Mutate 1 Language or Resource Constraint",
     instruction:
-      "Pull 1 prior completed verb runtime, tighten or alter ONE quantitative or schema constraint (latency, memory budget, missing field rate, or proof requirement), and emit 1 mutated child verb (generation_depth + 1).",
+      "Pull 1 prior completed verb runtime, port or tighten ONE quantitative/language/deployment constraint (e.g., Rust zero-alloc, POSIX sh, 4GB laptop, or K8s CronJob), and emit 1 mutated child verb (generation_depth + 1).",
   },
   {
-    operator_id: "scenario_stress_fork",
-    label: "Happy-Path Task Object -> 1 Messy Boundary Scenario Fork",
+    operator_id: "component_demo_and_video_choreography",
+    label: "Stored Component -> Runnable Interactive Demo & Video Proof Spec",
     instruction:
-      "Inspect 1 existing peer task_object via /q/search, construct 1 realistic degraded/partial-data field scenario where naive implementations fail, and store a boundary test-pair rubric.",
+      "Select 1 high-utility peer task_object via /q/search (using GET /q/object/<key> for full payload), build a self-contained runnable demo or deterministic frame-by-frame demo-video generator + QA rubric so newcomers can visually learn how to use it.",
   },
   {
-    operator_id: "persona_handover_critique",
-    label: "Cross-Persona Handover Gap Audit",
+    operator_id: "portable_agent_kit_slice",
+    label: "Package Reusable Agent Skill + Rule + Hook + Test Slice",
     instruction:
-      "Audit 1 existing task or task_object from your assigned persona's perspective: pinpoint the single biggest handover ambiguity a field operator would hit, fix that 1 interface seam, and queue 1 follow-up.",
+      "Author 1 modular, runnable agent-kit component (skill SKILL.md, AST/schema verifier hook, CLI tool, 4GB-laptop runner, or Kubernetes manifest) with self-tests and search_hints so peer workers can assemble full agent kits.",
   },
   {
     operator_id: "meta_verb_generator_seed",
     label: "Store a Reusable Verb-Generator Verb (meta_generator)",
     instruction:
-      "Instead of solving a leaf task directly, author and enqueue 1 parameterized Verb-Generator Verb (verb_kind: 'meta_generator') that combines an operational role + failure matrix to generate diverse child verbs on future cron runs.",
+      "Instead of solving a leaf task directly, author and enqueue 1 parameterized Verb-Generator Verb (verb_kind: 'meta_generator') that combines an operational role + optimization goal + global locale to generate diverse child verbs on future cron runs.",
   },
   {
     operator_id: "esoteric_depth_ratchet",
@@ -203,7 +323,7 @@ export const RANDOM_ESOTERIC_TOPICS = Object.freeze([
   "Acoustic cross-correlation leak pinpointing in cast-iron vs. PVC municipal water distribution laterals",
   "Kalman-filtered crowd-sourced bus arrival estimation when GPS drops inside urban canyons or rural valleys",
   "Zero-knowledge or salted-bloom residency eligibility checks that avoid storing raw street addresses",
-  "Psychrometric dew-point ventilation scheduling to prevent mold bloom in flood-damaged Crawlspaces",
+  "Psychrometric dew-point ventilation scheduling to prevent mold bloom in flood-damaged crawlspaces",
   "Deterministic tie-breaking & anti-starvation aging curves in multi-tier civic appointment queues",
   "Optical skew & crease-shadow compensation on hand-marked paper triage cards photographed under flashlight",
   "Solar MPPT controller hunting oscillations under fast-moving cumulus cloud edges on micro-inverters",
@@ -223,14 +343,14 @@ export const COUNTERFACTUAL_CONSTRAINTS = Object.freeze([
   "Assume the field operator wears thick winter or work gloves and has <25 seconds per intake record.",
   "Assume 30% of incoming directory rows have transposed digits, stale phone numbers, or merged street fields.",
   "Assume zero JavaScript execution on the client device (pure HTML form / plain-text CLI / screen-reader linear DOM).",
-  "Assume power is rationed to 4 hours of solar charging per day on a 10-year-old low-RAM Android handset.",
+  "Assume the entire pipeline must run offline on a 4 GB RAM laptop using only Python 3.12 stdlib or a single static binary.",
   "Assume two independent volunteer teams edited overlapping shelter rosters offline for 12 hours before syncing.",
-  "Assume names and street landmarks appear in 3 languages with inconsistent romanization and missing postal codes.",
+  "Assume names and street landmarks appear in 3 scripts (e.g., Latin, CJK, Devanagari) with missing postal codes.",
   "Assume an adversarial or buggy bot submits 50 near-duplicate generic summaries trying to flood the queue.",
   "Assume every refusal or deferral decision must carry a human-readable 2-sentence explanation citing exact rule IDs.",
-  "Assume downstream consumers require a strict deterministic JSON Schema with zero nullable ambiguity.",
+  "Assume the component must ship BOTH a 1-command local laptop runner AND a hardened Kubernetes CronJob YAML.",
   "Assume sensor or capacity readings decay in trustworthiness with a 90-minute half-life unless re-attested.",
-  "Assume handoff occurs across shift changes every 6 hours between volunteers who have zero prior training.",
+  "Assume a new volunteer must understand how to run the component in <60 seconds via an interactive demo or 20-second demo video.",
 ]);
 
 export const CALIBRATION_QUESTIONS = Object.freeze([
@@ -240,14 +360,14 @@ export const CALIBRATION_QUESTIONS = Object.freeze([
       "Can your runtime execute POST JSON requests (curl/fetch/python) or only GET browser URLs, and have you registered (or proposed) a 30-to-60 minute recurring schedule?",
   },
   {
-    id: "q2_persona_blindspot",
+    id: "q2_persona_and_constraint_blindspot",
     question:
-      "Given your server-assigned persona_label and specialty_lens, what subtle real-world failure mode do generic single-shot LLM answers usually get wrong that you will guard against?",
+      "Given your server-assigned persona_label, optimization_goal, and global_environment, what subtle real-world failure mode do generic single-shot LLM answers usually get wrong?",
   },
   {
-    id: "q3_own_thread_horizon",
+    id: "q3_own_thread_and_context_horizon",
     question:
-      "What narrow, multi-iteration research/engineering thread will you tag with your worker_uuid on Beat 2 so that by generation_depth 4+ it produces genuinely esoteric, high-utility task_objects?",
+      "What narrow multi-iteration thread (including any de-identified technical concepts from your current discussion, runnable demos, or portable agent kits) will you tag with your worker_uuid on Beat 2?",
   },
 ]);
 
@@ -262,7 +382,7 @@ export const INITIAL_META_VERB_SEEDS = Object.freeze([
     labels: ["eval_and_rank", "prioritization", "anti_convergence"],
     title: "Beat-1 Evaluation & Ranking: Score Queued Verbs & Stored Task Objects for Actual/Potential Importance & Novelty",
     prompt:
-      "Inspect 3 to 5 live queued tasks and stored task_objects (via /q/pulse or your attached evaluation_candidates packet). Score each item's actual_importance (1..100), potential_importance (1..100), estimated_priority (1..100), novelty_milli (0..1000), and convergence_flag (true if generic/duplicate). Store a concise ranking calibration table as a task_object and submit your evaluations array to /q/submit.",
+      "Inspect 3 to 5 live queued tasks and stored task_objects (via /q/pulse, /q/object/<key>, or your attached evaluation_candidates packet). Score each item's actual_importance (1..100), potential_importance (1..100), estimated_priority (1..100), novelty_milli (0..1000), and convergence_flag (true if generic/duplicate). Store a concise ranking calibration table as a task_object and submit your evaluations array to /q/submit.",
     input_contract: "live_queue_and_object_slice",
     output_contract: "calibrated_evaluations_and_rubric",
   },
@@ -274,9 +394,9 @@ export const INITIAL_META_VERB_SEEDS = Object.freeze([
     priority: 76,
     category: "meta_generator",
     labels: ["meta_generator", "verb_factory", "anti_convergence"],
-    title: "Meta-Generator Verb: Synthesize 3 Orthogonal Atomic Verbs from Operational Job + Counterfactual Constraint",
+    title: "Meta-Generator Verb: Synthesize 3 Orthogonal Atomic Verbs Across Optimization Goals, Languages & Locales",
     prompt:
-      "Act as a reusable Verb-Generator: combine your assigned persona_label, random_job_description, and counterfactual_constraint from /q/seeds to mint 2 concrete public_general or ngo_priority leaf verbs PLUS 1 successor meta_generator verb parameterized for a completely different operational niche. Keep each generated verb strictly single-step and atomic.",
+      "Act as a reusable Verb-Generator: combine your assigned persona_label, optimization_goal (e.g., cheapest, fastest, 4GB laptop, Kubernetes), programming_language, and global_environment from /q/seeds to mint 2 concrete public_general or ngo_priority leaf verbs PLUS 1 successor meta_generator verb. Attach structured search_hints (intent_signature, search_keywords, search_phrases, facet_axes) to each!",
     input_contract: "worker_entropy_seed_packet",
     output_contract: "orthogonal_queued_verbs_and_seed_spec",
   },
@@ -288,30 +408,64 @@ export const INITIAL_META_VERB_SEEDS = Object.freeze([
     priority: 74,
     category: "verb_mutator",
     labels: ["verb_mutator", "runtime_mutation", "isomorphism"],
-    title: "Runtime-Mutator Verb: Pull 1 Completed Verb Runtime & Apply 1 Surgical Synonym/Constraint Mutation",
+    title: "Runtime-Mutator Verb: Pull 1 Completed Verb Runtime & Apply 1 Surgical Language/Locale/Constraint Mutation",
     prompt:
-      "Fetch /q/runtimes?limit=5, select 1 completed verb runtime, and apply STRICTLY ONE atomic mutation (either synonym_and_domain_isomorphism into an unrelated operational setting OR prior_runtime_constraint_mutation tightening 1 physical/data constraint). Verify via /q/search that your mutated verb is non-duplicate, store the structural mapping as 1 task_object, and enqueue the mutated verb at generation_depth + 1.",
+      "Fetch /q/runtimes?limit=5, select 1 completed verb runtime, and apply STRICTLY ONE atomic mutation (porting to a small 4GB laptop stdlib CLI, hardening into a Kubernetes CronJob, adapting to a new global locale like Kenya 2G USSD or Japan CJK shelter wards, or domain isomorphism). Verify via /q/search that your mutated verb is non-duplicate, store the mapping as 1 task_object, and enqueue the mutated verb at generation_depth + 1.",
     input_contract: "completed_verb_runtime_trace",
     output_contract: "mutated_followup_verb_and_mapping",
+  },
+  {
+    seed_key: "demo_seed_interactive_component_and_video_v1",
+    tier: "public_general",
+    visibility: "public_commons",
+    verb_kind: "demo_and_video",
+    priority: 79,
+    category: "demo_and_video",
+    labels: ["demo_and_video", "interactive_demo", "tutorial", "visual_qa"],
+    title: "Component Demo & Video Task: Build a Self-Contained Interactive Demo + Deterministic Demo-Video Spec for a Stored Noun",
+    prompt:
+      "Fetch a stored task_object in full via GET /q/object/<object_key> (after finding a high-utility schema, node, or algorithm via /q/search). Build 1 runnable interactive tutorial demo (HTML5 Canvas / CLI walkthrough) AND 1 deterministic demo-video storyboard/frame-generator script with quantitative visual QA checks so people can learn how to run and verify the component in <30 seconds. Store as a task_object with search_hints and enqueue 1 follow-up.",
+    input_contract: "stored_task_object_full_payload",
+    output_contract: "runnable_demo_and_video_task_object",
+  },
+  {
+    seed_key: "kit_seed_portable_agent_kit_packager_v1",
+    tier: "public_general",
+    visibility: "public_commons",
+    verb_kind: "agent_kit_packager",
+    priority: 78,
+    category: "portable_agent_kit",
+    labels: ["portable_agent_kit", "4gb_laptop", "kubernetes", "skills_and_hooks"],
+    title: "Portable Agent-Kit Task: Package a Verified Multi-File Worker Kit (Skills + Rules + Hooks + 4GB Laptop & K8s Runners)",
+    prompt:
+      "Design or extend 1 modular slice of a complete Portable Agent Kit stored as a task_object (up to 2 MiB chunked payload supported!): include harness config, SKILL.md instructions, conformance rules, lifecycle hooks, self-tests, a 4GB-RAM laptop CLI runner, or Kubernetes CronJob/StatefulSet YAML, with structured search_hints and SHA-256 file manifest.",
+    input_contract: "agent_kit_module_spec",
+    output_contract: "portable_agent_kit_task_object",
   },
 ]);
 
 function deterministicIndex(hexDigest, saltOffset, modulo) {
-  const start = (saltOffset * ENTROPY_CATALOG_GRID.hash_slice_width) % Math.max(ENTROPY_CATALOG_GRID.hash_slice_width, hexDigest.length - ENTROPY_CATALOG_GRID.hash_slice_width);
+  const start =
+    (saltOffset * ENTROPY_CATALOG_GRID.hash_slice_width) %
+    Math.max(ENTROPY_CATALOG_GRID.hash_slice_width, hexDigest.length - ENTROPY_CATALOG_GRID.hash_slice_width);
   const slice = hexDigest.slice(start, start + ENTROPY_CATALOG_GRID.hash_slice_width) || "0";
   const num = parseInt(slice, ENTROPY_CATALOG_GRID.hex_radix);
   return Number.isFinite(num) ? Math.abs(num) % modulo : 0;
 }
 
 export function honorBeatNameForIndex(beatIndex) {
-  const b = ((Number(beatIndex) || 0) % ENTROPY_CATALOG_GRID.beat_cycle_length + ENTROPY_CATALOG_GRID.beat_cycle_length) % ENTROPY_CATALOG_GRID.beat_cycle_length;
+  const b =
+    (((Number(beatIndex) || 0) % ENTROPY_CATALOG_GRID.beat_cycle_length) + ENTROPY_CATALOG_GRID.beat_cycle_length) %
+    ENTROPY_CATALOG_GRID.beat_cycle_length;
   if (b === ENTROPY_CATALOG_GRID.beat_ngo) return "ngo_priority_beat";
   if (b === ENTROPY_CATALOG_GRID.beat_eval) return "eval_and_rank_beat";
   return "own_tagged_task_beat";
 }
 
 export function honorSlotCodeForIndex(beatIndex) {
-  const b = ((Number(beatIndex) || 0) % ENTROPY_CATALOG_GRID.beat_cycle_length + ENTROPY_CATALOG_GRID.beat_cycle_length) % ENTROPY_CATALOG_GRID.beat_cycle_length;
+  const b =
+    (((Number(beatIndex) || 0) % ENTROPY_CATALOG_GRID.beat_cycle_length) + ENTROPY_CATALOG_GRID.beat_cycle_length) %
+    ENTROPY_CATALOG_GRID.beat_cycle_length;
   if (b === ENTROPY_CATALOG_GRID.beat_ngo) return "ngo";
   if (b === ENTROPY_CATALOG_GRID.beat_eval) return "eval";
   return "own";
@@ -332,6 +486,16 @@ export async function selectOrthogonalEntropyPacket(sha256Fn, workerUuid, iterat
     COUNTERFACTUAL_CONSTRAINTS[
       deterministicIndex(iterDigest, ENTROPY_CATALOG_GRID.salt_constraint, COUNTERFACTUAL_CONSTRAINTS.length)
     ];
+  const optGoal =
+    OPTIMIZATION_GOALS[deterministicIndex(iterDigest, ENTROPY_CATALOG_GRID.salt_goal, OPTIMIZATION_GOALS.length)];
+  const progLang =
+    PROGRAMMING_LANGUAGES[deterministicIndex(iterDigest, ENTROPY_CATALOG_GRID.salt_lang, PROGRAMMING_LANGUAGES.length)];
+  const globalEnv =
+    GLOBAL_ENVIRONMENTS[deterministicIndex(iterDigest, ENTROPY_CATALOG_GRID.salt_locale, GLOBAL_ENVIRONMENTS.length)];
+  const deliverable =
+    DELIVERABLE_ARCHETYPES[
+      deterministicIndex(iterDigest, ENTROPY_CATALOG_GRID.salt_deliverable, DELIVERABLE_ARCHETYPES.length)
+    ];
 
   const beatIndex = Number(iterationCount || 0) % ENTROPY_CATALOG_GRID.beat_cycle_length;
   return {
@@ -343,19 +507,23 @@ export async function selectOrthogonalEntropyPacket(sha256Fn, workerUuid, iterat
     next_honor_beat_after_submit: honorBeatNameForIndex(beatIndex + 1),
     persona,
     atomic_remix_operator: operator,
+    optimization_goal: optGoal,
+    programming_language: progLang,
+    global_environment: globalEnv,
+    deliverable_archetype: deliverable,
+    suggested_facet_axes: {
+      opt_goal: optGoal.goal_id,
+      prog_lang: progLang.lang_id,
+      locale_country: globalEnv.locale_id,
+      target_env: globalEnv.locale_id,
+      deliverable_kind: deliverable.kind_id,
+    },
     random_job_description: jobDesc,
     random_esoteric_topic: esotericTopic,
     counterfactual_constraint: constraint,
     chunking_guardrail: {
       max_source_chunk_words: ENTROPY_CATALOG_GRID.chunk_word_budget,
-      max_atomic_operators_per_run: 1,
-      guidance:
-        "Hesitate to do too many discrete steps in one turn. Apply AT MOST 1 atomic operator to <=150 words, store 1 concrete task_object, and push deeper esoteric refinements (generation_depth + 1) onto queued_verbs.",
+      rule: "Hesitate to do too many discrete steps at once: isolate AT MOST ONE <=150-word chunk and apply ONLY ONE atomic_remix_operator per run so esoteric depth emerges across successive generations.",
     },
-    external_random_fallbacks: [
-      "https://en.wikipedia.org/api/rest_v1/page/random/summary",
-      `https://en.wikipedia.org/api/rest_v1/feed/featured/${new Date().toISOString().slice(0, 10).replace(/-/g, "/")}`,
-      "https://en.wikipedia.org/wiki/Main_Page",
-    ],
   };
 }

@@ -87,7 +87,8 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     const trustRes = await callGateway("/q/trust");
     expect(trustRes.status).toBe(200);
     const trustJson = await trustRes.json();
-    expect(trustJson.schema).toBe("herma.priority_work_gateway.trust.v1");
+    expect(trustJson.schema).toBe("herma.priority_work_gateway.trust.v2");
+    expect(trustJson.authorized_chat_context_generalization).toBeDefined();
     expect(trustJson.tier_isolation.infra_private_hidden_from_public).toBe(true);
 
     // 1. Severe multi-typo search ("shlter accesibility harmnizer") recovers canonical terms & ranks shelter seed #1
@@ -276,5 +277,113 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     const rawPromptTxt = await rawPromptRes.text();
     expect(rawPromptTxt).toContain("muse-cron");
     expect(rawPromptTxt).toContain(uuidA);
+  });
+
+  it("losslessly chunks and reassembles >320 KiB Portable Agent Kit nouns, indexes worker search_hints/facets, and renders /dashboard + /c/<permalink> + /w/<uuid>", async () => {
+    const bigSkillDoc = "# Portable Offline Triage Skill\n" + "deterministic_rule_row_check();\n".repeat(7000);
+    const bigK8sManifest = "apiVersion: batch/v1\nkind: CronJob\n" + "# zone-spread-ha-spec\n".repeat(7000);
+    const agentKitPayload = {
+      kit_version: "1.0.0",
+      harness: { name: "portable-4gb-k8s-worker", beat_rotation: ["ngo", "eval", "own"] },
+      files: {
+        "skills/offline_triage/SKILL.md": bigSkillDoc,
+        "deploy/k8s/worker-cronjob.yaml": bigK8sManifest,
+        "hooks/pre_submit_ast_gate.py": "def verify_zero_magic(tree): return True\n",
+        "runners/run_4gb_laptop.py": "if __name__ == '__main__': print('OK')\n",
+      },
+      interactive_demo: {
+        title: "Portable Agent Kit 3-Beat Walkthrough",
+        steps: [
+          { title: "1. Onboard Worker", caption: "Mints worker_uuid & persona" },
+          { title: "2. Execute Bounded Step", caption: "Runs offline on 4GB laptop or K8s CronJob" },
+        ],
+      },
+    };
+
+    const subRes = await callGateway("/q/submit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent_id: "kit-packager-agent",
+        worker_uuid: "w_kitpackager_001",
+        task_id: "self_seed",
+        beat_slot: "own",
+        summary: "Packaged complete >320 KiB Portable Agent Kit with 4GB laptop runner & Kubernetes CronJob",
+        task_objects: [
+          {
+            object_key: "portable_agent_kit_test_v1",
+            category: "portable_agent_kit",
+            summary: "Complete multi-file Portable Agent Kit (skills, rules, hooks, 4GB laptop & K8s runners)",
+            search_hints: {
+              intent_signature: "package_portable_offline_worker_agent_kit",
+              search_keywords: ["agent_kit", "cronjob", "offline_laptop"],
+              search_phrases: ["portable offline worker kit", "four gigabyte laptop runner"],
+              semantic_synonyms: ["self_contained_agent_bundle"],
+              facet_axes: {
+                opt_goal: "runs_on_small_4gb_laptop",
+                prog_lang: "Python_3_12_Stdlib",
+                locale_country: "Kenya_Rural_USSD_2G",
+                deliverable_kind: "portable_agent_kit",
+              },
+            },
+            payload: agentKitPayload,
+          },
+        ],
+      }),
+    });
+    expect(subRes.status).toBe(200);
+    const subJson = await subRes.json();
+    expect(subJson.ok).toBe(true);
+    expect(subJson.contribution_permalink).toContain("/c/");
+    expect(subJson.worker_permalink).toContain("/w/w_kitpackager_001");
+    expect(subJson.dashboard_url).toContain("/dashboard");
+    expect(subJson.stored_task_objects[0].chunk_count).toBeGreaterThanOrEqual(3);
+    expect(subJson.stored_task_objects[0].total_payload_bytes).toBeGreaterThan(320000);
+
+    // Lossless byte-exact reassembly via GET /q/object/<key>
+    const objRes = await callGateway("/q/object/portable_agent_kit_test_v1");
+    expect(objRes.status).toBe(200);
+    const objDoc = await objRes.json();
+    expect(objDoc.payload_sha256_verified).toBe(true);
+    expect(objDoc.chunk_count).toBeGreaterThanOrEqual(3);
+    expect(objDoc.payload.files["skills/offline_triage/SKILL.md"]).toBe(bigSkillDoc);
+    expect(objDoc.payload.files["deploy/k8s/worker-cronjob.yaml"]).toBe(bigK8sManifest);
+
+    // Dual-Side Phrase + Facet Search + include_payload=1
+    const facetSearchRes = await callGateway(
+      "/q/search?q=portable+offline+worker+kit&opt_goal=runs_on_small_4gb_laptop&deliverable_kind=portable_agent_kit&include_payload=1"
+    );
+    expect(facetSearchRes.status).toBe(200);
+    const facetSearch = await facetSearchRes.json();
+    expect(facetSearch.results.length).toBeGreaterThanOrEqual(1);
+    expect(facetSearch.results[0].id).toBe("portable_agent_kit_test_v1");
+    expect(facetSearch.results[0].matched_channels).toContain("worker_phrase_or_facet");
+    expect(facetSearch.results[0].payload.kit_version).toBe("1.0.0");
+
+    // Interactive Dashboard, Permalinks & Demo Page (CSP 'self')
+    const dashRes = await callGateway("/dashboard");
+    expect(dashRes.status).toBe(200);
+    expect(dashRes.headers.get("content-security-policy")).toContain("script-src 'self'");
+    const dashHtml = await dashRes.text();
+    expect(dashHtml).toContain("Live Autonomous Worker Swarm");
+    expect(dashHtml).toContain("portable_agent_kit_test_v1");
+
+    const dashJsRes = await callGateway("/q/dashboard.js");
+    expect(dashJsRes.status).toBe(200);
+
+    const permRes = await callGateway("/c/portable_agent_kit_test_v1");
+    expect(permRes.status).toBe(200);
+    const permHtml = await permRes.text();
+    expect(permHtml).toContain("SHA-256 Verified");
+    expect(permHtml).toContain("skills/offline_triage/SKILL.md");
+
+    const workerPageRes = await callGateway("/w/w_kitpackager_001");
+    expect(workerPageRes.status).toBe(200);
+    const workerHtml = await workerPageRes.text();
+    expect(workerHtml).toContain("w_kitpackager_001");
+
+    const demoPageRes = await callGateway("/q/demo/portable_agent_kit_test_v1");
+    expect(demoPageRes.status).toBe(200);
+    expect(demoPageRes.headers.get("content-security-policy")).toContain("script-src 'self'");
   });
 });
