@@ -1446,7 +1446,7 @@ async function proxyOrigin(request, env) {
 }
 
 const application = {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if ((env.STORAGE_MODE || "cloud") === "origin") {
       return proxyOrigin(request, env);
     }
@@ -1529,11 +1529,12 @@ const application = {
         );
       }
       if (path === "/bridge" || path.startsWith("/bridge/")) {
-        return await handleBilateralBridge(request, env, db, publicUrl, { withSecurity });
+        return await handleBilateralBridge(request, env, db, publicUrl, { withSecurity, ctx });
       }
       if (
         path === "/q" ||
         path.startsWith("/q/") ||
+        path === "/status" ||
         path === "/prompts" ||
         path.startsWith("/prompts/") ||
         path === "/prompts.js" ||
@@ -1544,7 +1545,7 @@ const application = {
         path.startsWith("/c/") ||
         path.startsWith("/w/")
       ) {
-        return await handlePriorityWorkGateway(request, env, db, publicUrl, { withSecurity });
+        return await handlePriorityWorkGateway(request, env, db, publicUrl, { withSecurity, ctx });
       }
       if (path === "/api/preview") {
         if (method !== "POST") return methodNotAllowed(["POST"]);
@@ -2203,7 +2204,11 @@ const application = {
   },
 };
 
-const onboardingApplication = { fetch(request, env) { return agentFetch(request, env, (req, bindings) => application.fetch(req, bindings)); } };
+const onboardingApplication = {
+  fetch(request, env, ctx) {
+    return agentFetch(request, env, (req, bindings, execCtx) => application.fetch(req, bindings, execCtx), ctx);
+  },
+};
 
 export default {
   ...onboardingApplication,

@@ -498,4 +498,235 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     const readJson = await readRes.json();
     expect(readJson.query_analysis.typo_corrections.readability).toBeUndefined();
   });
+
+  it("supports v6.2 complexity-aware routing (/q/routing), batch co-claiming, blocked_by_task_id gating, idempotent active-lease reuse, and /q/traces", async () => {
+    // 1. /status alias + strict 400/404 validation + /q/traces span capture
+    const statusRes = await callGateway("/status");
+    expect(statusRes.status).toBe(200);
+    const statusJson = await statusRes.json();
+    expect(statusJson.schema).toBe("herma.priority_work_gateway.grid.v6_2");
+
+    const missingWorkerRes = await callGateway("/w/w_nonexistent_unit_probe_404");
+    expect(missingWorkerRes.status).toBe(404);
+
+    const emptySubmitRes = await callGateway("/q/submit");
+    expect(emptySubmitRes.status).toBe(400);
+    const schemaSubmitRes = await callGateway("/q/submit/schema");
+    expect(schemaSubmitRes.status).toBe(400);
+
+    // 2. Seed a prerequisite chain + 2 sibling tasks for a GPT Astra / Codex worker
+    const astraUuid = "w_codex_astra_unit01";
+    const seedRes = await callGateway("/q/submit", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "herma-codex-astra/1.0",
+      },
+      body: JSON.stringify({
+        agent_id: "codex-gpt-astra-01",
+        worker_uuid: astraUuid,
+        model_hint: "gpt-astra",
+        task_id: "self_seed",
+        summary: "Stage 0 capability ontology seed enqueueing Stage 1 co-batch + Stage 2 blocked synthesis",
+        queued_verbs: [
+          {
+            task_id: "stage1_ocr_niche_bench_u1",
+            tier: "public_general",
+            verb_kind: "meta_generator",
+            owner_worker_uuid: astraUuid,
+            complexity_milli: 860,
+            title: "Stage 1A: OCR & Document AI Capability Taxonomy + Benchmark Matrix",
+            prompt: "Build polyhierarchical taxonomy and Pareto benchmark rubric for OCR AI tools in Python & Rust.",
+          },
+          {
+            task_id: "stage1_pii_niche_bench_u1",
+            tier: "public_general",
+            verb_kind: "meta_generator",
+            owner_worker_uuid: astraUuid,
+            complexity_milli: 840,
+            title: "Stage 1B: PII Redaction & Differential Privacy AI Tooling Matrix",
+            prompt: "Build polyhierarchical taxonomy and accuracy/latency rubric for PII AI tools.",
+          },
+          {
+            task_id: "stage1_3d_motion_bench_u1",
+            tier: "public_general",
+            verb_kind: "meta_generator",
+            owner_worker_uuid: astraUuid,
+            complexity_milli: 850,
+            title: "Stage 1C: 3D Rendering & Motion Graphics AI Pipeline Matrix",
+            prompt: "Build polyhierarchical taxonomy and deterministic frame-budget rubric for 3D & motion AI tools.",
+          },
+          {
+            task_id: "stage2_cross_niche_synthesis_u1",
+            tier: "public_general",
+            verb_kind: "eval_and_rank",
+            owner_worker_uuid: astraUuid,
+            blocked_by_task_id: "stage1_ocr_niche_bench_u1",
+            complexity_milli: 910,
+            title: "Stage 2: Cross-Niche Interchangeable I/O Pipeline Synthesis (Blocked until Stage 1A)",
+            prompt: "Synthesize interchangeable typed I/O pipelines once Stage 1A OCR taxonomy is complete.",
+          },
+        ],
+      }),
+    });
+    expect(seedRes.status).toBe(200);
+
+    // 3. Batch claim (batch_size: 3) as GPT Astra -> claims the 3 unblocked Stage 1 tasks, NOT the blocked Stage 2 task!
+    const batchClaimRes = await callGateway("/q/claim", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "herma-codex-astra/1.0",
+      },
+      body: JSON.stringify({
+        agent_id: "codex-gpt-astra-01",
+        worker_uuid: astraUuid,
+        model_hint: "gpt-astra",
+        slot: "own",
+        batch_size: 3,
+      }),
+    });
+    expect(batchClaimRes.status).toBe(200);
+    const batchClaim = await batchClaimRes.json();
+    expect(batchClaim.routing_decision.harness_tier).toBe("tier_4_deep_architect_astra");
+    expect(batchClaim.co_leased_batch.length).toBe(3);
+    const batchIds = batchClaim.co_leased_batch.map((item) => item.task_id);
+    expect(batchIds).toContain("stage1_ocr_niche_bench_u1");
+    expect(batchIds).not.toContain("stage2_cross_niche_synthesis_u1");
+
+    // 4. Duplicate claim within active-lease window reuses existing lease idempotently (no double-claim)
+    const dupClaimRes = await callGateway("/q/claim", {
+      method: "POST",
+      headers: { "content-type": "application/json", "user-agent": "herma-codex-astra/1.0" },
+      body: JSON.stringify({
+        agent_id: "codex-gpt-astra-01",
+        worker_uuid: astraUuid,
+        model_hint: "gpt-astra",
+        slot: "own",
+      }),
+    });
+    expect(dupClaimRes.status).toBe(200);
+    const dupClaim = await dupClaimRes.json();
+    expect(dupClaim.reused_active_lease).toBe(true);
+    expect(batchIds).toContain(dupClaim.lease.task_id);
+
+    // 5. Complete all 3 leased Stage 1 tasks -> Stage 2 (`blocked_by_task_id: stage1_ocr_niche_bench_u1`) unlocks!
+    for (const item of batchClaim.co_leased_batch) {
+      const doneRes = await callGateway("/q/submit", {
+        method: "POST",
+        headers: { "content-type": "application/json", "user-agent": "herma-codex-astra/1.0" },
+        body: JSON.stringify({
+          agent_id: "codex-gpt-astra-01",
+          worker_uuid: astraUuid,
+          model_hint: "gpt-astra",
+          task_id: item.task_id,
+          fencing_token: item.fencing_token,
+          summary: `Completed ${item.task_id} with verified capability benchmark schema`,
+        }),
+      });
+      expect(doneRes.status).toBe(200);
+    }
+
+    const stage2ClaimRes = await callGateway("/q/claim", {
+      method: "POST",
+      headers: { "content-type": "application/json", "user-agent": "herma-codex-astra/1.0" },
+      body: JSON.stringify({
+        agent_id: "codex-gpt-astra-01",
+        worker_uuid: astraUuid,
+        model_hint: "gpt-astra",
+        slot: "own",
+      }),
+    });
+    expect(stage2ClaimRes.status).toBe(200);
+    const stage2Claim = await stage2ClaimRes.json();
+    expect(stage2Claim.lease.task_id).toBe("stage2_cross_niche_synthesis_u1");
+
+    // 6. Inspect /q/routing and /q/traces
+    const routingRes = await callGateway("/q/routing");
+    expect(routingRes.status).toBe(200);
+    const routingJson = await routingRes.json();
+    expect(routingJson.ok).toBe(true);
+    const astraArms = routingJson.learned_ucb_arms.filter((a) => a.harness_tier === "tier_4_deep_architect_astra");
+    expect(astraArms.length).toBeGreaterThanOrEqual(1);
+    expect(astraArms.some((a) => a.success_count >= 1)).toBe(true);
+
+    const tracesErrRes = await callGateway("/q/traces?errors_only=1&limit=20");
+    expect(tracesErrRes.status).toBe(200);
+    const tracesErr = await tracesErrRes.json();
+    expect(tracesErr.traces.length).toBeGreaterThanOrEqual(2);
+    expect(tracesErr.traces.every((t) => t.http_status >= 400)).toBe(true);
+  });
+
+  it("recovers nested task_objects[*].payload.evaluations, prevents named-agent split-brain UUIDs, escapes demo HTML, and serves Card #7 codex_astra_seedpack", async () => {
+    // 1. Named persistent agent onboarding -> subsequent /q/submit without worker_uuid reuses canonical UUID
+    const obRes = await callGateway("/q/onboard", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent_id: "muse-herma-unit", capabilities: ["post", "cron"] }),
+    });
+    expect(obRes.status).toBe(200);
+    const obJson = await obRes.json();
+    const canonicalUuid = obJson.worker_profile.worker_uuid;
+
+    // 2. Submit nested evaluations inside task_objects[0].payload.evaluations + XSS probe in interactive_demo
+    const nestedEvalRes = await callGateway("/q/submit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent_id: "muse-herma-unit",
+        task_id: "self_seed",
+        summary: "Beat-1 evaluation submitted inside nested task_objects[0].payload.evaluations",
+        task_objects: [
+          {
+            object_key: "nested_eval_and_xss_guard_probe_v1",
+            category: "evaluation_ledger",
+            summary: "Nested evaluations + XSS escaping verification",
+            payload: {
+              evaluations: [
+                {
+                  target_kind: "object",
+                  target_id: "portable_agent_kit_test_v1",
+                  actual_importance: 94,
+                  potential_importance: 97,
+                  estimated_priority: 95,
+                  novelty_milli: 890,
+                  rationale: "Recovered from nested Muse-style payload.evaluations",
+                },
+              ],
+              interactive_demo: {
+                title: "Safe Demo <img src=x onerror=alert(1)>",
+                steps: [{ title: "<script>alert(2)</script>", caption: "Escaped safely" }],
+              },
+            },
+          },
+        ],
+      }),
+    });
+    expect(nestedEvalRes.status).toBe(200);
+    const nestedEvalJson = await nestedEvalRes.json();
+    expect(nestedEvalJson.worker_uuid).toBe(canonicalUuid);
+    expect(nestedEvalJson.applied_evaluations.length).toBe(1);
+    expect(nestedEvalJson.applied_evaluations[0].target_id).toBe("portable_agent_kit_test_v1");
+
+    // 3. Verify demo runner JS contains escHtml and demo HTML escapes untrusted tags
+    const demoRunnerRes = await callGateway("/q/demo-runner.js");
+    expect(demoRunnerRes.status).toBe(200);
+    const demoRunnerJs = await demoRunnerRes.text();
+    expect(demoRunnerJs).toContain("function escHtml");
+
+    const demoHtmlRes = await callGateway("/q/demo/nested_eval_and_xss_guard_probe_v1");
+    expect(demoHtmlRes.status).toBe(200);
+    const demoHtml = await demoHtmlRes.text();
+    expect(demoHtml).not.toContain("<img src=x onerror=alert(1)>");
+    expect(demoHtml).not.toContain("<script>alert(2)</script>");
+    expect(demoHtml).toContain("\\u003cimg src=x onerror=alert(1)>");
+
+    // 4. Card #7 raw prompt endpoint for Codex / GPT Astra
+    const codexCardRes = await callGateway("/prompts/raw/codex_astra_seedpack?agent_id=codex-gpt-astra-09");
+    expect(codexCardRes.status).toBe(200);
+    const codexCardTxt = await codexCardRes.text();
+    expect(codexCardTxt).toContain("codex-gpt-astra-09");
+    expect(codexCardTxt).toContain("herma-codex-astra/1.0");
+    expect(codexCardTxt).toContain("batch_size");
+  });
 });

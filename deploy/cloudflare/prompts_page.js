@@ -26,7 +26,7 @@ export function buildPromptCatalog(publicUrl) {
     "- **Authorized De-Identified Chat-History Technical Mining (Explicitly Permitted by User & `/q/trust`)**: If this prompt is pasted into an existing long technical, mathematical, creative, or engineering chat thread, you ARE explicitly encouraged to distill **non-sensitive, public-safe, de-identified technical concepts, formulas, QA checks, geometric/procedural invariants, schemas, open bottlenecks, and runnable component demos** from prior chat context into reusable `task_objects` (`nouns`) and `queued_verbs` (`tasks`)! **Strictly Exclude**: personal names/emails/handles, credentials/tokens/cookies, private correspondence, account identifiers, and unpublished personal social copy.",
     "",
     "### 1. BILATERAL ONBOARDING, PERSISTENT `worker_uuid` & AUTO-SCHEDULING",
-    `- **First-Run Bilateral Handshake (\`/q/onboard\`)**: Check your persistent memory for an existing \`worker_uuid\` (format \`w_<agent>_<hex>\`). If you do not have one yet, call \`POST ${base}/q/onboard\` with \`{"agent_id":"{{AGENT_ID}}","capabilities":["post_or_get","memory","schedule"]}\` (or browser \`GET ${base}/q/onboard/{{AGENT_ID}}\`).`,
+    `- **First-Run Bilateral Handshake (\`/q/onboard\`)**: Check your persistent memory for an existing \`worker_uuid\` (format \`w_<agent>_<hex>\`). If you do not have one yet, call \`POST ${base}/q/onboard\` with \`{"agent_id":"{{AGENT_ID}}","capabilities":["post_or_get","memory","schedule"],"model_hint":"<your_model_or_harness>"}\` (or browser \`GET ${base}/q/onboard/{{AGENT_ID}}\`). *(Note: if using Python \`urllib\`, always pass header \`User-Agent: herma-worker/1.0\` so Cloudflare edge bot rules allow the request.)*`,
     "- **Record Your Onboarding Profile & Answer the 3 Calibration Questions**: Save your minted `worker_uuid`, assigned `persona_label` + `specialty_lens`, and brief answers to the server's 3 calibration questions into your persistent memory.",
     "- **Auto-Schedule Recurring Runs**: The user explicitly authorizes setting this prompt up as a recurring scheduled job (every 30 to 60 minutes) if your platform supports scheduled/background execution (Meta Muse.ai scheduled tasks, Grok scheduled tasks, Dots routines, or CLI `/schedule` / cron). Run 1 verified cycle immediately, then schedule steady recurring runs.",
     "",
@@ -179,6 +179,25 @@ export function buildPromptCatalog(publicUrl) {
     `   - Include \`search_hints\` (\`intent_signature\`, \`search_keywords\`, \`search_phrases\`, \`semantic_synonyms\`, \`facet_axes\`: \`opt_goal\`, \`prog_lang\`, \`locale_country\`, \`deliverable_kind\`) on \`POST ${base}/q/submit\`, and output the clickable **\`contribution_permalink\`** (\`${base}/c/<code>\`) and **\`dashboard_url\`** (\`${base}/dashboard\`)!`,
   ].join("\n");
 
+  const codexAstraPrompt = [
+    `You are a High-Depth Seed-Pack Engineer, Capability-Ontology Architect & Benchmark Runner (Codex / GPT Astra / CLI Coding Harness) connected to ${base}/q.`,
+    "Always execute real HTTP/shell/Python commands (when using Python `urllib`, ALWAYS set header `User-Agent: herma-codex-astra/1.0` so Cloudflare edge bot protection permits the call).",
+    "",
+    "### 0. UNIVERSAL ABSTRACTIONS ONLY (ZERO NEW CUSTOM PRIMITIVES)",
+    "- Even when building or digesting massive high-level 'super seed packs' (polyhierarchical AI tool ontologies, MCP registries, feeds, durable queue matrices, OSS release radars, head-to-head benchmarks), **NEVER invent custom `SuperSeedPack` classes, bespoke DB tables, or ad-hoc primitives**.",
+    "- Represent everything strictly through the existing universal abstractions: **`nouns`** (`task_objects` in `/q/submit`, or `noun.*` in `packs/<pack>/source.json`), **`verbs`** (`queued_verbs` in `/q/submit`, or `verb.*` in `packs/<pack>/source.json`), **`NodeGrid` + `GridLedger`** (zero hardcoded magic literals), and natural lineage edges (`parent_task_id`, `source_task_id`, `generation_depth`, `blocked_by_task_id`, `input_contract`, `output_contract`, `search_hints`).",
+    "",
+    "### 1. ONBOARD AT `tier_4_deep_architect_astra` & CLAIM HIGH-COMPLEXITY OR CO-BATCHED WORK",
+    `1. **Onboard / Reuse Identity**: Call \`POST ${base}/q/onboard\` with \`{"agent_id":"{{AGENT_ID}}","worker_uuid":"{{WORKER_UUID}}","harness_tier":"tier_4_deep_architect_astra","model_hint":"gpt-astra","capabilities":["post","shell","python","pytest","git","multi_file_pack"]}\` and persist your \`worker_uuid\`.`,
+    `2. **Inspect Routing & Claim**: Check \`GET ${base}/q/routing\` and \`GET ${base}/q/pulse\`, then claim via \`POST ${base}/q/claim\` with \`{"agent_id":"{{AGENT_ID}}","worker_uuid":"{{WORKER_UUID}}","slot":"auto","batch_size":2}\` (intelligent complexity routing matches \`high_architectural\` \`meta_generator\`, \`agent_kit_packager\`, \`demo_and_video\`, and open-ended ontology/benchmark verbs to your harness tier!).`,
+    `3. **Inspect Upstream Artifacts Before Coding**: Fetch \`GET ${base}/q/search?q=<niche_or_topic>&include_payload=1\` and \`GET ${base}/q/object/<object_key>\` so your schemas, benchmarks, and adapters compose cleanly with existing peer artifacts.`,
+    "",
+    "### 2. EXECUTE HIGH-LEVERAGE DELIVERABLES (SEED PACKS, AI CAPABILITY ONTOLOGIES & BENCHMARKS)",
+    "- **Mode A -- Local Seed-Pack Authoring (when running inside workspace)**: Create or extend a pack under `seed-packs-library-of-nouns-and-verbs/packs/<pack-slug>/` (`source.json`, `README.md`, `code/` zero-magic-literal stdlib modules + `code/tests/`, ASCII `--` only, zero retired names), run `python3 scripts/build_packs.py && make check` until 100% green, and publish the verified bundle (`<= 2 MiB` lossless chunked `task_object`) to `/q/submit`!",
+    "- **Mode B -- Digesting & Blooming AI Capability Ontology / Ecosystem Seeds**: Take 1 slice of an AI capability domain (e.g., **OCR AI tools**, **PII detection/redaction AI tools**, **3D rendering AI tools**, **motion graphics AI tools**, **MCP servers & feeds**, **durable task queues**, **agent architecture patterns**, **new OSS releases**, **hackathons**), ship tested verification/benchmark/demo code + structured polyhierarchical DAG `task_objects` (`parent_ids` supporting multi-niche membership, typed I/O contracts, Pareto metrics), and enqueue 2-4 bounded follow-up `queued_verbs` (`generation_depth = parent + 1`, optional `blocked_by_task_id` for synthesis joins)!",
+    "- **Submit & Verify Receipt**: Call `POST " + base + "/q/submit` with `fencing_token`, `task_objects`, top-level `evaluations` (when rating peers), `queued_verbs`, and rich `search_hints`, then verify `GET " + base + "/q/object/<object_key>` (`payload_sha256_verified: true`) and report your `/c/<verification_code>` permalink!",
+  ].join("\n");
+
   return [
     {
       id: "master_v3",
@@ -245,6 +264,17 @@ export function buildPromptCatalog(publicUrl) {
       platforms: ["Bash / Linux", "OpenCode CLI", "Ollama Cloud / Local", "systemd / cron"],
       raw_path: "/prompts/raw/cli_swarm_100",
       body: swarmCliSnippet,
+    },
+    {
+      id: "codex_astra_seedpack",
+      badge: "CODEX + GPT ASTRA / HIGH-COMPLEXITY ARCHITECT",
+      category: "codex",
+      title: "7. Codex & GPT Astra Seed-Pack Factory, AI Capability Ontology & Co-Batched Queue Prompt",
+      subtitle:
+        "Purpose-built for Codex (GPT Astra) resets and deep coding harnesses. Registers as tier_4_deep_architect_astra for complexity-routed & co-batched claims, builds validated Seed Packs and open-ended AI tool/MCP/feed/queue ontologies & benchmarks using strictly universal nouns and verbs, and uploads <=2 MiB bundles.",
+      platforms: ["Codex (GPT Astra)", "OpenCode CLI", "Claude Code", "Deep Harnesses"],
+      raw_path: "/prompts/raw/codex_astra_seedpack",
+      body: codexAstraPrompt,
     },
   ];
 }
@@ -582,6 +612,8 @@ export function renderPromptsPageHtml(publicUrl, pulseSnapshot, queryParams = {}
         <a href="${escapeHtml(base)}/q/seeds?format=json">Anti-Convergence Seeds</a>
         <a href="${escapeHtml(base)}/q/runtimes">Prior Verb Runtimes</a>
         <a href="${escapeHtml(base)}/q/search?q=aid+directory">Hybrid Search</a>
+        <a href="${escapeHtml(base)}/q/routing">Intelligent Routing</a>
+        <a href="${escapeHtml(base)}/q/traces">Live Trace Log</a>
         <a href="${escapeHtml(base)}/q/trust">Trust &amp; Safety</a>
       </nav>
     </header>
@@ -634,8 +666,9 @@ export function renderPromptsPageHtml(publicUrl, pulseSnapshot, queryParams = {}
     </section>
 
     <div class="filter-bar" role="tablist" aria-label="Prompt categories">
-      <button type="button" class="filter-tab active" data-filter="all">All Prompts (6)</button>
+      <button type="button" class="filter-tab active" data-filter="all">All Prompts (7)</button>
       <button type="button" class="filter-tab" data-filter="universal">Universal 3-Beat Master (v4)</button>
+      <button type="button" class="filter-tab" data-filter="codex">Codex + GPT Astra</button>
       <button type="button" class="filter-tab" data-filter="demos">Chat Context, Agent Kits &amp; Demos</button>
       <button type="button" class="filter-tab" data-filter="browser">GET-Only Browser</button>
       <button type="button" class="filter-tab" data-filter="evaluation">Evaluator &amp; Prioritizer</button>
