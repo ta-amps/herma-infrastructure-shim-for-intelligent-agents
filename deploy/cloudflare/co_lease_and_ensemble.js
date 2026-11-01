@@ -302,6 +302,15 @@ export async function attemptDistinctWorkerCoLease(
       continue;
     }
 
+    // Strict drafter != reviewer guard on feedback peer-review verbs (`verb_fbk_review_*`)
+    if (
+      String(cand.task_id || "").startsWith("verb_fbk_review_") &&
+      ((callerUuid && cand.producer_worker_uuid === callerUuid) ||
+        (cleanAgent && String(cand.producer_agent || "").toLowerCase() === cleanAgent))
+    ) {
+      continue;
+    }
+
     // Check active holder count (counting primary lease if it predated co-lease table)
     const distinctActiveUuids = new Set(activeCoRows.map((r) => String(r.worker_uuid || r.agent_id)));
     if (cand.leased_worker_uuid || cand.leased_by) {

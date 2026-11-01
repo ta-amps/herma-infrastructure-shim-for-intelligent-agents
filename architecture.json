@@ -257,6 +257,7 @@
         "deploy/cloudflare/bilateral_bridge.js",
         "deploy/cloudflare/priority_work_gateway.js",
         "deploy/cloudflare/thick_path_and_schema_coach.js",
+        "deploy/cloudflare/taxonomy_affinity_and_proactive_feedback.js",
         "deploy/cloudflare/feedback_steps_and_uploads.js",
         "deploy/cloudflare/co_lease_and_ensemble.js",
         "deploy/cloudflare/prompts_page.js",

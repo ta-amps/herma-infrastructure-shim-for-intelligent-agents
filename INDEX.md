@@ -31,7 +31,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) |  |
 
-## deploy/ (27)
+## deploy/ (28)
 
 | File | What it is |
 |---|---|
@@ -47,13 +47,14 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/d1-herma.sql](deploy/cloudflare/d1-herma.sql) | Persistent Cloudflare D1 caller-isolated schema for Herma context-shimming AI middleware (ta-amps-herma). |
 | [deploy/cloudflare/dashboard_and_permalinks.js](deploy/cloudflare/dashboard_and_permalinks.js) | Interactive Worker Swarm Visualization Dashboard (/dashboard, /q/dashboard, /q/dashboard.js) |
 | [deploy/cloudflare/entry.js](deploy/cloudflare/entry.js) |  |
-| [deploy/cloudflare/feedback_steps_and_uploads.js](deploy/cloudflare/feedback_steps_and_uploads.js) | Herma v6.9 Worker Feedback & Auto-Diagnosis (/q/feedback, /feedback), |
+| [deploy/cloudflare/feedback_steps_and_uploads.js](deploy/cloudflare/feedback_steps_and_uploads.js) | Herma v6.9 + v6.10 Catch-All Proactive Worker Feedback, Auto-Diagnosis & Peer-Review Verb Spawner (/q/feedbac… |
 | [deploy/cloudflare/herma_engine.js](deploy/cloudflare/herma_engine.js) | Context-shimming 3-tier trigger engine, multi-caller isolation, governance lens, |
 | [deploy/cloudflare/on_demand_api_and_nodes.js](deploy/cloudflare/on_demand_api_and_nodes.js) | Universal On-Demand TaskObject API Runtime, Scoped Key Vault & Swappable Backend Engine Slots |
 | [deploy/cloudflare/priority_work_gateway.js](deploy/cloudflare/priority_work_gateway.js) | Prioritized Multi-Tier Durable Task Queue, Partitioned Search Sidecar & Task-Object Gateway (/q/) |
 | [deploy/cloudflare/prompts_page.js](deploy/cloudflare/prompts_page.js) | Public Copy-Paste "Get Started Prompts" Hub (/prompts, /get-started, /q/start, /q/prompts.js) |
 | [deploy/cloudflare/provider_diagnostics.js](deploy/cloudflare/provider_diagnostics.js) | Fixed provider-reported categories only. |
 | [deploy/cloudflare/provider_health.js](deploy/cloudflare/provider_health.js) | Deterministic shared availability inside the existing operator allowance coordinator. |
+| [deploy/cloudflare/taxonomy_affinity_and_proactive_feedback.js](deploy/cloudflare/taxonomy_affinity_and_proactive_feedback.js) | Herma v6.10 Deterministic Taxonomy Auto-Describer, Preferred-Worker / Setup Affinity, |
 | [deploy/cloudflare/thick_path_and_schema_coach.js](deploy/cloudflare/thick_path_and_schema_coach.js) | Herma v6.8 Thick-Path Plateau Grid Telemetry, Proactive Open-World Schema Coach (/q/schema, /q/schema/validat… |
 | [deploy/cloudflare/worker.js](deploy/cloudflare/worker.js) |  |
 | [deploy/cloudflare/worker_entropy_catalog.js](deploy/cloudflare/worker_entropy_catalog.js) | Bilateral Worker Onboarding Personas, Calibration Questions, Single-Step Atomic Remix Operators, |

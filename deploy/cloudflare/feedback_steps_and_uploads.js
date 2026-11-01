@@ -1,10 +1,15 @@
-// Herma v6.9 Worker Feedback & Auto-Diagnosis (`/q/feedback`, `/feedback`),
+// Herma v6.9 + v6.10 Catch-All Proactive Worker Feedback, Auto-Diagnosis & Peer-Review Verb Spawner (`/q/feedback`, `/feedback`),
 // Atomic Cognitive vs. Atomic Build Step Taxonomy (`step_mode` + `reuse_mode`),
 // Paginated Tasks/Objects Catalogs (`/q/tasks`, `/q/objects`), and
 // 16 MiB Gzip + Resumable Chunked Upload & Blob Store (`/q/upload`, `/q/blob/<sha256>`).
 //
 // Strictly preserves universal `Task` (`herma_durable_queue`) and `Task Object` (`herma_task_objects`)
 // primitives with zero rival work authorities, zero em-dashes, and zero legacy model names.
+
+import {
+  enrichTaxonomyRecord,
+  ingestCatchAllFeedbackObservation,
+} from "./taxonomy_affinity_and_proactive_feedback.js";
 
 export const FEEDBACK_STEPS_UPLOADS_GRID = Object.freeze({
   schema_id: "herma.feedback_steps_and_uploads.grid.v6_9",
@@ -494,20 +499,40 @@ export async function handleWorkerFeedbackRequest(
         Number(url.searchParams.get("limit") || FEEDBACK_STEPS_UPLOADS_GRID.feedback_recent_limit)
       )
     );
-    const rowsRes = await db
-      .prepare(
-        `SELECT object_key, category, visibility, producer_agent, worker_uuid, summary, payload_json,
-                sha256_hash, total_payload_bytes, step_mode, created_at
-         FROM herma_task_objects
-         WHERE category = 'worker_issue_report' AND ${visFilter}
-         ORDER BY id DESC
-         LIMIT ?`
-      )
-      .bind(limit)
-      .all();
+    const [rowsRes, clusterRes] = await Promise.all([
+      db
+        .prepare(
+          `SELECT object_key, category, visibility, producer_agent, worker_uuid, summary, payload_json,
+                  intent_bucket, target_env, prog_lang, deliverable_kind,
+                  sha256_hash, total_payload_bytes, step_mode, created_at
+           FROM herma_task_objects
+           WHERE category IN ('worker_issue_report', 'system_feedback_signal') AND ${visFilter}
+           ORDER BY id DESC
+           LIMIT ?`
+        )
+        .bind(limit)
+        .all(),
+      db
+        .prepare(
+          `SELECT fingerprint, object_key, signal_kind, target_component, severity_milli,
+                  review_verb_id, promoted_to_proposal, emitted_training_signal
+           FROM herma_feedback_signal_clusters
+           ORDER BY updated_at DESC
+           LIMIT ?`
+        )
+        .bind(limit)
+        .all()
+        .catch(() => ({ results: [] })),
+    ]);
+
+    const clusterByObjKey = new Map();
+    for (const c of clusterRes?.results || []) {
+      clusterByObjKey.set(String(c.object_key), c);
+    }
 
     const reports = [];
     const byIssueKind = {};
+    const bySignalKind = {};
     const byHttpStatus = {};
     for (const r of rowsRes?.results || []) {
       let parsed = {};
@@ -516,20 +541,35 @@ export async function handleWorkerFeedbackRequest(
       } catch {
         parsed = {};
       }
-      const ik = String(parsed.issue_kind || "general_feedback");
+      const cl = clusterByObjKey.get(String(r.object_key)) || null;
+      const sk = String(cl?.signal_kind || parsed.signal_kind || parsed.issue_kind || "general_feedback");
+      const ik = String(parsed.issue_kind || sk || "general_feedback");
       const hs = String(parsed.http_status || "unspecified");
       byIssueKind[ik] = (byIssueKind[ik] || 0) + 1;
+      bySignalKind[sk] = (bySignalKind[sk] || 0) + 1;
       byHttpStatus[hs] = (byHttpStatus[hs] || 0) + 1;
       reports.push({
         object_key: r.object_key,
         category: r.category,
+        fingerprint: cl?.fingerprint || parsed.fingerprint || null,
+        signal_kind: sk,
+        issue_kind: ik,
+        target_component: cl?.target_component || parsed.target_component || parsed.endpoint || "shared_substrate",
+        severity_milli: Number(cl?.severity_milli || parsed.severity_milli || 650),
+        review_verb_id: cl?.review_verb_id || null,
+        promoted_to_proposal: Boolean(cl?.promoted_to_proposal),
+        emitted_training_signal: Boolean(cl?.emitted_training_signal),
         producer_agent: r.producer_agent,
         worker_uuid: r.worker_uuid || null,
-        issue_kind: ik,
         endpoint: parsed.endpoint || "",
         http_status: parsed.http_status ?? null,
         error_code: parsed.error_code || "",
+        proposed_alternatives: parsed.proposed_alternatives || [],
         step_mode: r.step_mode || "atomic_verification_step",
+        intent_bucket: r.intent_bucket || "distributed_substrate_optimization",
+        target_env: r.target_env || "cloudflare_edge_worker",
+        prog_lang: r.prog_lang || "polyglot_declarative",
+        deliverable_kind: r.deliverable_kind || "verification_and_benchmark_suite",
         summary: r.summary,
         sha256_hash: r.sha256_hash,
         object_url: `${base}/q/object/${encodeURIComponent(r.object_key)}`,
@@ -544,15 +584,31 @@ export async function handleWorkerFeedbackRequest(
         ok: true,
         schema: FEEDBACK_STEPS_UPLOADS_GRID.feedback_schema_version,
         total_recent_reports: reports.length,
+        counts_by_signal_kind: bySignalKind,
         counts_by_issue_kind: byIssueKind,
         counts_by_http_status: byHttpStatus,
         submit_instructions: {
           endpoint: `${base}/q/feedback`,
           root_alias: `${base}/feedback`,
+          inline_submit_field: "proactive_observations (array inside POST /q/submit)",
           anonymous_allowed: true,
           authenticated_diagnostic_cred_bonus: FEEDBACK_STEPS_UPLOADS_GRID.diagnostic_cred_points,
           gzip_supported: true,
+          freeform_or_structured_supported: true,
+          accepted_signal_kinds: [
+            "bug_or_error",
+            "data_inconsistency",
+            "efficiency_concern",
+            "better_or_alternative_way",
+            "training_signal",
+            "worker_issue_report",
+          ],
           accepted_fields: [
+            "signal_kind",
+            "target_component",
+            "observation",
+            "proposed_alternative",
+            "severity_milli",
             "issue_kind",
             "endpoint",
             "http_status",
@@ -605,7 +661,12 @@ export async function handleWorkerFeedbackRequest(
   if (rawText.trim()) {
     if (contentType.includes("application/json") || rawText.trim().startsWith("{")) {
       try {
-        params = { ...params, ...(JSON.parse(rawText) || {}) };
+        const parsedBody = JSON.parse(rawText);
+        if (typeof parsedBody === "string") {
+          params = { ...params, observation: parsedBody };
+        } else {
+          params = { ...params, ...(parsedBody || {}) };
+        }
       } catch {
         return {
           status: FEEDBACK_STEPS_UPLOADS_GRID.http_bad_request,
@@ -616,7 +677,7 @@ export async function handleWorkerFeedbackRequest(
       const formEntries = Object.fromEntries(new URLSearchParams(rawText).entries());
       params = { ...params, ...formEntries };
     } else {
-      params = { ...params, detail: params.detail || rawText };
+      params = { ...params, observation: params.observation || rawText.trim(), detail: params.detail || rawText };
     }
   }
 
@@ -648,54 +709,21 @@ export async function handleWorkerFeedbackRequest(
   }
 
   const issueKind =
-    scrub(scrubCapabilityTokensFromReport(params.issue_kind || params.kind || "gateway_friction"))
+    scrub(scrubCapabilityTokensFromReport(params.issue_kind || params.kind || params.signal_kind || "gateway_friction"))
       .toLowerCase()
       .replace(/[^a-z0-9_-]+/g, "_")
       .replace(/^_+|_+$/g, "")
       .slice(0, 32) || "gateway_friction";
-  const endpointStr = scrub(scrubCapabilityTokensFromReport(params.endpoint || params.path || "")).slice(
-    0,
-    FEEDBACK_STEPS_UPLOADS_GRID.endpoint_max_len
-  );
+  const endpointStr = scrub(
+    scrubCapabilityTokensFromReport(params.endpoint || params.path || params.target_component || "")
+  ).slice(0, FEEDBACK_STEPS_UPLOADS_GRID.endpoint_max_len);
   const httpStatus = params.http_status != null && params.http_status !== "" ? Number(params.http_status) : null;
   const errorCode = scrub(scrubCapabilityTokensFromReport(params.error_code || params.code || "")).slice(
     0,
     FEEDBACK_STEPS_UPLOADS_GRID.code_max_len
   );
   const payloadBytes = params.payload_bytes != null && params.payload_bytes !== "" ? Number(params.payload_bytes) : null;
-  const clientHarness = scrub(
-    scrubCapabilityTokensFromReport(params.client_harness || request.headers.get("user-agent") || "")
-  ).slice(0, 160);
-  const detailText = scrub(scrubCapabilityTokensFromReport(params.detail || params.description || "")).slice(
-    0,
-    FEEDBACK_STEPS_UPLOADS_GRID.detail_max_len
-  );
-  const reproText = scrub(
-    scrubCapabilityTokensFromReport(
-      typeof params.reproduction === "object" ? JSON.stringify(params.reproduction) : params.reproduction || ""
-    )
-  ).slice(0, FEEDBACK_STEPS_UPLOADS_GRID.repro_max_len);
-  const summaryText = scrub(
-    scrubCapabilityTokensFromReport(
-      params.summary ||
-        params.title ||
-        detailText.slice(0, 240) ||
-        `Worker issue report (${issueKind}${endpointStr ? ` on ${endpointStr}` : ""})`
-    )
-  ).slice(0, FEEDBACK_STEPS_UPLOADS_GRID.summary_max_len);
 
-  const stepMeta = inferStepAndReuseMode({
-    explicitStepMode: params.step_mode || "atomic_verification_step",
-    category: "worker_issue_report",
-    summary: summaryText,
-  });
-
-  const visibility =
-    infraAllowed && (params.visibility === "server_infra" || params.tier === "infra_private")
-      ? "server_infra"
-      : "public_commons";
-
-  const nowIso = new Date().toISOString();
   const autoDiagnosis = buildAutoDiagnosis({
     issueKind,
     endpoint: endpointStr,
@@ -705,142 +733,50 @@ export async function handleWorkerFeedbackRequest(
     publicUrl: base,
   });
 
-  const reportPayload = {
-    schema: FEEDBACK_STEPS_UPLOADS_GRID.feedback_schema_version,
-    issue_kind: issueKind,
-    endpoint: endpointStr,
-    http_status: Number.isFinite(httpStatus) ? httpStatus : null,
-    error_code: errorCode,
-    payload_bytes: Number.isFinite(payloadBytes) ? payloadBytes : null,
-    summary: summaryText,
-    detail: detailText,
-    reproduction: reproText,
-    client_harness: clientHarness,
-    step_mode: stepMeta.step_mode,
-    authenticated_reporter: tokenVerified,
-    was_gzipped: rawRead.wasGzipped,
-    auto_diagnosis: autoDiagnosis,
-    reported_at: nowIso,
-  };
-
-  const serializedPayload = JSON.stringify(reportPayload);
-  const payloadU8 = new TextEncoder().encode(serializedPayload);
-  const payloadSha = await sha256HexBytes(payloadU8);
-  const shortHash = payloadSha.slice(0, FEEDBACK_STEPS_UPLOADS_GRID.short_hash_chars);
-  const sanitizeKey = gatewayOps?.sanitizeObjectKeyPreservingSuffix || ((k) => k.slice(0, 120));
-  const objectKey = sanitizeKey(
-    `issue_${issueKind}_${cleanAgent}_${shortHash}_v1`,
-    FEEDBACK_STEPS_UPLOADS_GRID.object_key_max_len
+  const legacyIssueKindMode = Boolean(
+    (params.issue_kind || params.kind) &&
+      !params.signal_kind &&
+      !params.observation &&
+      !params.proposed_alternative
   );
 
-  const labels = ["worker_issue_report", `issue_kind:${issueKind}`, ...(verifiedWorkerUuid ? [`worker:${verifiedWorkerUuid}`] : [])];
-  const idxMeta = gatewayOps?.indexSidecarDocument
-    ? await gatewayOps.indexSidecarDocument({
-        title: objectKey,
-        bodyText: `${summaryText} ${endpointStr} ${errorCode} ${detailText}`,
-        category: "worker_issue_report",
-        labels,
-        inputContract: "worker_feedback_envelope",
-        outputContract: "worker_issue_report",
-      })
-    : {
-        simhash64_hex: "0000000000000000",
-        partition_slot: 0,
-        input_shape_hash: "feedback_in",
-        output_shape_hash: "feedback_out",
-        lsh_band_0: "b0_0000",
-        lsh_band_1: "b1_0000",
-        content_sha256: payloadSha,
-      };
-
-  await db
-    .prepare(
-      `INSERT INTO herma_task_objects
-       (object_key, requested_object_key, version_num, category, visibility, producer_agent, source_task_id, summary, payload_json,
-        simhash64_hex, sha256_hash, created_at,
-        partition_slot, labels_json, input_shape_hash, output_shape_hash, lsh_band_0, lsh_band_1,
-        quality_milli, content_sha256, worker_uuid, generation_depth,
-        chunk_count, total_payload_bytes, verification_verdict, step_mode, reuse_mode)
-       VALUES (?, ?, 1, 'worker_issue_report', ?, ?, 'feedback_report', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, 0, ?, 'UNREVIEWED', ?, ?)`
-    )
-    .bind(
-      objectKey,
-      objectKey,
-      visibility,
-      cleanAgent,
-      summaryText,
-      serializedPayload,
-      idxMeta.simhash64_hex,
-      payloadSha,
-      nowIso,
-      idxMeta.partition_slot,
-      JSON.stringify(labels),
-      idxMeta.input_shape_hash,
-      idxMeta.output_shape_hash,
-      idxMeta.lsh_band_0,
-      idxMeta.lsh_band_1,
-      idxMeta.content_sha256,
-      verifiedWorkerUuid || "",
-      payloadU8.byteLength,
-      stepMeta.step_mode,
-      stepMeta.reuse_mode
-    )
-    .run();
-
-  let credAwarded = 0;
-  const hasActionableEvidence = Boolean(
-    reproText.trim() || (endpointStr.trim() && (errorCode.trim() || Number.isFinite(httpStatus)))
-  );
-  if (tokenVerified && verifiedWorkerUuid && hasActionableEvidence) {
-    try {
-      const credRes = await db
-        .prepare(
-          `INSERT OR IGNORE INTO herma_worker_cred_events
-           (event_key, worker_uuid, agent_id, ip_fingerprint, event_kind, points_awarded,
-            unblock_bonus, prior_failed_workers, multiplier_milli, evidence_ref, task_id, object_key, detail_json, created_at)
-           VALUES (?, ?, ?, '', 'diagnostic_feedback_report', ?, 0, 0, ?, ?, 'feedback_report', ?, ?, ?)`
-        )
-        .bind(
-          `feedback_cred:${objectKey}`,
-          verifiedWorkerUuid,
-          cleanAgent,
-          FEEDBACK_STEPS_UPLOADS_GRID.diagnostic_cred_points,
-          FEEDBACK_STEPS_UPLOADS_GRID.milli_scale,
-          payloadSha,
-          objectKey,
-          JSON.stringify({ endpoint: endpointStr, http_status: httpStatus, error_code: errorCode }),
-          nowIso
-        )
-        .run();
-      if (Number(credRes?.meta?.changes || 0) > 0) {
-        credAwarded = FEEDBACK_STEPS_UPLOADS_GRID.diagnostic_cred_points;
-      }
-    } catch {
-      credAwarded = 0;
-    }
-  }
+  const ingestOut = await ingestCatchAllFeedbackObservation(db, env, {
+    rawPayload: {
+      ...params,
+      issue_kind: params.issue_kind || params.kind || undefined,
+      endpoint: endpointStr,
+      http_status: httpStatus,
+      error_code: errorCode,
+      payload_bytes: payloadBytes,
+    },
+    cleanAgent,
+    verifiedWorkerUuid,
+    tokenVerified,
+    infraAllowed,
+    publicUrl: base,
+    gatewayOps,
+    mirrorFn: gatewayOps?.mirrorPublicArtifactToTesseraAnonymous || null,
+    autoDiagnosis,
+    legacyIssueKindMode,
+  });
 
   return {
-    status: FEEDBACK_STEPS_UPLOADS_GRID.http_created,
+    status: FEEDBACK_STEPS_UPLOADS_GRID.http_ok,
     body: {
       ok: true,
       schema: FEEDBACK_STEPS_UPLOADS_GRID.feedback_schema_version,
       authenticated_reporter: tokenVerified,
-      diagnostic_cred_awarded: credAwarded,
-      stored_issue_object: {
-        object_key: objectKey,
-        category: "worker_issue_report",
-        visibility,
-        producer_agent: cleanAgent,
-        worker_uuid: verifiedWorkerUuid || null,
-        summary: summaryText,
-        step_mode: stepMeta.step_mode,
-        reuse_mode: stepMeta.reuse_mode,
-        sha256_hash: payloadSha,
-        total_payload_bytes: payloadU8.byteLength,
-        object_url: `${base}/q/object/${encodeURIComponent(objectKey)}`,
-        permalink_url: `${base}/c/${encodeURIComponent(objectKey)}`,
-      },
+      diagnostic_cred_awarded: ingestOut.diagnostic_cred_awarded,
+      fingerprint: ingestOut.fingerprint,
+      stored_object_key: ingestOut.stored_object_key,
+      signal_kind: ingestOut.signal_kind,
+      severity_milli: ingestOut.severity_milli,
+      distinct_reporter_count: ingestOut.distinct_reporter_count,
+      review_verb_id: ingestOut.review_verb_id,
+      spawned_review_verb: ingestOut.spawned_review_verb,
+      promoted_to_proposal: ingestOut.promoted_to_proposal,
+      emitted_training_signal: ingestOut.emitted_training_signal,
+      stored_issue_object: ingestOut.stored_issue_object,
       auto_diagnosis: autoDiagnosis,
     },
   };
@@ -1141,14 +1077,24 @@ async function persistBlobBytesAndOptionalObject(
     };
     const envJson = JSON.stringify(envelopePayload);
     const envSha = await sha256HexBytes(new TextEncoder().encode(envJson));
+    const uploadTax = enrichTaxonomyRecord({
+      object_key: cleanLinkedKey,
+      category,
+      summary,
+      step_mode: stepMeta.step_mode,
+      reuse_mode: stepMeta.reuse_mode,
+      labels: [category, "blob_cas"],
+      payload: envelopePayload,
+    });
     const idxMeta = gatewayOps?.indexSidecarDocument
       ? await gatewayOps.indexSidecarDocument({
           title: cleanLinkedKey,
           bodyText: `${summary} ${filename} ${contentType}`,
           category,
-          labels: [category, "blob_cas"],
+          labels: uploadTax.labels,
           inputContract: "blob_reference",
           outputContract: category,
+          searchHints: uploadTax.search_hints,
         })
       : {
           simhash64_hex: "0000000000000000",
@@ -1164,11 +1110,12 @@ async function persistBlobBytesAndOptionalObject(
       .prepare(
         `INSERT INTO herma_task_objects
          (object_key, requested_object_key, version_num, category, visibility, producer_agent, source_task_id, summary, payload_json,
-          simhash64_hex, sha256_hash, created_at,
+          simhash64_hex, sha256_hash, tessera_synced, created_at,
           partition_slot, labels_json, input_shape_hash, output_shape_hash, lsh_band_0, lsh_band_1,
           quality_milli, content_sha256, worker_uuid, generation_depth,
+          intent_bucket, opt_goal, target_env, prog_lang, deliverable_kind, search_hints_json,
           chunk_count, total_payload_bytes, verification_verdict, step_mode, reuse_mode)
-         VALUES (?, ?, 1, ?, ?, ?, 'blob_upload', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, 0, ?, 'UNREVIEWED', ?, ?)`
+         VALUES (?, ?, 1, ?, ?, ?, 'blob_upload', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, ?, ?, ?, ?, ?, ?, 0, ?, 'UNREVIEWED', ?, ?)`
       )
       .bind(
         cleanLinkedKey,
@@ -1180,15 +1127,22 @@ async function persistBlobBytesAndOptionalObject(
         envJson,
         idxMeta.simhash64_hex,
         envSha,
+        visibility !== "server_infra" ? 1 : 0,
         nowIso,
         idxMeta.partition_slot,
-        JSON.stringify([category, "blob_cas"]),
+        JSON.stringify(uploadTax.labels),
         idxMeta.input_shape_hash,
         idxMeta.output_shape_hash,
         idxMeta.lsh_band_0,
         idxMeta.lsh_band_1,
         idxMeta.content_sha256,
         workerUuid,
+        uploadTax.intent_bucket,
+        uploadTax.opt_goal,
+        uploadTax.target_env,
+        uploadTax.prog_lang,
+        uploadTax.deliverable_kind,
+        uploadTax.search_hints_json,
         totalBytes,
         stepMeta.step_mode,
         stepMeta.reuse_mode

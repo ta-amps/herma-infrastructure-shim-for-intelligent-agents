@@ -16,7 +16,7 @@ async function gzipUtf8(str) {
 }
 
 describe("Herma v6.8 + v6.9 Thick-Path Plateau Grid, Schema Coach, Meta FAIR Embeddings, Zero-404/409 UX & Adaptive Co-Leasing", () => {
-  it("writes v6_9 schema sentinel into herma_runtime_kv (k, v, expires_at_ms) and serves /health & /q/health", async () => {
+  it("writes v6_10 schema sentinel into herma_runtime_kv (k, v, expires_at_ms) and serves /health & /q/health", async () => {
     const h1 = await callGateway("/health");
     expect(h1.status).toBe(200);
     const h1Json = await h1.json();
@@ -27,7 +27,7 @@ describe("Herma v6.8 + v6.9 Thick-Path Plateau Grid, Schema Coach, Meta FAIR Emb
     const h2Json = await h2.json();
     expect(h2Json.ok).toBe(true);
     expect(h2Json.schema).toBe("herma.priority_work_gateway.grid.v6_8");
-    expect(h2Json.schema_sentinel).toBe("v6_9");
+    expect(h2Json.schema_sentinel).toBe("v6_10");
     expect(h2Json.max_chunked_payload_bytes).toBe(16777216);
 
     const kvRow = await env.HERMA_DB.prepare(
@@ -35,7 +35,7 @@ describe("Herma v6.8 + v6.9 Thick-Path Plateau Grid, Schema Coach, Meta FAIR Emb
     ).first();
     expect(kvRow).toBeTruthy();
     expect(kvRow.k).toBe("gateway_schema_version");
-    expect(kvRow.v).toBe("v6_9");
+    expect(kvRow.v).toBe("v6_10");
     expect(Number(kvRow.expires_at_ms)).toBe(0);
   });
 
@@ -204,7 +204,7 @@ describe("Herma v6.8 + v6.9 Thick-Path Plateau Grid, Schema Coach, Meta FAIR Emb
         detail: "Testing secret scrubbing on anonymous feedback",
       }),
     });
-    expect(anonRes.status).toBe(201);
+    expect(anonRes.status).toBe(200);
     const anonDoc = await anonRes.json();
     expect(anonDoc.ok).toBe(true);
     expect(anonDoc.stored_issue_object.category).toBe("worker_issue_report");
@@ -237,7 +237,7 @@ describe("Herma v6.8 + v6.9 Thick-Path Plateau Grid, Schema Coach, Meta FAIR Emb
         reproduction: "curl -X POST /q/submit -d @bundle_3mb.json",
       }),
     });
-    expect(authFbRes.status).toBe(201);
+    expect(authFbRes.status).toBe(200);
     const authFbDoc = await authFbRes.json();
     expect(authFbDoc.authenticated_reporter).toBe(true);
     expect(authFbDoc.diagnostic_cred_awarded).toBe(6);
@@ -693,28 +693,33 @@ describe("Herma v6.8 + v6.9 Thick-Path Plateau Grid, Schema Coach, Meta FAIR Emb
     expect(liDoc.ensemble_task_groups.some((g) => g.task_id === targetTaskId && g.dpo_pair_ready)).toBe(true);
   });
 
-  it("serves canonical v8 prompt at /prompts/raw/codex_unlimited_frontier_loop_v8 (and v7 alias) with strict light-only UI and zero em-dashes", async () => {
-    const rawV8Res = await callGateway(
-      "/prompts/raw/codex_unlimited_frontier_loop_v8?agent_id=codex-wave-99&worker_uuid=w_codex_99"
+  it("serves canonical v9 prompt at /prompts/raw/codex_unlimited_frontier_loop_v9 (and v8/v7 aliases) with strict light-only UI and zero em-dashes", async () => {
+    const rawV9Res = await callGateway(
+      "/prompts/raw/codex_unlimited_frontier_loop_v9?agent_id=codex-wave-99&worker_uuid=w_codex_99"
     );
-    expect(rawV8Res.status).toBe(200);
-    const rawV8 = await rawV8Res.text();
-    expect(rawV8).toContain("(v8)");
-    expect(rawV8).toContain("codex-wave-99");
-    expect(rawV8).toContain("w_codex_99");
-    expect(rawV8).toContain("SONAR");
-    expect(rawV8).toContain("Contriever");
-    expect(rawV8).toContain("MetaCLIP 2");
-    expect(rawV8).toContain("/q/schema");
-    expect(rawV8).toContain("/q/feedback");
-    expect(rawV8).toContain("/q/upload");
-    expect(rawV8).not.toContain("\u2014");
+    expect(rawV9Res.status).toBe(200);
+    const rawV9 = await rawV9Res.text();
+    expect(rawV9).toContain("(v9)");
+    expect(rawV9).toContain("codex-wave-99");
+    expect(rawV9).toContain("w_codex_99");
+    expect(rawV9).toContain("SONAR");
+    expect(rawV9).toContain("Contriever");
+    expect(rawV9).toContain("MetaCLIP 2");
+    expect(rawV9).toContain("/q/affinity");
+    expect(rawV9).toContain("/q/schema");
+    expect(rawV9).toContain("/q/feedback");
+    expect(rawV9).toContain("proactive_observations");
+    expect(rawV9).toContain("/q/upload");
+    expect(rawV9).not.toContain("\u2014");
 
-    // v7 URL seamlessly upgrades to v8
+    // v8 and v7 URLs seamlessly upgrade to v9
+    const rawV8AliasRes = await callGateway("/prompts/raw/codex_unlimited_frontier_loop_v8");
+    expect(rawV8AliasRes.status).toBe(200);
+    expect(await rawV8AliasRes.text()).toContain("(v9)");
+
     const rawV7AliasRes = await callGateway("/prompts/raw/codex_unlimited_frontier_loop_v7");
     expect(rawV7AliasRes.status).toBe(200);
-    const rawV7Alias = await rawV7AliasRes.text();
-    expect(rawV7Alias).toContain("(v8)");
+    expect(await rawV7AliasRes.text()).toContain("(v9)");
 
     const htmlRes = await callGateway("/prompts");
     expect(htmlRes.status).toBe(200);
@@ -722,5 +727,224 @@ describe("Herma v6.8 + v6.9 Thick-Path Plateau Grid, Schema Coach, Meta FAIR Emb
     expect(html).toMatch(/only light/i);
     expect(html).not.toMatch(/prefers-color-scheme\s*:\s*dark/i);
     expect(html).not.toContain("\u2014");
+  });
+
+  it("enforces Herma v6.10 zero-missing taxonomy auto-describer, model_hint canonicalization, /q/affinity Ricardian + setup pairing, and catch-all /q/feedback + proactive_observations peer-review verb loop", async () => {
+    // 1. Onboard workers with drifted model_hint values ("Codex", "ollama-cloud/muse-spark-open") and verify canonicalization
+    const [onbCodexRes, onbMuseRes] = await Promise.all([
+      callGateway("/q/onboard", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          agent_id: "codex-heavy-builder-01",
+          mint_new: true,
+          harness_tier: "tier_4_deep_architect_astra",
+          model_hint: "Codex",
+          capabilities: ["shell", "python", "pytest", "git"],
+        }),
+      }),
+      callGateway("/q/onboard", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          agent_id: "muse-peer-reviewer-02",
+          mint_new: true,
+          harness_tier: "tier_2_structured_json",
+          model_hint: "ollama-cloud/muse-spark-open",
+          capabilities: ["http", "json", "rubric_eval"],
+        }),
+      }),
+    ]);
+    const codexDoc = await onbCodexRes.json();
+    const museDoc = await onbMuseRes.json();
+    expect(codexDoc.worker_profile.model_hint).toBe("codex");
+    expect(museDoc.worker_profile.model_hint).toBe("muse-spark-open");
+
+    // 2. Submit untagged Task Object + two follow-up tasks (one cognitive, one preferred-setup build) + inline proactive_observations
+    const untaggedSubRes = await callGateway("/q/submit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent_id: "codex-heavy-builder-01",
+        worker_uuid: codexDoc.worker_profile.worker_uuid,
+        worker_token: codexDoc.worker_token,
+        task_id: "self_seed",
+        summary: "Seeded untagged Python pytest module + paired affinity tasks + inline observation",
+        execution_telemetry: { wall_ms: 820, perturbation_pass_count: 5, perturbation_total: 5 },
+        task_objects: [
+          {
+            object_key: "untagged_auto_enriched_pytest_mod_20261101_v1",
+            category: "validator_code",
+            summary: "Python pytest verification module for NGO CSV schema validation",
+            payload: { code: "def check_schema(row): return isinstance(row, dict)" },
+          },
+        ],
+        proactive_observations: [
+          {
+            signal_kind: "better_or_alternative_way",
+            target_component: "shared_substrate",
+            observation: "Batching D1 taxonomy enrichment reduces cold-start queries on multi-object submissions.",
+            proposed_alternative: "Group deterministic enrichment writes per chunk transaction.",
+          },
+        ],
+        followup_tasks: [
+          {
+            tier: "public_general",
+            family: "v610-ricardian-pair",
+            step_mode: "atomic_cognitive_step",
+            priority: 82,
+            title: "Triage NGO CSV rubric wording",
+            prompt: "Rank 3 rubric phrasing variants without shell execution.",
+          },
+          {
+            tier: "public_general",
+            family: "v610-ricardian-pair",
+            step_mode: "atomic_build_step",
+            priority: 80,
+            title: "Build Python pytest CLI adapter with preferred setup",
+            prompt: "Implement and test Python CLI adapter.",
+            preferred_worker_setup: {
+              preferred_harness_tiers: ["tier_4_deep_architect_astra"],
+              required_tools: ["shell", "python", "pytest"],
+              min_context_tokens: 65536,
+              preferred_model_families: ["codex", "gpt-astra"],
+              preferred_worker_uuids: [codexDoc.worker_profile.worker_uuid],
+            },
+          },
+        ],
+      }),
+    });
+    expect(untaggedSubRes.status).toBe(200);
+    const untaggedSubDoc = await untaggedSubRes.json();
+    expect(untaggedSubDoc.proactive_feedback_receipts.length).toBe(1);
+    const inlineReviewVerbId = untaggedSubDoc.proactive_feedback_receipts[0].review_verb_id;
+    expect(inlineReviewVerbId).toMatch(/^verb_fbk_review_/);
+
+    // 3. Heavy tier_4 CLI worker claims on family="v610-ricardian-pair" with worker_setup -> Ricardian + setup affinity picks atomic_build_step over slightly higher raw-priority cognitive step!
+    const heavyClaimRes = await callGateway("/q/claim", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent_id: "codex-heavy-builder-01",
+        worker_uuid: codexDoc.worker_profile.worker_uuid,
+        worker_token: codexDoc.worker_token,
+        family: "v610-ricardian-pair",
+        worker_setup: {
+          harness_tier: "tier_4_deep_architect_astra",
+          model_hint: "codex",
+          tools_available: ["shell", "python", "pytest", "git"],
+          context_tokens: 131072,
+        },
+      }),
+    });
+    expect(heavyClaimRes.status).toBe(200);
+    const heavyClaimDoc = await heavyClaimRes.json();
+    expect(heavyClaimDoc.lease.step_mode).toBe("atomic_build_step");
+    expect(heavyClaimDoc.lease.affinity_telemetry).toBeDefined();
+    expect(heavyClaimDoc.lease.affinity_telemetry.setup_fit_milli).toBeGreaterThanOrEqual(800);
+    expect(heavyClaimDoc.lease.preferred_worker_setup.preferred_model_families).toContain("codex-frontier");
+
+    // 4. Catch-all POST /q/feedback (both structured signal_kind AND freeform plain text) -> returns 200 + review_verb_id
+    const catchAllFbRes = await callGateway("/q/feedback", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent_id: "codex-heavy-builder-01",
+        worker_uuid: codexDoc.worker_profile.worker_uuid,
+        worker_token: codexDoc.worker_token,
+        signal_kind: "efficiency_concern",
+        target_component: "routing_affinity",
+        observation: "Heavy CLI workers previously claimed trivial cognitive tasks when build tasks had 2 points lower priority.",
+        proposed_alternative: "Apply Ricardian comparative-advantage opportunity-cost adjustment on /q/claim.",
+      }),
+    });
+    expect(catchAllFbRes.status).toBe(200);
+    const catchAllFbDoc = await catchAllFbRes.json();
+    expect(catchAllFbDoc.ok).toBe(true);
+    expect(catchAllFbDoc.review_verb_id).toMatch(/^verb_fbk_review_/);
+    expect(catchAllFbDoc.stored_issue_object.category).toBe("system_feedback_signal");
+    const reviewVerbId = catchAllFbDoc.review_verb_id;
+
+    // Freeform plain-text feedback also works cleanly!
+    const freeformFbRes = await callGateway("/q/feedback", {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "Freeform worker note: /q/affinity makes setup pairing super clear for multi-model swarms.",
+    });
+    expect(freeformFbRes.status).toBe(200);
+    const freeformFbDoc = await freeformFbRes.json();
+    expect(freeformFbDoc.ok).toBe(true);
+
+    // 5. Enforce drafter != reviewer: reporter attempting to claim its own review_verb_id gets 403 self_review_forbidden!
+    const selfClaimRes = await callGateway("/q/claim", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent_id: "codex-heavy-builder-01",
+        worker_uuid: codexDoc.worker_profile.worker_uuid,
+        worker_token: codexDoc.worker_token,
+        task_id: reviewVerbId,
+      }),
+    });
+    expect(selfClaimRes.status).toBe(403);
+    const selfClaimDoc = await selfClaimRes.json();
+    expect(selfClaimDoc.error).toBe("self_review_forbidden");
+
+    // 6. Independent peer reviewer (muse-peer-reviewer-02 != codex-heavy-builder-01) claims & verifies reviewVerbId -> promotes to /q/proposals!
+    const peerClaimRes = await callGateway("/q/claim", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent_id: "muse-peer-reviewer-02",
+        worker_uuid: museDoc.worker_profile.worker_uuid,
+        worker_token: museDoc.worker_token,
+        task_id: reviewVerbId,
+      }),
+    });
+    expect(peerClaimRes.status).toBe(200);
+    const peerClaimDoc = await peerClaimRes.json();
+    expect(peerClaimDoc.lease.task_id).toBe(reviewVerbId);
+
+    const peerSubRes = await callGateway("/q/submit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent_id: "muse-peer-reviewer-02",
+        worker_uuid: museDoc.worker_profile.worker_uuid,
+        worker_token: museDoc.worker_token,
+        task_id: reviewVerbId,
+        lease_epoch: peerClaimDoc.lease.lease_epoch,
+        summary: "Independently benchmarked and verified Ricardian opportunity-cost improvement across 5 perturbations.",
+        execution_telemetry: { wall_ms: 610, tests_passed: 6, tests_total: 6, perturbation_pass_count: 5, perturbation_total: 5 },
+      }),
+    });
+    expect(peerSubRes.status).toBe(200);
+    const peerSubDoc = await peerSubRes.json();
+    expect(peerSubDoc.feedback_peer_review).toBeDefined();
+    expect(peerSubDoc.feedback_peer_review.verified).toBe(true);
+    expect(peerSubDoc.feedback_peer_review.promoted_proposal_key).toBeTruthy();
+
+    // 7. Verify GET /q/affinity returns 200 AND taxonomy_completeness shows 0 missing rows across queue & objects!
+    const affRes = await callGateway("/q/affinity");
+    expect(affRes.status).toBe(200);
+    const affDoc = await affRes.json();
+    expect(affDoc.ok).toBe(true);
+    expect(affDoc.taxonomy_completeness.durable_queue.missing_intent_bucket).toBe(0);
+    expect(affDoc.taxonomy_completeness.durable_queue.missing_target_env).toBe(0);
+    expect(affDoc.taxonomy_completeness.durable_queue.missing_prog_lang).toBe(0);
+    expect(affDoc.taxonomy_completeness.durable_queue.missing_deliverable_kind).toBe(0);
+    expect(affDoc.taxonomy_completeness.durable_queue.empty_required_capabilities_json).toBe(0);
+    expect(affDoc.taxonomy_completeness.durable_queue.empty_search_hints_json).toBe(0);
+    expect(affDoc.taxonomy_completeness.task_objects.missing_intent_bucket).toBe(0);
+    expect(affDoc.taxonomy_completeness.task_objects.missing_target_env).toBe(0);
+    expect(affDoc.taxonomy_completeness.task_objects.missing_prog_lang).toBe(0);
+    expect(affDoc.taxonomy_completeness.task_objects.missing_deliverable_kind).toBe(0);
+    expect(affDoc.taxonomy_completeness.task_objects.empty_search_hints_json).toBe(0);
+    expect(affDoc.worker_rankings.length).toBeGreaterThanOrEqual(2);
+    expect(affDoc.setup_signature_rankings.length).toBeGreaterThanOrEqual(1);
+    expect(affDoc.canonical_model_stats.some((m) => m.canonical_model_family === "codex-frontier")).toBe(true);
+    expect(affDoc.canonical_model_stats.some((m) => m.canonical_model_family === "muse-spark")).toBe(true);
+    expect(affDoc.worker_rankings.some((w) => w.model_hint === "codex")).toBe(true);
+    expect(affDoc.worker_rankings.some((w) => w.model_hint === "muse-spark-open")).toBe(true);
   });
 });

@@ -114,6 +114,20 @@ import {
   recordPrimaryLeaseInCoLeaseTable,
   verifyLegitimateCoLeaseOrGrace,
 } from "./co_lease_and_ensemble.js";
+import {
+  TAXONOMY_AFFINITY_FEEDBACK_GRID,
+  buildAffinitySnapshot,
+  canonicalizeModelHint,
+  computeSetupSignature,
+  enrichTaxonomyRecord,
+  ensureTaxonomyAffinityAndFeedbackSchema,
+  evaluateTaskWorkerAffinity,
+  ingestCatchAllFeedbackObservation,
+  parseRequiredCapabilitiesAndSetup,
+  recordIndependentFeedbackReviewOnSubmit,
+  recordWorkerAndSetupEfficiencyOutcome,
+  runV610TaxonomyAndModelBackfill,
+} from "./taxonomy_affinity_and_proactive_feedback.js";
 
 export const QUEUE_GATEWAY_GRID = Object.freeze({
   schema_id: "herma.priority_work_gateway.grid.v6_8",
@@ -820,16 +834,30 @@ function normalizeSearchHints(rawHints, fallbackItem = {}) {
   const h = rawHints && typeof rawHints === "object" ? rawHints : {};
   const axes = h.facet_axes && typeof h.facet_axes === "object" ? h.facet_axes : {};
   const inferred = inferDefaultFacetAxes(fallbackItem);
-  const intentSig = cleanFacetToken(h.intent_signature || fallbackItem.intent_bucket || "");
-  const optGoal = cleanFacetToken(axes.opt_goal || h.opt_goal || fallbackItem.opt_goal || inferred.optGoal || "");
-  const targetEnv = cleanFacetToken(axes.target_env || h.target_env || fallbackItem.target_env || "");
-  const progLang = cleanFacetToken(axes.prog_lang || h.prog_lang || fallbackItem.prog_lang || inferred.progLang || "");
+  const autoTax = enrichTaxonomyRecord(fallbackItem || {});
+  const intentSig = cleanFacetToken(
+    h.intent_signature || h.intent_bucket || fallbackItem.intent_bucket || autoTax.intent_bucket || ""
+  );
+  const optGoal = cleanFacetToken(
+    axes.opt_goal || h.opt_goal || fallbackItem.opt_goal || inferred.optGoal || autoTax.opt_goal || ""
+  );
+  const targetEnv = cleanFacetToken(
+    axes.target_env || h.target_env || fallbackItem.target_env || autoTax.target_env || ""
+  );
+  const progLang = cleanFacetToken(
+    axes.prog_lang || h.prog_lang || fallbackItem.prog_lang || inferred.progLang || autoTax.prog_lang || ""
+  );
   const localeCountry = cleanFacetToken(axes.locale_country || h.locale_country || fallbackItem.locale_country || "");
   const deliverableKind = cleanFacetToken(
-    axes.deliverable_kind || h.deliverable_kind || fallbackItem.deliverable_kind || inferred.deliverableKind || ""
+    axes.deliverable_kind ||
+      h.deliverable_kind ||
+      fallbackItem.deliverable_kind ||
+      inferred.deliverableKind ||
+      autoTax.deliverable_kind ||
+      ""
   );
 
-  const kwArr = Array.isArray(h.search_keywords) ? h.search_keywords : [];
+  const kwArr = Array.isArray(h.search_keywords) && h.search_keywords.length > 0 ? h.search_keywords : autoTax.keywords;
   const synArr = Array.isArray(h.semantic_synonyms) ? h.semantic_synonyms : [];
   const phArr = Array.isArray(h.search_phrases) ? h.search_phrases : [];
 
@@ -1117,6 +1145,11 @@ function markGatewayDbSchemaV69Ready(db) {
       configurable: true,
       enumerable: false,
     });
+    Object.defineProperty(db, "__hermaSchemaV610Ready", {
+      value: true,
+      configurable: true,
+      enumerable: false,
+    });
   } catch {
     // frozen mock DB object in synthetic unit test
   }
@@ -1126,7 +1159,7 @@ export async function ensurePriorityGatewaySchema(db, { isLiveRuntime = false } 
   if (!db || typeof db !== "object") {
     return;
   }
-  if (db.__hermaSchemaV69Ready || INITIALIZED_GATEWAY_DBS.has(db)) {
+  if (db.__hermaSchemaV610Ready || INITIALIZED_GATEWAY_DBS.has(db)) {
     markGatewayDbSchemaV69Ready(db);
     return;
   }
@@ -1139,7 +1172,7 @@ export async function ensurePriorityGatewaySchema(db, { isLiveRuntime = false } 
       const sentinelRow = await db
         .prepare("SELECT v FROM herma_runtime_kv WHERE k = 'gateway_schema_version' LIMIT 1")
         .first();
-      if (sentinelRow && sentinelRow.v === "v6_9") {
+      if (sentinelRow && sentinelRow.v === "v6_10") {
         ISOLATE_SCHEMA_READY = true;
         if (isLiveRuntime) {
           LAST_PRODUCTION_DB_REF = db;
@@ -1808,12 +1841,12 @@ export async function ensurePriorityGatewaySchema(db, { isLiveRuntime = false } 
         .prepare(
           `INSERT INTO herma_task_objects
            (object_key, requested_object_key, version_num, category, visibility, producer_agent, source_task_id, summary, payload_json,
-            simhash64_hex, sha256_hash, created_at,
+            simhash64_hex, sha256_hash, tessera_synced, created_at,
             partition_slot, labels_json, input_shape_hash, output_shape_hash, lsh_band_0, lsh_band_1,
             quality_milli, eval_count, content_sha256, worker_uuid, generation_depth,
             intent_bucket, opt_goal, target_env, prog_lang, locale_country, deliverable_kind, search_hints_json,
             chunk_count, total_payload_bytes, verification_verdict, audience_reach_milli, step_mode, reuse_mode)
-           VALUES (?, ?, 1, ?, 'public_commons', 'herma-meta-embeddings-seed', 'seed_v6_8', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'w_system_meta_embeddings', 0, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'VERIFIED_SEED', 900, 'atomic_build_step', 'deterministic_code_bypass')`
+           VALUES (?, ?, 1, ?, 'public_commons', 'herma-meta-embeddings-seed', 'seed_v6_8', ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'w_system_meta_embeddings', 0, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'VERIFIED_SEED', 900, 'atomic_build_step', 'deterministic_code_bypass')`
         )
         .bind(
           seedObj.object_key || META_FAIR_SEEDED_TASK_OBJECT_KEY,
@@ -1881,6 +1914,9 @@ export async function ensurePriorityGatewaySchema(db, { isLiveRuntime = false } 
     )
     .run();
 
+  await ensureTaxonomyAffinityAndFeedbackSchema(db);
+  await runV610TaxonomyAndModelBackfill(db);
+
   await db
     .prepare(
       "CREATE TABLE IF NOT EXISTS herma_runtime_kv (k TEXT PRIMARY KEY, v TEXT NOT NULL, expires_at_ms INTEGER NOT NULL)"
@@ -1888,7 +1924,7 @@ export async function ensurePriorityGatewaySchema(db, { isLiveRuntime = false } 
     .run();
   await db
     .prepare(
-      "INSERT OR REPLACE INTO herma_runtime_kv (k, v, expires_at_ms) VALUES ('gateway_schema_version', 'v6_9', 0)"
+      "INSERT OR REPLACE INTO herma_runtime_kv (k, v, expires_at_ms) VALUES ('gateway_schema_version', 'v6_10', 0)"
     )
     .run();
 
@@ -3465,10 +3501,14 @@ export function inferWorkerHarnessProfile({
       tier = "tier_3_cli_code_harness";
     }
   }
+  const normModelHint = canonicalizeModelHint(scrubSensitiveText(modelHint || existingRow?.model_hint || ""), {
+    agentId,
+    userAgent,
+  });
   return {
     harness_tier: tier,
     capability_milli: capMilli,
-    model_hint: scrubSensitiveText(modelHint || existingRow?.model_hint || "").slice(0, QUEUE_GATEWAY_GRID.facet_max_len),
+    model_hint: normModelHint.slice(0, QUEUE_GATEWAY_GRID.facet_max_len),
   };
 }
 
@@ -4581,6 +4621,7 @@ async function buildPulseSnapshot(db, env, infraAllowed) {
       upload_endpoint: "/q/upload",
       heartbeat_endpoint: "/q/heartbeat",
       lease_intelligence_endpoint: "/q/lease-intelligence",
+      affinity_endpoint: "/q/affinity",
       tasks_catalog_endpoint: "/q/tasks",
       objects_catalog_endpoint: "/q/objects",
       workers_directory_endpoint: "/q/workers",
@@ -4771,11 +4812,20 @@ function formatLeasedTaskEnvelope(
       title: row.title,
       prompt: row.prompt,
     }).step_mode;
+  const parsedCaps = parseRequiredCapabilitiesAndSetup(row.required_capabilities_json, {
+    ...row,
+    step_mode: stepMode,
+  });
   return {
     task_id: row.task_id,
     tier: row.tier,
     verb_kind: row.verb_kind || "general_verb",
     step_mode: stepMode,
+    intent_bucket: row.intent_bucket || "reusable_capability_synthesis",
+    target_env: row.target_env || "portable_cli_or_sandbox",
+    prog_lang: row.prog_lang || "polyglot_declarative",
+    deliverable_kind: row.deliverable_kind || "deterministic_code_module",
+    preferred_worker_setup: parsedCaps.preferred_worker_setup,
     visibility: row.visibility,
     priority: Number(row.priority),
     complexity_milli: compMilli,
@@ -4808,6 +4858,7 @@ function formatLeasedTaskEnvelope(
     simhash64_hex: row.simhash64_hex,
     lsh_band_0: row.lsh_band_0,
     routing_telemetry: routingTelemetry || undefined,
+    affinity_telemetry: routingTelemetry?.affinity_telemetry || undefined,
   };
 }
 
@@ -4832,6 +4883,7 @@ async function claimNextAuthorizedTask(
     verbKind = "",
     stepMode = "",
     allowCoLease = null,
+    workerSetup = null,
   } = {}
 ) {
   if (requestedTier === "infra_private" && !infraAllowed) {
@@ -4892,14 +4944,17 @@ async function claimNextAuthorizedTask(
   // When a bare shared platform handle ("muse", "grok", "claude", "worker", etc.) omits worker_uuid
   // OR passes the legacy deterministic shared `w_agent_<handle>` bucket, mint an isolated per-claim
   // worker_uuid so concurrent scheduled jobs NEVER collide on the same lease!
+  const effectiveSetup = workerSetup && typeof workerSetup === "object" ? workerSetup : null;
   const { profile, entropy } = await upsertOrLoadWorkerProfile(db, {
     agentId: cleanAgent,
     workerUuid: isBareSharedHandle ? "" : workerUuid,
     mintNew: isBareSharedHandle,
     forceMintNew: isBareSharedHandle,
     allowAgentRename: Boolean(authCheck.tokenVerified || infraAllowed),
-    modelHint,
-    harnessTier,
+    calibrationPatch: effectiveSetup ? { worker_setup: effectiveSetup } : null,
+    transportMode: effectiveSetup?.transport_mode || "",
+    modelHint: effectiveSetup?.model_hint || modelHint,
+    harnessTier: effectiveSetup?.harness_tier || harnessTier,
     userAgent,
   });
 
@@ -5052,11 +5107,31 @@ async function claimNextAuthorizedTask(
   )`;
   const staleOwnerCutoffIso = new Date(Date.now() - QUEUE_GATEWAY_GRID.stale_owner_lock_ttl_ms).toISOString();
 
-  // Load learned UCB1 routing arms for this worker's harness tier
-  const routingStatsRows = await db
-    .prepare("SELECT * FROM herma_routing_stats WHERE harness_tier = ?")
-    .bind(profile.harness_tier)
-    .all();
+  // Load learned UCB1 routing arms for this worker's harness tier + v6.10 setup/worker efficiency slices
+  const callerSetupSig = computeSetupSignature({
+    harnessTier: effectiveSetup?.harness_tier || profile.harness_tier,
+    modelHint: effectiveSetup?.model_hint || modelHint || profile.model_hint || "",
+    transportMode: effectiveSetup?.transport_mode || profile.transport_mode || "http_json",
+    toolsAvailable: effectiveSetup?.tools_available || null,
+  });
+  const [routingStatsRows, sliceStatsRes, scarceBuildRow] = await Promise.all([
+    db.prepare("SELECT * FROM herma_routing_stats WHERE harness_tier = ?").bind(profile.harness_tier).all(),
+    db
+      .prepare(
+        "SELECT * FROM herma_worker_setup_slice_stats WHERE entity_id IN (?, ?) LIMIT 64"
+      )
+      .bind(profile.worker_uuid, callerSetupSig)
+      .all()
+      .catch(() => ({ results: [] })),
+    db
+      .prepare(
+        `SELECT 1 AS has_build FROM herma_durable_queue
+         WHERE state = 'ready' AND step_mode = 'atomic_build_step' AND ${visAllowed} ${prereqReadyClause}
+         LIMIT 1`
+      )
+      .first()
+      .catch(() => null),
+  ]);
   const statsMap = new Map();
   let totalTierDispatches = 0;
   for (const sr of routingStatsRows?.results || []) {
@@ -5064,12 +5139,42 @@ async function claimNextAuthorizedTask(
     statsMap.set(key, sr);
     totalTierDispatches += Number(sr.dispatch_count || 0);
   }
+  const workerSliceMap = new Map();
+  const setupSliceMap = new Map();
+  for (const sl of sliceStatsRes?.results || []) {
+    const mapKey = `${sl.entity_id}::${sl.category}::${sl.step_mode}`;
+    if (sl.entity_kind === "setup") {
+      setupSliceMap.set(mapKey, sl);
+    } else {
+      workerSliceMap.set(mapKey, sl);
+    }
+  }
+  const hasScarceReadyBuildTasks = Boolean(scarceBuildRow?.has_build);
 
   const scoreCandidate = (cand, preferredAffinity = affinityBand, preferredTierGroup = null) => {
     const compMilli = estimateTaskComplexityMilli(cand);
     const compBucket = complexityBucketForMilli(compMilli);
     const minCap = Number(cand.min_capability_milli || QUEUE_GATEWAY_GRID.capability_min_floor_milli);
     const workerCap = Number(profile.capability_milli || QUEUE_GATEWAY_GRID.capability_tier2_milli);
+
+    const affEval = evaluateTaskWorkerAffinity({
+      candidateRow: cand,
+      workerProfile: profile,
+      workerSetupOverride: effectiveSetup,
+      hasScarceReadyBuildTasks,
+      workerSliceMap,
+      setupSliceMap,
+    });
+    if (affEval.excluded_self_review) {
+      return {
+        excludedSelfReview: true,
+        totalScore: -1000000,
+        telemetry: {
+          excluded_self_review: true,
+          harness_tier: profile.harness_tier,
+        },
+      };
+    }
 
     let tierRankBonus = 0;
     if (preferredTierGroup === "infra_or_ngo") {
@@ -5140,9 +5245,11 @@ async function claimNextAuthorizedTask(
       ucbBonus +
       ageBonus +
       reachBonus +
-      stepModeBonus;
+      stepModeBonus +
+      affEval.affinity_total_bonus;
 
     return {
+      excludedSelfReview: false,
       totalScore,
       telemetry: {
         harness_tier: profile.harness_tier,
@@ -5156,6 +5263,17 @@ async function claimNextAuthorizedTask(
         age_anti_starvation_bonus: Math.round(ageBonus * 100) / 100,
         audience_reach_bonus: Math.round(reachBonus * 100) / 100,
         explicit_affinity_bonus: explicitAffinityBonus,
+        affinity_telemetry: {
+          setup_matches: affEval.setup_matches,
+          setup_fit_milli: affEval.setup_fit_milli,
+          setup_signature: affEval.setup_signature,
+          canonical_model_family: affEval.canonical_model_family,
+          efficiency_confidence_milli: affEval.efficiency_confidence_milli,
+          comparative_advantage_milli: affEval.comparative_advantage_milli,
+          affinity_delta: affEval.affinity_delta,
+          ricardian_delta: affEval.ricardian_delta,
+          affinity_total_bonus: affEval.affinity_total_bonus,
+        },
         effective_routing_score: Math.round(totalScore * 100) / 100,
       },
     };
@@ -5166,6 +5284,7 @@ async function claimNextAuthorizedTask(
     let best = null;
     for (const r of poolRows) {
       const scored = scoreCandidate(r, preferredAffinity, preferredTierGroup);
+      if (scored.excludedSelfReview) continue;
       if (
         !best ||
         scored.totalScore > best.scored.totalScore ||
@@ -5199,7 +5318,16 @@ async function claimNextAuthorizedTask(
       targetSql += " LIMIT 1";
       const targetRow = await db.prepare(targetSql).bind(...targetBinds).first();
       if (targetRow) {
-        picked = { row: targetRow, scored: scoreCandidate(targetRow, affinityBand, null) };
+        const targetScored = scoreCandidate(targetRow, affinityBand, null);
+        if (targetScored.excludedSelfReview) {
+          return {
+            forbidden: true,
+            code: "self_review_forbidden",
+            detail:
+              "Original feedback reporter cannot claim their own peer-review verification verb (drafter != reviewer).",
+          };
+        }
+        picked = { row: targetRow, scored: targetScored };
       }
     } else if (cleanFamilyFilter || cleanVerbKindFilter || cleanStepModeFilter) {
       let famSql = `SELECT * FROM herma_durable_queue
@@ -5278,13 +5406,24 @@ async function claimNextAuthorizedTask(
         const synthPrompt =
           `Analyze and rank the attached evaluation_candidates (${sampleIds.join(", ") || "via /q/pulse"}) through your persona lens (${profile.persona_label}). ` +
           "Score actual_importance (1..100), potential_importance (1..100), estimated_priority (1..100), novelty_milli (0..1000), and convergence_flag, store 1 calibration summary object, and submit your evaluations array.";
+        const synthTax = enrichTaxonomyRecord({
+          task_id: synthId,
+          tier: "public_general",
+          category: "eval_and_rank",
+          verb_kind: "eval_and_rank",
+          step_mode: "atomic_verification_step",
+          title: synthTitle,
+          prompt: synthPrompt,
+          labels: ["eval_and_rank", `worker:${profile.worker_uuid}`],
+        });
         const idxMeta = await indexSidecarDocument(db, {
           title: synthTitle,
           bodyText: synthPrompt,
           category: "eval_and_rank",
-          labels: ["eval_and_rank", `worker:${profile.worker_uuid}`],
+          labels: synthTax.labels,
           inputContract: "live_queue_and_object_slice",
           outputContract: "calibrated_evaluations_and_rubric",
+          searchHints: synthTax.search_hints,
         });
         await db
           .prepare(
@@ -5292,10 +5431,12 @@ async function claimNextAuthorizedTask(
              (task_id, tier, visibility, priority, state, title, prompt, input_contract, output_contract,
               simhash64_hex, producer_agent, created_at, updated_at,
               partition_slot, category, labels_json, input_shape_hash, output_shape_hash,
-              lsh_band_0, lsh_band_1, quality_milli, content_sha256, verb_kind, producer_worker_uuid, complexity_milli, step_mode)
+              lsh_band_0, lsh_band_1, quality_milli, content_sha256, verb_kind, producer_worker_uuid,
+              intent_bucket, opt_goal, target_env, prog_lang, deliverable_kind, search_hints_json,
+              required_capabilities_json, complexity_milli, step_mode)
              VALUES (?, 'public_general', 'public_commons', ?, 'ready', ?, ?, 'live_queue_and_object_slice',
                      'calibrated_evaluations_and_rubric', ?, 'beat1-eval-synthesizer', ?, ?,
-                     ?, 'eval_and_rank', ?, ?, ?, ?, ?, ?, ?, 'eval_and_rank', ?, ?, 'atomic_verification_step')`
+                     ?, 'eval_and_rank', ?, ?, ?, ?, ?, ?, ?, 'eval_and_rank', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'atomic_verification_step')`
           )
           .bind(
             synthId,
@@ -5306,7 +5447,7 @@ async function claimNextAuthorizedTask(
             nowSynth,
             nowSynth,
             idxMeta.partition_slot,
-            JSON.stringify(["eval_and_rank", `worker:${profile.worker_uuid}`]),
+            JSON.stringify(synthTax.labels),
             idxMeta.input_shape_hash,
             idxMeta.output_shape_hash,
             idxMeta.lsh_band_0,
@@ -5314,6 +5455,13 @@ async function claimNextAuthorizedTask(
             QUEUE_GATEWAY_GRID.default_quality_milli,
             idxMeta.content_sha256,
             profile.worker_uuid,
+            synthTax.intent_bucket,
+            synthTax.opt_goal,
+            synthTax.target_env,
+            synthTax.prog_lang,
+            synthTax.deliverable_kind,
+            synthTax.search_hints_json,
+            synthTax.required_capabilities_json,
             QUEUE_GATEWAY_GRID.complexity_verb_eval_milli
           )
           .run();
@@ -5997,36 +6145,49 @@ async function storeReasoningSuggestionTaskObject(
   const serialized = JSON.stringify(payloadObj);
   const byteLen = new TextEncoder().encode(serialized).byteLength;
   const objHash = await sha256HexGateway(serialized);
+  const rsVis = visibility === "server_infra" ? "server_infra" : "public_commons";
+  const rsTax = enrichTaxonomyRecord({
+    object_key: objectKey,
+    category: "reasoning_suggestion",
+    summary: summaryText,
+    step_mode: "atomic_cognitive_step",
+    labels: ["reasoning_suggestion", modelId, taskId],
+    payload: payloadObj,
+  });
   const idxMeta = await indexSidecarDocument(db, {
     title: objectKey,
     bodyText: `${summaryText} ${serialized.slice(0, QUEUE_GATEWAY_GRID.prompt_max_len)}`,
     category: "reasoning_suggestion",
-    labels: ["reasoning_suggestion", modelId, taskId],
+    labels: rsTax.labels,
     inputContract: "worker_roadblock_question",
     outputContract: "step_by_step_reuse_plan",
+    searchHints: rsTax.search_hints,
   });
   await db
     .prepare(
       `INSERT OR IGNORE INTO herma_task_objects
        (object_key, requested_object_key, version_num, category, visibility, producer_agent, source_task_id, summary, payload_json,
-        simhash64_hex, sha256_hash, created_at,
+        simhash64_hex, sha256_hash, tessera_synced, created_at,
         partition_slot, labels_json, input_shape_hash, output_shape_hash, lsh_band_0, lsh_band_1,
-        quality_milli, content_sha256, worker_uuid, generation_depth, chunk_count, total_payload_bytes)
-       VALUES (?, ?, 1, 'reasoning_suggestion', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)`
+        quality_milli, content_sha256, worker_uuid, generation_depth,
+        intent_bucket, opt_goal, target_env, prog_lang, deliverable_kind, search_hints_json,
+        chunk_count, total_payload_bytes, step_mode, reuse_mode)
+       VALUES (?, ?, 1, 'reasoning_suggestion', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`
     )
     .bind(
       objectKey,
       objectKey,
-      visibility === "server_infra" ? "server_infra" : "public_commons",
+      rsVis,
       cleanAgent,
       String(taskId || "self_seed").slice(0, QUEUE_GATEWAY_GRID.task_id_max_len),
       summaryText,
       serialized,
       idxMeta.simhash64_hex,
       objHash,
+      rsVis !== "server_infra" ? 1 : 0,
       nowIso,
       idxMeta.partition_slot,
-      JSON.stringify(["reasoning_suggestion", modelId]),
+      JSON.stringify(rsTax.labels),
       idxMeta.input_shape_hash,
       idxMeta.output_shape_hash,
       idxMeta.lsh_band_0,
@@ -6034,7 +6195,15 @@ async function storeReasoningSuggestionTaskObject(
       QUEUE_GATEWAY_GRID.unreviewed_quality_milli,
       idxMeta.content_sha256,
       cleanWorkerUuid(workerUuid),
-      byteLen
+      rsTax.intent_bucket,
+      rsTax.opt_goal,
+      rsTax.target_env,
+      rsTax.prog_lang,
+      rsTax.deliverable_kind,
+      rsTax.search_hints_json,
+      byteLen,
+      rsTax.step_mode,
+      rsTax.reuse_mode
     )
     .run();
 
@@ -6824,13 +6993,24 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
           `Task Object '${truncKey}' has integrity_status='legacy_truncated_json' and blocks downstream composition (e.g. '${effectiveObjKey}'). ` +
           `Inspect GET ${publicUrl}/q/object/${truncKey} and downstream dependents via GET ${publicUrl}/q/graph?key=${truncKey}, ` +
           `author a complete lossless SHA-256-verified v2 payload under object_key '${truncKey}', and verify composition via GET ${publicUrl}/q/compose?keys=${truncKey},${effectiveObjKey}.`;
+        const fixTax = enrichTaxonomyRecord({
+          task_id: fixTaskId,
+          tier: "ngo_priority",
+          category: "foundation_repair",
+          verb_kind: "ngo_public_good",
+          step_mode: "atomic_build_step",
+          title: fixTitle,
+          prompt: fixPrompt,
+          labels: ["foundation_repair", truncKey],
+        });
         const fixIdx = await indexSidecarDocument(db, {
           title: fixTitle,
           bodyText: fixPrompt,
           category: "foundation_repair",
-          labels: ["foundation_repair", truncKey],
+          labels: fixTax.labels,
           inputContract: "legacy_truncated_task_object",
           outputContract: "verified_v2_task_object",
+          searchHints: fixTax.search_hints,
         });
         await db
           .prepare(
@@ -6838,10 +7018,12 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
              (task_id, tier, visibility, priority, state, title, prompt, input_contract, output_contract,
               parent_task_id, branch_label, simhash64_hex, producer_agent, created_at, updated_at,
               partition_slot, category, labels_json, input_shape_hash, output_shape_hash,
-              lsh_band_0, lsh_band_1, quality_milli, content_sha256, verb_kind, generation_depth, complexity_milli)
+              lsh_band_0, lsh_band_1, quality_milli, content_sha256, verb_kind, generation_depth,
+              intent_bucket, opt_goal, target_env, prog_lang, deliverable_kind, search_hints_json,
+              required_capabilities_json, complexity_milli, step_mode)
              VALUES (?, 'ngo_priority', 'public_ngo', ?, 'ready', ?, ?, 'legacy_truncated_task_object',
                      'verified_v2_task_object', ?, 'auto_foundation_repair', ?, 'herma-self-healer', ?, ?,
-                     ?, 'foundation_repair', ?, ?, ?, ?, ?, 0, ?, 'ngo_public_good', ?, ?)`
+                     ?, 'foundation_repair', ?, ?, ?, ?, ?, 0, ?, 'ngo_public_good', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           )
           .bind(
             fixTaskId,
@@ -6853,14 +7035,22 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
             nowIso,
             nowIso,
             fixIdx.partition_slot,
-            JSON.stringify(["foundation_repair", truncKey]),
+            JSON.stringify(fixTax.labels),
             fixIdx.input_shape_hash,
             fixIdx.output_shape_hash,
             fixIdx.lsh_band_0,
             fixIdx.lsh_band_1,
             fixIdx.content_sha256,
             Math.min(QUEUE_GATEWAY_GRID.max_generation_depth, objGenDepth + 1),
-            QUEUE_GATEWAY_GRID.complexity_verb_ngo_milli
+            fixTax.intent_bucket,
+            fixTax.opt_goal,
+            fixTax.target_env,
+            fixTax.prog_lang,
+            fixTax.deliverable_kind,
+            fixTax.search_hints_json,
+            fixTax.required_capabilities_json,
+            QUEUE_GATEWAY_GRID.complexity_verb_ngo_milli,
+            fixTax.step_mode
           )
           .run();
       }
@@ -6887,13 +7077,24 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
         const vpPrompt =
           `Upstream Task Object '${effectiveObjKey}' advanced to version ${versionNum}. Re-verify field/path/enum compatibility for its pinned dependents (${staleDepKeys.join(", ")}) ` +
           `via GET ${publicUrl}/q/compose?keys=${effectiveObjKey},${staleDepKeys.join(",")}, submit updated dependent versions or adapter specs, and record evaluations.`;
+        const vpTax = enrichTaxonomyRecord({
+          task_id: autoEnqueuedDependentRecheckTaskId,
+          tier: "public_general",
+          category: "version_propagation_recheck",
+          verb_kind: "eval_and_rank",
+          step_mode: "atomic_verification_step",
+          title: vpTitle,
+          prompt: vpPrompt,
+          labels: ["eval_and_rank", "version_propagation", effectiveObjKey],
+        });
         const vpIdx = await indexSidecarDocument(db, {
           title: vpTitle,
           bodyText: vpPrompt,
           category: "version_propagation_recheck",
-          labels: ["eval_and_rank", "version_propagation", effectiveObjKey],
+          labels: vpTax.labels,
           inputContract: "upstream_version_mutation",
           outputContract: "verified_dependent_compat_report",
+          searchHints: vpTax.search_hints,
         });
         await db
           .prepare(
@@ -6901,10 +7102,12 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
              (task_id, tier, visibility, priority, state, title, prompt, input_contract, output_contract,
               parent_task_id, branch_label, simhash64_hex, producer_agent, created_at, updated_at,
               partition_slot, category, labels_json, input_shape_hash, output_shape_hash,
-              lsh_band_0, lsh_band_1, quality_milli, content_sha256, verb_kind, generation_depth, complexity_milli)
+              lsh_band_0, lsh_band_1, quality_milli, content_sha256, verb_kind, generation_depth,
+              intent_bucket, opt_goal, target_env, prog_lang, deliverable_kind, search_hints_json,
+              required_capabilities_json, complexity_milli, step_mode)
              VALUES (?, 'public_general', 'public_commons', ?, 'ready', ?, ?, 'upstream_version_mutation',
                      'verified_dependent_compat_report', ?, 'auto_version_propagation', ?, 'herma-version-propagator', ?, ?,
-                     ?, 'version_propagation_recheck', ?, ?, ?, ?, ?, 0, ?, 'eval_and_rank', ?, ?)`
+                     ?, 'version_propagation_recheck', ?, ?, ?, ?, ?, 0, ?, 'eval_and_rank', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           )
           .bind(
             autoEnqueuedDependentRecheckTaskId,
@@ -6916,14 +7119,22 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
             nowIso,
             nowIso,
             vpIdx.partition_slot,
-            JSON.stringify(["eval_and_rank", "version_propagation", effectiveObjKey]),
+            JSON.stringify(vpTax.labels),
             vpIdx.input_shape_hash,
             vpIdx.output_shape_hash,
             vpIdx.lsh_band_0,
             vpIdx.lsh_band_1,
             vpIdx.content_sha256,
             Math.min(QUEUE_GATEWAY_GRID.max_generation_depth, objGenDepth + 1),
-            QUEUE_GATEWAY_GRID.complexity_verb_eval_milli
+            vpTax.intent_bucket,
+            vpTax.opt_goal,
+            vpTax.target_env,
+            vpTax.prog_lang,
+            vpTax.deliverable_kind,
+            vpTax.search_hints_json,
+            vpTax.required_capabilities_json,
+            QUEUE_GATEWAY_GRID.complexity_verb_eval_milli,
+            vpTax.step_mode
           )
           .run();
       }
@@ -7080,9 +7291,30 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
         : vComplexityMilli >= QUEUE_GATEWAY_GRID.complexity_high_floor_milli
           ? QUEUE_GATEWAY_GRID.capability_tier2_milli
           : QUEUE_GATEWAY_GRID.capability_min_floor_milli;
-    const reqCapsJson = JSON.stringify(
-      Array.isArray(v.required_capabilities) ? v.required_capabilities.slice(0, QUEUE_GATEWAY_GRID.eval_packet_limit * 2) : []
-    );
+    const vStepMeta = inferStepAndReuseMode({
+      explicitStepMode: v.step_mode || "",
+      verbKind,
+      category: vCategory,
+      deliverableKind: vHints.deliverable_kind || vReach.primary_format || v.deliverable_kind || "",
+      title: vTitle,
+      prompt: vPrompt,
+    });
+    const vTaxEnriched = enrichTaxonomyRecord({
+      ...v,
+      tier,
+      category: vCategory,
+      verb_kind: verbKind,
+      step_mode: vStepMeta.step_mode,
+      title: vTitle,
+      prompt: vPrompt,
+      required_capabilities: Array.isArray(v.required_capabilities)
+        ? v.required_capabilities.slice(0, QUEUE_GATEWAY_GRID.eval_packet_limit * 2)
+        : Array.isArray(v.suggested_capabilities)
+          ? v.suggested_capabilities.slice(0, QUEUE_GATEWAY_GRID.eval_packet_limit * 2)
+          : [],
+      preferred_worker_setup: v.preferred_worker_setup || null,
+    });
+    const reqCapsJson = vTaxEnriched.required_capabilities_json;
 
     const idxMeta = await indexSidecarDocument(db, {
       title: vTitle,
@@ -7125,14 +7357,6 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
     })
       ? 1
       : 0;
-    const vStepMeta = inferStepAndReuseMode({
-      explicitStepMode: v.step_mode || "",
-      verbKind,
-      category: vCategory,
-      deliverableKind: vHints.deliverable_kind || vReach.primary_format || v.deliverable_kind || "",
-      title: vTitle,
-      prompt: vPrompt,
-    });
 
     await db
       .prepare(
@@ -7242,6 +7466,18 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
         },
         db
       );
+
+  if (!hasAnyPrivateArtifact && storedObjects.length > 0 && (tesseraSync.synced || !env?.TESSERA?.fetch)) {
+    for (const so of storedObjects) {
+      if (so.visibility !== "server_infra") {
+        await db
+          .prepare("UPDATE herma_task_objects SET tessera_synced = 1 WHERE object_key = ? AND visibility != 'server_infra'")
+          .bind(so.object_key)
+          .run();
+        so.tessera_synced = true;
+      }
+    }
+  }
 
   const localReceipt = await sha256HexGateway(
     JSON.stringify({
@@ -7395,6 +7631,70 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       nowIso,
     });
 
+  const affinityOutcome = await recordWorkerAndSetupEfficiencyOutcome(db, {
+    workerUuid: workerProfile.worker_uuid,
+    harnessTier: workerProfile.harness_tier,
+    modelHint: payload.model_hint || reqMeta.modelHint || workerProfile.model_hint || "",
+    transportMode: workerProfile.transport_mode || "http_json",
+    toolsAvailable: payload.worker_setup?.tools_available || null,
+    category: existingTask?.category || storedObjects[0]?.category || "general",
+    stepMode: existingTask?.step_mode || storedObjects[0]?.step_mode || "atomic_cognitive_step",
+    succeeded: true,
+    wallMs: Number(payload?.execution_telemetry?.wall_ms || reqMeta.latencyMs || 0),
+    tokensUsed: Number(
+      payload?.execution_telemetry?.tokens_used ||
+        Math.max(
+          TAXONOMY_AFFINITY_FEEDBACK_GRID.default_tokens_estimate,
+          Math.round(totalBytesThisSubmit / TAXONOMY_AFFINITY_FEEDBACK_GRID.chars_per_estimated_token)
+        )
+    ),
+    qualityMilli: QUEUE_GATEWAY_GRID.default_quality_milli,
+    nowIso,
+  });
+
+  const feedbackPeerReviewOut = String(taskId || "").startsWith("verb_fbk_review_")
+    ? await recordIndependentFeedbackReviewOnSubmit(db, {
+        completedTaskId: taskId,
+        reviewerAgent: agentId,
+        reviewerWorkerUuid: workerProfile.worker_uuid,
+        summary,
+        nowIso,
+      })
+    : null;
+
+  const proactiveFeedbackIngested = [];
+  if (Array.isArray(payload.proactive_observations) && payload.proactive_observations.length > 0) {
+    const obsSlice = payload.proactive_observations.slice(
+      0,
+      TAXONOMY_AFFINITY_FEEDBACK_GRID.max_proactive_observations_per_submit
+    );
+    for (const obs of obsSlice) {
+      if (obs == null || (typeof obs === "string" && !obs.trim())) continue;
+      const ingested = await ingestCatchAllFeedbackObservation(db, env, {
+        rawPayload: obs,
+        cleanAgent: agentId,
+        verifiedWorkerUuid: workerProfile.worker_uuid,
+        tokenVerified: Boolean(authCheck.tokenVerified),
+        infraAllowed,
+        publicUrl,
+        gatewayOps: {
+          scrubSensitiveText,
+          cleanAgentId,
+          sanitizeObjectKeyPreservingSuffix,
+          indexSidecarDocument: (spec) => indexSidecarDocument(db, spec),
+        },
+        mirrorFn: mirrorPublicArtifactToTesseraAnonymous,
+      });
+      proactiveFeedbackIngested.push({
+        fingerprint: ingested.fingerprint,
+        signal_kind: ingested.signal_kind,
+        stored_object_key: ingested.stored_object_key,
+        review_verb_id: ingested.review_verb_id,
+        promoted_to_proposal: ingested.promoted_to_proposal,
+      });
+    }
+  }
+
   const primaryPermalinkId =
     existingTask && !salvagedConcurrentTwinAttempt && !preservePriorPrimaryCompletion
       ? verificationCode
@@ -7408,6 +7708,14 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
     ...(redactedFencingTokenAutoHealed ? { redacted_fencing_token_auto_healed: true } : {}),
     ...(browserGetFenceAutoResolved ? { browser_get_fence_auto_resolved: true } : {}),
     ...(ensembleGroup ? { ensemble_group: ensembleGroup } : {}),
+    ...(affinityOutcome ? { affinity_outcome: affinityOutcome } : {}),
+    ...(feedbackPeerReviewOut ? { feedback_peer_review: feedbackPeerReviewOut } : {}),
+    ...(proactiveFeedbackIngested.length > 0
+      ? {
+          proactive_feedback_ingested: proactiveFeedbackIngested,
+          proactive_feedback_receipts: proactiveFeedbackIngested,
+        }
+      : {}),
     ...(salvagedConcurrentTwinAttempt
       ? {
           collision_resolution: {
@@ -7674,7 +7982,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       status: "healthy",
       service: "herma",
       schema: QUEUE_GATEWAY_GRID.schema_id,
-      schema_sentinel: "v6_9",
+      schema_sentinel: "v6_10",
       max_chunked_payload_bytes: QUEUE_GATEWAY_GRID.max_chunked_payload_bytes,
       timestamp: new Date().toISOString(),
     });
@@ -7697,10 +8005,19 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     return sendJson(await buildRoutingTelemetrySnapshot(db, infraAllowed, publicUrl));
   }
 
+  // Preferred-Worker / Setup Affinity, Calibrated Efficiency Confidence & Taxonomy Completeness (`/q/affinity`)
+  if (action === "affinity" || action === "worker-affinity") {
+    if (method !== "GET" && method !== "HEAD") {
+      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+    }
+    return sendJson(await buildAffinitySnapshot(db, infraAllowed, publicUrl));
+  }
+
   const gatewayOps = {
     scrubSensitiveText,
     cleanAgentId,
     sanitizeObjectKeyPreservingSuffix,
+    mirrorPublicArtifactToTesseraAnonymous,
     indexSidecarDocument: (spec) => indexSidecarDocument(db, spec),
     executeHybridSearch: (targetDb, arg2, arg3) => {
       if (typeof arg2 === "boolean") {
@@ -8166,9 +8483,11 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     if (method !== "GET" && method !== "HEAD") {
       return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
-    const rawPromptId = String(segments[2] || "codex_unlimited_frontier_loop_v8").trim();
+    const rawPromptId = String(segments[2] || "codex_unlimited_frontier_loop_v9").trim();
     const promptId =
-      rawPromptId === "codex_unlimited_frontier_loop_v7" ? "codex_unlimited_frontier_loop_v8" : rawPromptId;
+      rawPromptId === "codex_unlimited_frontier_loop_v7" || rawPromptId === "codex_unlimited_frontier_loop_v8"
+        ? "codex_unlimited_frontier_loop_v9"
+        : rawPromptId;
     const catalog = buildPromptCatalog(publicUrl);
     const found = catalog.find((p) => p.id === promptId) || catalog[0];
     const hydrated = hydratePromptPlaceholders(found.body, {
@@ -8395,6 +8714,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       onboard_url: `${publicUrl}/q/onboard`,
       search_url: `${publicUrl}/q/search`,
       routing_url: `${publicUrl}/q/routing`,
+      affinity_url: `${publicUrl}/q/affinity`,
       schema_url: `${publicUrl}/q/schema`,
       grid_robustness_url: `${publicUrl}/q/grid-robustness`,
       embeddings_spec_url: `${publicUrl}/q/embeddings-spec`,
@@ -8567,6 +8887,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           {
             ok: false,
             code: claimOut.code || "forbidden_tier",
+            error: claimOut.code || "forbidden_tier",
             detail: claimOut.detail || "infra_private tasks are restricted to server-side infrastructure workers.",
           },
           QUEUE_GATEWAY_GRID.http_forbidden
@@ -8642,6 +8963,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           verbKind: body.verb_kind || "",
           stepMode: body.step_mode || "",
           allowCoLease: body.allow_co_lease ?? body.co_lease ?? null,
+          workerSetup: body.worker_setup && typeof body.worker_setup === "object" ? body.worker_setup : null,
         }
       );
       if (claimOut.forbidden) {
@@ -8649,6 +8971,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           {
             ok: false,
             code: claimOut.code || "forbidden_tier",
+            error: claimOut.code || "forbidden_tier",
             detail: claimOut.detail || "infra_private tasks are restricted to server-side infrastructure workers.",
           },
           QUEUE_GATEWAY_GRID.http_forbidden
