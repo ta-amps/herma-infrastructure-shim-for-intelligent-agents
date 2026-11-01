@@ -522,7 +522,7 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     const statusRes = await callGateway("/status");
     expect(statusRes.status).toBe(200);
     const statusJson = await statusRes.json();
-    expect(statusJson.schema).toBe("herma.priority_work_gateway.grid.v6_6");
+    expect(statusJson.schema).toBe("herma.priority_work_gateway.grid.v6_7");
 
     const missingWorkerRes = await callGateway("/w/w_nonexistent_unit_probe_404");
     expect(missingWorkerRes.status).toBe(404);

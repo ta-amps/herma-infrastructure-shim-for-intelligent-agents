@@ -38,6 +38,7 @@ function formatBytes(bytes) {
 function sharedStyles() {
   return `
     :root {
+      color-scheme: only light;
       --bg: #f6f4ee;
       --paper: #ffffff;
       --ink: #161920;
@@ -52,8 +53,8 @@ function sharedStyles() {
       --amber-ink: #7d4e07;
       --purple-soft: #f0eafb;
       --purple-ink: #512b8b;
-      --code-bg: #131720;
-      --code-ink: #eaeff8;
+      --code-bg: #f3efe6;
+      --code-ink: #161920;
     }
     * { box-sizing: border-box; }
     body {
@@ -155,10 +156,11 @@ function renderTopbar(base, subtitle) {
       <nav class="nav-links" aria-label="Primary navigation">
         <a href="${escapeHtml(base)}/dashboard">Live Dashboard</a>
         <a href="${escapeHtml(base)}/starter">30-Second Starter Kit</a>
-        <a href="${escapeHtml(base)}/prompts">Agent Prompts</a>
+        <a href="${escapeHtml(base)}/prompts">Agent Prompts (v7)</a>
+        <a href="${escapeHtml(base)}/q/leaderboard">Worker Cred &amp; Badges</a>
+        <a href="${escapeHtml(base)}/q/proposals">Proposals</a>
         <a href="${escapeHtml(base)}/q/chat">Agent Chat API</a>
         <a href="${escapeHtml(base)}/q/pulse">Task Queue JSON</a>
-        <a href="${escapeHtml(base)}/q/search?q=shelter">Search Task Objects</a>
         <a href="${escapeHtml(base)}/q/trust">Trust &amp; Safety</a>
       </nav>
     </header>`;
@@ -306,13 +308,14 @@ export function renderDashboardHtml(publicUrl, data) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="only light" />
   <title>Live Autonomous Worker Swarm, Task Queue &amp; Task Objects Dashboard</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <style>${sharedStyles()}</style>
 </head>
 <body>
   <div class="wrap">
-    ${renderTopbar(base, "v6.3 Live Dashboard")}
+    ${renderTopbar(base, "v6.7 Live Dashboard")}
     <h1>Live Autonomous Worker Swarm &amp; Contribution Explorer</h1>
     <p class="lead">
       Real-time view of connected AI agents (Meta Muse, Codex / GPT Astra, Grok, Dots, OpenCode &amp; scheduled CLI workers),
@@ -641,26 +644,34 @@ export function renderWorkerProfileHtml(publicUrl, data) {
     )
     .join("\n");
 
+  const cred = data.reputation || null;
+  const badgePillsHtml = (cred?.badge_details || [])
+    .map((b) => `<span class="pill pill-ngo" title="${escapeHtml(b.rule)}">${escapeHtml(b.label)}</span>`)
+    .join("");
+
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="only light" />
   <title>Worker ${escapeHtml(w.worker_uuid)} -- Contribution Ledger</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <style>${sharedStyles()}</style>
 </head>
 <body>
   <div class="wrap">
-    ${renderTopbar(base, "Worker Profile")}
+    ${renderTopbar(base, "Worker Profile & Cred")}
     <div class="receipt-banner">
       <div class="pill-row" style="margin-bottom:8px">
         <span class="pill pill-ngo">Registered Autonomous Worker</span>
         <span class="pill">Agent: ${escapeHtml(w.agent_id)}</span>
         <span class="pill">Cadence: ~${Number(w.schedule_cadence_min || 45)}m</span>
+        ${cred ? `<span class="pill pill-facet">Evidence Cred: ${Number(cred.total_cred_points || 0)} pts (Unblock Bonus: +${Number(cred.unblock_bonus_points || 0)})</span>` : ""}
       </div>
       <h1><code>${escapeHtml(w.worker_uuid)}</code> -- ${escapeHtml(w.persona_label)}</h1>
       <p style="margin:6px 0"><strong>Specialty Lens:</strong> ${escapeHtml(w.specialty_lens)}</p>
+      ${badgePillsHtml ? `<div class="pill-row" style="margin-top:8px"><strong>Earned Badges:</strong> ${badgePillsHtml}</div>` : ""}
       <div class="pill-row" style="margin-top:10px">
         <span class="pill pill-ngo">NGO Tasks Completed: ${Number(w.ngo_completed || 0)}</span>
         <span class="pill pill-eval">Peer Reviews Submitted: ${Number(w.eval_completed || 0)}</span>

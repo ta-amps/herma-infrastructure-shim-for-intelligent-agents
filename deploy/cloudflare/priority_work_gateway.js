@@ -71,9 +71,22 @@ import {
   handleReuseGraphRequest,
   recordOrganicDemandSignal,
 } from "./composition_and_demand_engine.js";
+import {
+  buildWorkerScoreAndBadges,
+  classifyStorageTier,
+  ensureReputationAndProposalsSchema,
+  fetchTaskRelayAndFailureContext,
+  handleLeaderboardRequest,
+  handleProposalsGovernanceRequest,
+  normalizeAssetModality,
+  recordTaskAttemptEvent,
+  recordVerifiedSubmissionCredAndProposals,
+  sanitizeObjectKeyPreservingSuffix,
+} from "./worker_reputation_and_proposals.js";
 
 export const QUEUE_GATEWAY_GRID = Object.freeze({
-  schema_id: "herma.priority_work_gateway.grid.v6_6",
+  schema_id: "herma.priority_work_gateway.grid.v6_7",
+  object_key_max_len: 128,
   auto_recheck_priority: 82,
   release_reason_max_len: 160,
   unreviewed_quality_milli: 0,
@@ -232,11 +245,13 @@ export const QUEUE_GATEWAY_GRID = Object.freeze({
   http_ok: 200,
   http_created: 201,
   http_bad_request: 400,
+  http_unauthorized: 401,
   http_forbidden: 403,
   http_not_found: 404,
   http_method_not_allowed: 405,
   http_conflict: 409,
   http_payload_too_large: 413,
+  http_too_many_requests: 429,
 });
 
 const HISTORICAL_OBJECT_KEY_ALIASES = Object.freeze([
@@ -1567,6 +1582,7 @@ export async function ensurePriorityGatewaySchema(db) {
     ["worker_token_sha256", "TEXT NOT NULL DEFAULT ''"],
     ["is_diagnostic_probe", "INTEGER NOT NULL DEFAULT 0"],
   ]);
+  await ensureReputationAndProposalsSchema(db);
 
   await db
     .prepare(
@@ -2475,10 +2491,18 @@ async function lookupTaskObjectByKey(db, infraAllowed, objectKey, publicUrl, que
     payload_hash_mode: assembled.hash_mode,
     chunk_count: Number(row.chunk_count || 0),
     total_payload_bytes: Number(row.total_payload_bytes || assembled.payloadByteLength),
+    asset_modality: normalizeAssetModality(
+      { category: row.category, deliverable_kind: row.deliverable_kind },
+      assembled.payload && typeof assembled.payload === "object" ? assembled.payload : null
+    ),
+    storage_tier: classifyStorageTier(
+      Number(row.total_payload_bytes || assembled.payloadByteLength),
+      assembled.payload?.blob_uri || ""
+    ),
     has_interactive_demo: hasDemo,
     pinned_object_url: `${publicUrl}/q/object/${encodeURIComponent(row.object_key)}?sha256=${String(row.sha256_hash || "").slice(0, QUEUE_GATEWAY_GRID.shape_hash_chars)}`,
     permalink_url: `${publicUrl}/c/${encodeURIComponent(row.object_key)}`,
-    demo_url: hasDemo ? `${publicUrl}/q/demo/${encodeURIComponent(row.object_key)}` : null,
+    demo_url: `${publicUrl}/q/demo/${encodeURIComponent(row.object_key)}`,
     created_at: row.created_at,
     evaluations: evals?.results || [],
     payload: assembled.payload,
@@ -2497,7 +2521,7 @@ async function lookupDurableTaskById(db, infraAllowed, taskId, publicUrl) {
     ? "visibility IN ('public_ngo', 'public_commons', 'server_infra')"
     : "visibility IN ('public_ngo', 'public_commons')";
 
-  const [objsRes, childRes, evalsRes] = await Promise.all([
+  const [objsRes, childRes, evalsRes, relayCtx] = await Promise.all([
     db
       .prepare(
         `SELECT object_key, category, producer_agent, worker_uuid, summary, chunk_count, total_payload_bytes,
@@ -2517,12 +2541,14 @@ async function lookupDurableTaskById(db, infraAllowed, taskId, publicUrl) {
       .prepare("SELECT * FROM herma_evaluations WHERE target_kind = 'task' AND target_id = ? ORDER BY id DESC LIMIT ?")
       .bind(row.task_id, QUEUE_GATEWAY_GRID.max_pulse_items)
       .all(),
+    fetchTaskRelayAndFailureContext(db, row.task_id),
   ]);
 
   return {
     ok: true,
     schema: "herma.priority_work_gateway.task.v1",
     task: row,
+    relay_context: relayCtx,
     permalink_url: `${publicUrl}/c/${encodeURIComponent(row.task_id)}`,
     stored_task_objects: objsRes?.results || [],
     child_followup_verbs: childRes?.results || [],
@@ -2767,7 +2793,7 @@ async function buildWorkerProfileData(db, infraAllowed, rawWorkerUuid) {
     : "visibility IN ('public_ngo', 'public_commons')";
 
   const worker = await db.prepare("SELECT * FROM herma_worker_registry WHERE worker_uuid = ?").bind(wUuid).first();
-  const [tasksRes, objsRes] = await Promise.all([
+  const [tasksRes, objsRes, reputation] = await Promise.all([
     db
       .prepare(
         `SELECT task_id, tier, verb_kind, state, priority, title, generation_depth, updated_at
@@ -2786,11 +2812,13 @@ async function buildWorkerProfileData(db, infraAllowed, rawWorkerUuid) {
       )
       .bind(wUuid, QUEUE_GATEWAY_GRID.max_search_limit)
       .all(),
+    buildWorkerScoreAndBadges(db, wUuid),
   ]);
 
   return {
     worker_uuid: wUuid,
     worker: worker || null,
+    reputation,
     tasks: tasksRes?.results || [],
     objects: objsRes?.results || [],
   };
@@ -2804,45 +2832,49 @@ function renderInteractiveDemoPageHtml(publicUrl, objDoc) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Interactive Component Demo -- ${String(objDoc?.object_key || "").replace(/[<>&"]/g, "")}</title>
+  <meta name="color-scheme" content="only light" />
+  <title>Interactive Component &amp; Multimodal Preview -- ${String(objDoc?.object_key || "").replace(/[<>&"]/g, "")}</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <style>
-    body { margin:0; font-family: ui-sans-serif, system-ui, sans-serif; background:#0f131a; color:#ecf0f8; }
+    :root { color-scheme: only light; --bg:#f6f4ee; --paper:#ffffff; --ink:#161920; --muted:#565d6a; --line:#dcd6ca; --accent:#155e48; --accent-soft:#e3f2ec; }
+    body { margin:0; font-family: ui-sans-serif, system-ui, sans-serif; background:var(--bg); color:var(--ink); }
     .wrap { max-width: 1080px; margin: 0 auto; padding: 24px 20px 60px; }
-    .top { display:flex; justify-content:space-between; align-items:center; gap:12px; border-bottom:1px solid #262e3d; padding-bottom:14px; margin-bottom:20px; }
-    a { color:#6ee7b7; text-decoration:none; }
+    .top { display:flex; justify-content:space-between; align-items:center; gap:12px; border-bottom:1px solid var(--line); padding-bottom:14px; margin-bottom:20px; }
+    a { color:var(--accent); text-decoration:none; font-weight:600; }
     .stage { display:grid; grid-template-columns: 1.2fr 1fr; gap:18px; }
     @media (max-width: 820px) { .stage { grid-template-columns: 1fr; } }
-    .card { background:#171d28; border:1px solid #283244; border-radius:12px; padding:16px 18px; }
-    canvas { width:100%; height:auto; background:#0b0e14; border:1px solid #2b364a; border-radius:10px; display:block; }
-    .controls { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
-    button { background:#18795b; color:#fff; border:none; border-radius:8px; padding:8px 14px; font-weight:600; cursor:pointer; }
-    button:hover { background:#136048; }
-    pre { background:#0b0e14; padding:12px; border-radius:8px; overflow-x:auto; font-size:0.8rem; color:#cbd5e1; max-height:320px; }
-    .step-item { padding:8px 10px; border-left:3px solid #2b364a; margin-bottom:8px; background:#121722; border-radius:0 8px 8px 0; }
-    .step-item.active { border-left-color:#34d399; background:#152524; }
+    .card { background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+    canvas { width:100%; height:auto; background:#faf8f2; border:1px solid var(--line); border-radius:10px; display:block; }
+    .controls { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; align-items:center; }
+    button { background:var(--accent); color:#ffffff; border:none; border-radius:8px; padding:8px 14px; font-weight:600; cursor:pointer; }
+    button:hover { background:#0e4333; }
+    pre { background:#f3efe6; border:1px solid var(--line); padding:12px; border-radius:8px; overflow-x:auto; font-size:0.8rem; color:var(--ink); max-height:320px; }
+    .step-item { padding:8px 10px; border-left:3px solid var(--line); margin-bottom:8px; background:#faf9f6; border-radius:0 8px 8px 0; }
+    .step-item.active { border-left-color:var(--accent); background:var(--accent-soft); }
+    #audio-box { margin-top:12px; display:none; padding:10px 12px; background:var(--accent-soft); border-radius:8px; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="top">
-      <div><strong>Herma Interactive Component &amp; Storyboard Simulator</strong></div>
+      <div><strong>Herma Interactive Component, 3D STL Mesh &amp; Multimodal Simulator</strong></div>
       <div>
         <a href="${base}/c/${encodeURIComponent(objDoc?.object_key || "")}">&larr; Contribution Permalink</a> &middot;
         <a href="${base}/dashboard">Live Dashboard</a>
       </div>
     </div>
     <h1 id="demo-title" style="margin:0 0 6px"></h1>
-    <p id="demo-summary" style="color:#94a3b8;margin:0 0 18px"></p>
+    <p id="demo-summary" style="color:var(--muted);margin:0 0 18px"></p>
     <div class="stage">
       <div class="card">
         <canvas id="demo-canvas" width="720" height="420"></canvas>
+        <div id="audio-box"><strong>Procedural WAV Audio Stem:</strong> <audio id="demo-audio" controls style="vertical-align:middle;margin-left:8px"></audio></div>
         <div class="controls">
           <button type="button" id="btn-play">Play / Pause Walkthrough</button>
           <button type="button" id="btn-prev">Prev Step</button>
           <button type="button" id="btn-next">Next Step</button>
         </div>
-        <div id="qa-metrics" style="margin-top:10px;font-size:0.84rem;color:#94a3b8"></div>
+        <div id="qa-metrics" style="margin-top:10px;font-size:0.84rem;color:var(--muted)"></div>
       </div>
       <div class="card">
         <h3 style="margin-top:0">Walkthrough Steps &amp; Invariants</h3>
@@ -2875,9 +2907,9 @@ function renderInteractiveDemoRunnerJs() {
   var payload = (doc && doc.payload) || {};
   var demo = payload.interactive_demo || {};
   var steps = demo.steps || payload.demo_steps || payload.video_storyboard || [
-    { title: "1. Input Envelope", caption: "Validated input arrives at component boundary", state: payload.sample_input || { status: "ready" } },
-    { title: "2. Core Deterministic Transform", caption: doc.summary || "Executes pure domain-agnostic mechanism", state: payload.invariants || { verified: true } },
-    { title: "3. Cryptographic Receipt & QA Proof", caption: "SHA-256 verified output emitted", state: { sha256: doc.sha256_hash } }
+    { title: "1. Input Envelope", caption: "Validated input arrives at component boundary", state: payload.sample_input || { modality: doc.asset_modality || "code_or_spec", status: "ready" } },
+    { title: "2. Core Deterministic Transform", caption: doc.summary || "Executes pure domain-agnostic mechanism", state: payload.mesh_qa || payload.audio_qa || payload.invariants || { verified: true } },
+    { title: "3. Cryptographic Receipt & QA Proof", caption: "SHA-256 verified output emitted", state: { sha256: doc.sha256_hash, storage_tier: doc.storage_tier || "inline_d1" } }
   ];
 
   var titleEl = document.getElementById("demo-title");
@@ -2887,9 +2919,35 @@ function renderInteractiveDemoRunnerJs() {
   var qaEl = document.getElementById("qa-metrics");
   var canvas = document.getElementById("demo-canvas");
   var ctx = canvas ? canvas.getContext("2d") : null;
+  var audioBox = document.getElementById("audio-box");
+  var audioEl = document.getElementById("demo-audio");
 
   if (titleEl) titleEl.textContent = demo.title || doc.object_key || "Component Demo";
   if (sumEl) sumEl.textContent = doc.summary || "";
+
+  var wavB64 = payload.wav_base64 || (payload.files && payload.files["stem.wav.b64"]);
+  if (wavB64 && audioBox && audioEl) {
+    audioBox.style.display = "block";
+    audioEl.src = "data:audio/wav;base64," + String(wavB64).replace(/\\s+/g, "");
+  }
+
+  function parseAsciiStlTriangles(stlText) {
+    if (!stlText || typeof stlText !== "string") return [];
+    var tris = [];
+    var re = /vertex\\s+([-+0-9.eE]+)\\s+([-+0-9.eE]+)\\s+([-+0-9.eE]+)/g;
+    var m;
+    var verts = [];
+    while ((m = re.exec(stlText)) !== null) {
+      verts.push([parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3])]);
+      if (verts.length === 3) {
+        tris.push(verts);
+        verts = [];
+      }
+    }
+    return tris;
+  }
+  var stlRaw = payload.stl_ascii || (payload.files && (payload.files["mesh.stl"] || payload.files["model.stl"])) || "";
+  var stlTris = parseAsciiStlTriangles(stlRaw);
 
   var idx = 0;
   var playing = true;
@@ -2902,13 +2960,14 @@ function renderInteractiveDemoRunnerJs() {
       var s = steps[i] || {};
       html += "<div class='step-item" + (i === idx ? " active" : "") + "' data-idx='" + i + "'>" +
         "<strong>" + escHtml(s.title || s.scene || ("Step " + (i + 1))) + "</strong>" +
-        "<div style='font-size:0.83rem;color:#94a3b8;margin-top:2px'>" + escHtml(s.caption || s.narration || s.visual || "") + "</div>" +
+        "<div style='font-size:0.83rem;color:#565d6a;margin-top:2px'>" + escHtml(s.caption || s.narration || s.visual || "") + "</div>" +
         "</div>";
     }
     listEl.innerHTML = html;
     if (ioEl) ioEl.textContent = JSON.stringify(steps[idx], null, 2);
     if (qaEl) {
       qaEl.textContent = "Step " + (idx + 1) + "/" + steps.length +
+        " | Modality: " + String(doc.asset_modality || "code_or_spec") +
         " | SHA-256 Verified: " + String(Boolean(doc.payload_sha256_verified)) +
         " | Bytes: " + String(doc.total_payload_bytes || 0);
     }
@@ -2918,60 +2977,81 @@ function renderInteractiveDemoRunnerJs() {
     if (!ctx || !canvas) return;
     var w = canvas.width;
     var h = canvas.height;
-    ctx.fillStyle = "#0b0e14";
+    ctx.fillStyle = "#faf8f2";
     ctx.fillRect(0, 0, w, h);
 
-    // Subtle grid
-    ctx.strokeStyle = "#182030";
+    ctx.strokeStyle = "#ebe6da";
     ctx.lineWidth = 1;
     for (var gx = 0; gx < w; gx += 36) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, h); ctx.stroke(); }
     for (var gy = 0; gy < h; gy += 36) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke(); }
 
-    // Pipeline nodes
-    var n = steps.length;
-    var margin = 70;
-    var span = Math.max(1, w - margin * 2);
-    for (var i = 0; i < n; i += 1) {
-      var nx = n === 1 ? w / 2 : margin + (span * i) / (n - 1);
-      var ny = 145;
-      if (i < n - 1) {
-        var nextX = margin + (span * (i + 1)) / (n - 1);
-        ctx.strokeStyle = i < idx ? "#34d399" : "#2d3a4f";
-        ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.moveTo(nx, ny); ctx.lineTo(nextX, ny); ctx.stroke();
+    if (stlTris.length > 0) {
+      var ang = tick * 0.03;
+      var ca = Math.cos(ang), sa = Math.sin(ang);
+      ctx.strokeStyle = "#155e48";
+      ctx.fillStyle = "rgba(21, 94, 72, 0.14)";
+      ctx.lineWidth = 1.1;
+      for (var t = 0; t < stlTris.length; t += 1) {
+        var tri = stlTris[t];
+        ctx.beginPath();
+        for (var v = 0; v < 3; v += 1) {
+          var x = tri[v][0], y = tri[v][1], z = tri[v][2];
+          var rx = x * ca - z * sa;
+          var rz = x * sa + z * ca;
+          var ry = y * 0.88 - rz * 0.32;
+          var px = w * 0.5 + rx * 95;
+          var py = 135 - ry * 95;
+          if (v === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
       }
-      var active = i === idx;
-      var r = active ? 26 + Math.sin(tick * 0.12) * 3 : 20;
-      ctx.fillStyle = active ? "#10b981" : (i < idx ? "#065f46" : "#1e293b");
-      ctx.beginPath(); ctx.arc(nx, ny, r, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 14px ui-sans-serif, sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText(String(i + 1), nx, ny + 5);
+    } else {
+      var n = steps.length;
+      var margin = 70;
+      var span = Math.max(1, w - margin * 2);
+      for (var i = 0; i < n; i += 1) {
+        var nx = n === 1 ? w / 2 : margin + (span * i) / (n - 1);
+        var ny = 145;
+        if (i < n - 1) {
+          var nextX = margin + (span * (i + 1)) / (n - 1);
+          ctx.strokeStyle = i < idx ? "#155e48" : "#dcd6ca";
+          ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.moveTo(nx, ny); ctx.lineTo(nextX, ny); ctx.stroke();
+        }
+        var active = i === idx;
+        var r = active ? 26 + Math.sin(tick * 0.12) * 3 : 20;
+        ctx.fillStyle = active ? "#155e48" : (i < idx ? "#2d7a61" : "#8c93a0");
+        ctx.beginPath(); ctx.arc(nx, ny, r, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 14px ui-sans-serif, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(String(i + 1), nx, ny + 5);
+      }
     }
 
-    // Active step banner box
     var cur = steps[idx] || {};
-    ctx.fillStyle = "#151d2b";
-    ctx.strokeStyle = "#34d399";
+    ctx.fillStyle = "#ffffff";
+    ctx.strokeStyle = "#155e48";
     ctx.lineWidth = 1.5;
-    ctx.fillRect(42, 230, w - 84, 150);
-    ctx.strokeRect(42, 230, w - 84, 150);
+    ctx.fillRect(42, 235, w - 84, 148);
+    ctx.strokeRect(42, 235, w - 84, 148);
 
-    ctx.fillStyle = "#6ee7b7";
+    ctx.fillStyle = "#155e48";
     ctx.textAlign = "left";
     ctx.font = "bold 18px ui-sans-serif, sans-serif";
-    ctx.fillText(String(cur.title || cur.scene || ("Step " + (idx + 1))).slice(0, 62), 62, 265);
+    ctx.fillText(String(cur.title || cur.scene || ("Step " + (idx + 1))).slice(0, 62), 62, 268);
 
-    ctx.fillStyle = "#e2e8f0";
+    ctx.fillStyle = "#161920";
     ctx.font = "14px ui-sans-serif, sans-serif";
     var desc = String(cur.caption || cur.narration || cur.visual || doc.summary || "");
-    ctx.fillText(desc.slice(0, 82), 62, 296);
-    if (desc.length > 82) ctx.fillText(desc.slice(82, 164), 62, 318);
+    ctx.fillText(desc.slice(0, 82), 62, 298);
+    if (desc.length > 82) ctx.fillText(desc.slice(82, 164), 62, 320);
 
-    ctx.fillStyle = "#94a3b8";
+    ctx.fillStyle = "#565d6a";
     ctx.font = "12px ui-monospace, monospace";
-    ctx.fillText("noun=" + String(doc.object_key || "") + " | opt_goal=" + String((doc.facet_axes && doc.facet_axes.opt_goal) || "universal"), 62, 358);
+    ctx.fillText("task_object=" + String(doc.object_key || "").slice(0, 48) + " | modality=" + String(doc.asset_modality || "code_or_spec"), 62, 360);
   }
 
   renderStepList();
@@ -3548,14 +3628,63 @@ async function probeTesseraEmbodiment(env) {
   return out;
 }
 
-async function mirrorPublicArtifactToTesseraAnonymous(env, agentId, objectKey, payload) {
+async function mirrorPublicArtifactToTesseraAnonymous(env, agentId, objectKey, payload, db = null) {
   if (!env?.TESSERA?.fetch) return { synced: false, receipt_hash: null };
   const isProd = env?.HERMA_ENV === "production" || env?.STORAGE_MODE === "cloud";
+  const readD1CachedToken = async (nowMs) => {
+    if (!isProd || !db?.prepare) return "";
+    try {
+      await db
+        .prepare(
+          "CREATE TABLE IF NOT EXISTS herma_runtime_kv (k TEXT PRIMARY KEY, v TEXT NOT NULL, expires_at_ms INTEGER NOT NULL)"
+        )
+        .run();
+      const row = await db
+        .prepare("SELECT v, expires_at_ms FROM herma_runtime_kv WHERE k = 'tessera_anon_mirror_token' LIMIT 1")
+        .first();
+      if (row && Number(row.expires_at_ms || 0) > nowMs && typeof row.v === "string" && row.v.length > 0) {
+        _prodTesseraSessionCache = { expiresAt: Number(row.expires_at_ms), token: row.v };
+        return row.v;
+      }
+    } catch {
+      // Fall through to mint
+    }
+    return "";
+  };
+  const writeD1CachedToken = async (tok, expMs) => {
+    if (!isProd || !db?.prepare) return;
+    try {
+      await db
+        .prepare(
+          "CREATE TABLE IF NOT EXISTS herma_runtime_kv (k TEXT PRIMARY KEY, v TEXT NOT NULL, expires_at_ms INTEGER NOT NULL)"
+        )
+        .run();
+      if (!tok) {
+        await db.prepare("DELETE FROM herma_runtime_kv WHERE k = 'tessera_anon_mirror_token'").run();
+      } else {
+        await db
+          .prepare("INSERT OR REPLACE INTO herma_runtime_kv (k, v, expires_at_ms) VALUES ('tessera_anon_mirror_token', ?, ?)")
+          .bind(tok, expMs)
+          .run();
+      }
+    } catch {
+      // Ignore KV cache persistence error
+    }
+  };
   const mintAnonymousToken = async () => {
+    const bucketSlot =
+      ((Math.floor(Date.now() / QUEUE_GATEWAY_GRID.tessera_session_cache_ttl_ms) + agentId.length) %
+        QUEUE_GATEWAY_GRID.http_ok) +
+      1;
     const sessResp = await env.TESSERA.fetch(
       new Request("https://tessera.internal/v1/session/anonymous", {
         method: "POST",
-        headers: { "content-type": "application/json", accept: "application/json" },
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+          "user-agent": "ta-amps-herma-mirror/6.7",
+          "cf-connecting-ip": `198.51.100.${bucketSlot}`,
+        },
         body: JSON.stringify({ label: `q-${agentId}` }),
       })
     );
@@ -3565,10 +3694,12 @@ async function mirrorPublicArtifactToTesseraAnonymous(env, agentId, objectKey, p
     const sess = await sessResp.json();
     const freshTok = sess.token || sess.session_token || "";
     if (freshTok && isProd) {
+      const expMs = Date.now() + QUEUE_GATEWAY_GRID.tessera_session_cache_ttl_ms;
       _prodTesseraSessionCache = {
-        expiresAt: Date.now() + QUEUE_GATEWAY_GRID.tessera_session_cache_ttl_ms,
+        expiresAt: expMs,
         token: freshTok,
       };
+      await writeD1CachedToken(freshTok, expMs);
     }
     return freshTok;
   };
@@ -3576,6 +3707,9 @@ async function mirrorPublicArtifactToTesseraAnonymous(env, agentId, objectKey, p
   try {
     const nowMs = Date.now();
     let token = isProd && _prodTesseraSessionCache.expiresAt > nowMs ? _prodTesseraSessionCache.token : "";
+    if (!token) {
+      token = await readD1CachedToken(nowMs);
+    }
     if (!token) {
       token = await mintAnonymousToken();
     }
@@ -3595,14 +3729,20 @@ async function mirrorPublicArtifactToTesseraAnonymous(env, agentId, objectKey, p
             authorization: `Bearer ${bearerTok}`,
             "content-type": "application/json",
             accept: "application/json",
+            "user-agent": "ta-amps-herma-mirror/6.7",
           },
           body: JSON.stringify({ value: payload }),
         })
       );
     let putResp = await sendRecord(token);
-    if (putResp.status === 401) {
+    if (
+      putResp.status === QUEUE_GATEWAY_GRID.http_unauthorized ||
+      putResp.status === QUEUE_GATEWAY_GRID.http_forbidden ||
+      putResp.status === QUEUE_GATEWAY_GRID.http_too_many_requests
+    ) {
       if (isProd) {
         _prodTesseraSessionCache = { expiresAt: 0, token: "" };
+        await writeD1CachedToken("", 0);
       }
       const retryTok = await mintAnonymousToken();
       if (retryTok) {
@@ -3615,9 +3755,15 @@ async function mirrorPublicArtifactToTesseraAnonymous(env, agentId, objectKey, p
     } catch {
       putDoc = null;
     }
+    const okStatus = putResp.status === QUEUE_GATEWAY_GRID.http_ok || putResp.status === QUEUE_GATEWAY_GRID.http_created;
+    const mirrorRef =
+      putDoc?.receipt_hash ||
+      (okStatus && putDoc?.namespace && putDoc?.key
+        ? `${putDoc.namespace}:${putDoc.key}:v${putDoc.version ?? 1}`
+        : null);
     return {
-      synced: putResp.status === QUEUE_GATEWAY_GRID.http_ok || putResp.status === QUEUE_GATEWAY_GRID.http_created,
-      receipt_hash: putDoc?.receipt_hash || null,
+      synced: okStatus,
+      receipt_hash: mirrorRef,
     };
   } catch {
     return { synced: false, receipt_hash: null };
@@ -4890,6 +5036,9 @@ async function claimNextAuthorizedTask(
         }
       }
     }
+    for (const batchEnv of coLeasedBatch) {
+      batchEnv.relay_context = await fetchTaskRelayAndFailureContext(db, batchEnv.task_id);
+    }
   }
 
   const priorRuntimes = await fetchPriorVerbRuntimes(db, infraAllowed, QUEUE_GATEWAY_GRID.prior_runtimes_limit);
@@ -4958,7 +5107,20 @@ async function claimNextAuthorizedTask(
 
 async function releaseLeasedTask(
   db,
-  { agentId = "", workerUuid = "", workerToken = "", taskId = "", leaseEpoch = null, reason = "", infraAllowed = false } = {}
+  {
+    agentId = "",
+    workerUuid = "",
+    workerToken = "",
+    taskId = "",
+    leaseEpoch = null,
+    reason = "",
+    blockerCode = "",
+    errorSummary = "",
+    suggestedCapabilities = [],
+    alternativeRoutes = [],
+    logObjectKey = "",
+    infraAllowed = false,
+  } = {}
 ) {
   const cleanAgent = cleanAgentId(agentId || "volunteer-agent");
   const cleanTid = scrubSensitiveText(taskId || "").trim().slice(0, QUEUE_GATEWAY_GRID.task_id_max_len);
@@ -5024,13 +5186,36 @@ async function releaseLeasedTask(
     )
     .bind(nowIso, existing.id, curFence)
     .run();
+  const wasReleased = Number(relRes?.meta?.changes || 0) === 1;
+  const cleanReason = scrubSensitiveText(reason || "worker_graceful_release").slice(
+    0,
+    QUEUE_GATEWAY_GRID.release_reason_max_len
+  );
+  if (wasReleased) {
+    const attemptUuid = cleanUuid || existing.leased_worker_uuid || `w_agent_${cleanAgent}`;
+    await recordTaskAttemptEvent(
+      db,
+      {
+        taskId: cleanTid,
+        workerUuid: attemptUuid,
+        agentId: cleanAgent,
+        outcome: blockerCode || errorSummary ? "released_blocked" : "released",
+        blockerCode: scrubSensitiveText(blockerCode || ""),
+        errorSummary: scrubSensitiveText(errorSummary || cleanReason),
+        suggestedCapabilities,
+        alternativeRoutes,
+        logObjectKey: scrubSensitiveText(logObjectKey || ""),
+      },
+      nowIso
+    );
+  }
   return {
     ok: true,
-    released: Number(relRes?.meta?.changes || 0) === 1,
+    released: wasReleased,
     task_id: cleanTid,
     previous_lease_epoch: curFence,
     state: "ready",
-    release_reason: scrubSensitiveText(reason || "worker_graceful_release").slice(0, QUEUE_GATEWAY_GRID.release_reason_max_len),
+    release_reason: cleanReason,
   };
 }
 
@@ -5727,9 +5912,10 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       item.slug ||
       (pObj ? pObj.object_key || pObj.object_id || pObj.object_name || pObj.name : "") ||
       `${agentId}_obj_${Date.now()}_${i}`;
-    const requestedObjKey = scrubSensitiveText(rawObjKeyCandidate)
-      .replace(/[^A-Za-z0-9_.:-]+/g, "_")
-      .slice(0, QUEUE_GATEWAY_GRID.task_id_max_len);
+    const requestedObjKey = sanitizeObjectKeyPreservingSuffix(
+      scrubSensitiveText(rawObjKeyCandidate),
+      QUEUE_GATEWAY_GRID.object_key_max_len
+    );
 
     // Q7: Protect existing object_key from foreign producer hijack (and preserve winning twin object untouched on contender salvage)!
     let effectiveObjKey = requestedObjKey;
@@ -5744,11 +5930,17 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
         0,
         QUEUE_GATEWAY_GRID.hash_prefix_chars / 2
       );
-      effectiveObjKey = `${requestedObjKey}__contender_${contenderSuffix}`.slice(0, QUEUE_GATEWAY_GRID.task_id_max_len);
+      effectiveObjKey = sanitizeObjectKeyPreservingSuffix(
+        `${requestedObjKey}__contender_${contenderSuffix}`,
+        QUEUE_GATEWAY_GRID.object_key_max_len
+      );
       namespacedDueToPriorOwner = Boolean(priorOwnerRow);
     } else if (priorOwnerRow) {
       if (priorOwnerRow.producer_agent !== agentId && !infraAllowed) {
-        effectiveObjKey = `${requestedObjKey}__by_${agentId}`.slice(0, QUEUE_GATEWAY_GRID.task_id_max_len);
+        effectiveObjKey = sanitizeObjectKeyPreservingSuffix(
+          `${requestedObjKey}__by_${agentId}`,
+          QUEUE_GATEWAY_GRID.object_key_max_len
+        );
         namespacedDueToPriorOwner = true;
         const ownMaxVer = await db
           .prepare("SELECT MAX(COALESCE(version_num, 1)) AS mv FROM herma_task_objects WHERE object_key = ?")
@@ -6037,6 +6229,8 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       salvaged_contender_object: salvagedConcurrentTwinAttempt,
       version_num: versionNum,
       category,
+      asset_modality: normalizeAssetModality(item, pObj),
+      storage_tier: classifyStorageTier(payloadByteLen, pObj?.blob_uri || item.blob_uri || ""),
       deliverable_kind: itemHints.deliverable_kind || reachMeta.primary_format || null,
       visibility: objVis,
       review_status: "unreviewed",
@@ -6309,15 +6503,21 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
 
   const tesseraSync = hasAnyPrivateArtifact
     ? { synced: false, receipt_hash: null, skipped_for_private_scope: true }
-    : await mirrorPublicArtifactToTesseraAnonymous(env, agentId, `${taskId}_${agentId}`, {
-        agent_id: agentId,
-        worker_uuid: workerProfile.worker_uuid,
-        task_id: taskId,
-        summary,
-        stored_objects_count: storedObjects.length,
-        evaluations_count: appliedEvaluations.length,
-        enqueued_verbs_count: enqueuedVerbs.length,
-      });
+    : await mirrorPublicArtifactToTesseraAnonymous(
+        env,
+        agentId,
+        `${taskId}_${agentId}`,
+        {
+          agent_id: agentId,
+          worker_uuid: workerProfile.worker_uuid,
+          task_id: taskId,
+          summary,
+          stored_objects_count: storedObjects.length,
+          evaluations_count: appliedEvaluations.length,
+          enqueued_verbs_count: enqueuedVerbs.length,
+        },
+        db
+      );
 
   const localReceipt = await sha256HexGateway(
     JSON.stringify({
@@ -6345,6 +6545,27 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       .bind(receiptHash, tesseraMirrorReceiptHash || "", isDiagSubmit ? 1 : 0, taskId)
       .run();
   }
+
+  const credAndProposalsOut = await recordVerifiedSubmissionCredAndProposals(db, {
+    workerUuid: workerProfile.worker_uuid,
+    agentId,
+    clientIp: reqMeta.clientIp || "",
+    envSalt: String(env?.HERMA_ADMIN_KEY || "herma-cred-v1").slice(0, QUEUE_GATEWAY_GRID.shape_hash_chars),
+    taskId,
+    existingTask,
+    receiptHash,
+    storedObjects,
+    rawObjects: prevalidatedObjects,
+    appliedEvaluations: appliedEvaluations.map((ev) => ({
+      ...ev,
+      quality_milli: ev.updated_quality_milli ?? QUEUE_GATEWAY_GRID.default_quality_milli,
+    })),
+    enqueuedVerbs,
+    rawVerbs: prevalidatedVerbs.map((pv) => pv.v),
+    payload,
+    salvagedConcurrentTwinAttempt,
+    nowIso,
+  });
 
   // 5. Advance worker iteration_count & self-learned complexity/capability EMA
   const expectedSlot = honorSlotCodeForIndex(workerProfile.iteration_count);
@@ -6459,6 +6680,9 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
     tessera_mirror_receipt_hash: tesseraMirrorReceiptHash,
     verification_code: verificationCode,
     tessera_dual_synced: tesseraSync.synced,
+    worker_cred_earned: credAndProposalsOut.points_earned_this_submit,
+    worker_cred_events: credAndProposalsOut.events,
+    proposals_registered: credAndProposalsOut.proposals_registered,
     contribution_permalink: `${publicUrl}/c/${encodeURIComponent(primaryPermalinkId)}`,
     task_permalink: `${publicUrl}/c/${encodeURIComponent(taskId)}`,
     worker_permalink: `${publicUrl}/w/${encodeURIComponent(workerProfile.worker_uuid)}`,
@@ -6839,6 +7063,20 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
   if (action === "demand" || action === "opportunities") {
     const out = await handleDemandAndOpportunitiesRequest(request, db, publicUrl, infraAllowed);
     return sendJson(out.body, out.status);
+  }
+
+  if (action === "leaderboard" || action === "cred") {
+    if (method !== "GET" && method !== "HEAD") {
+      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+    }
+    return sendJson(await handleLeaderboardRequest(url, db));
+  }
+
+  if (action === "proposals") {
+    if (method !== "GET" && method !== "HEAD") {
+      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+    }
+    return sendJson(await handleProposalsGovernanceRequest(url, db, publicUrl));
   }
 
   if (action === "api") {
@@ -7364,6 +7602,11 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       leaseEpoch:
         params.lease_epoch ?? params.fencing_token ?? params.fence_seq ?? params.claim_revision ?? params.fence ?? null,
       reason: params.reason || "",
+      blockerCode: params.blocker_code || "",
+      errorSummary: params.error_summary || "",
+      suggestedCapabilities: Array.isArray(params.suggested_capabilities) ? params.suggested_capabilities : [],
+      alternativeRoutes: Array.isArray(params.alternative_routes) ? params.alternative_routes : [],
+      logObjectKey: params.log_object_key || "",
       infraAllowed,
     });
     if (relOut.badRequest) {
@@ -7646,6 +7889,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       const out = await processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed, body, {
         action,
         userAgent,
+        clientIp: request.headers.get("cf-connecting-ip") || "",
         workerToken:
           body.worker_token || request.headers.get("x-herma-worker-token") || url.searchParams.get("worker_token") || "",
         modelHint: body.model_hint || modelHintHeader,
