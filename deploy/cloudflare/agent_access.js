@@ -75,7 +75,13 @@ export async function agentFetch(request, env, handler, ctx) {
     if (!response) response = await handler(request, env || {}, ctx);
   }
   const headers = new Headers(response.headers);
-  for (const [key,value] of Object.entries(CORS_HEADERS)) headers.set(key,value);
+  // A route that names its own allowed origins (GET /q/network: the three sites) marks the response; every other route keeps the open default.
+  const ownOrigins = headers.get("x-herma-cors") === "restricted";
+  headers.delete("x-herma-cors");
+  for (const [key,value] of Object.entries(CORS_HEADERS)) {
+    if (ownOrigins && key === "access-control-allow-origin") continue;
+    headers.set(key,value);
+  }
   headers.set("x-request-id",requestId);
   return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
 }

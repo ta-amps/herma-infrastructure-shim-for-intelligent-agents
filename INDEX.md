@@ -31,7 +31,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) |  |
 
-## deploy/ (34)
+## deploy/ (37)
 
 | File | What it is |
 |---|---|
@@ -51,6 +51,9 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/entry.js](deploy/cloudflare/entry.js) |  |
 | [deploy/cloudflare/feedback_steps_and_uploads.js](deploy/cloudflare/feedback_steps_and_uploads.js) | Herma v6.9 + v6.10 Catch-All Proactive Worker Feedback, Auto-Diagnosis & Peer-Review Verb Spawner (/q/feedbac… |
 | [deploy/cloudflare/herma_engine.js](deploy/cloudflare/herma_engine.js) | Context-shimming 3-tier trigger engine, multi-caller isolation, governance lens, |
+| [deploy/cloudflare/network_activity.js](deploy/cloudflare/network_activity.js) | The network map's data (design contract claude-design-network-map.v1.json, owner request of Nov 1): where wor… |
+| [deploy/cloudflare/network_merge.js](deploy/cloudflare/network_merge.js) | Copied from notes/claude-work-2026-11-01/activity-map/herma-network/networkmerge.mjs (the map builder's pure… |
+| [deploy/cloudflare/network_places.json](deploy/cloudflare/network_places.json) | JSON object: about, sources, places |
 | [deploy/cloudflare/on_demand_api_and_nodes.js](deploy/cloudflare/on_demand_api_and_nodes.js) | Universal On-Demand TaskObject API Runtime, Scoped Key Vault & Swappable Backend Engine Slots |
 | [deploy/cloudflare/page_shell.js](deploy/cloudflare/page_shell.js) | The one shell every Herma page shares: the document head, the thin agent banner, the header and the footer, p… |
 | [deploy/cloudflare/priority_work_gateway.js](deploy/cloudflare/priority_work_gateway.js) | Prioritized Multi-Tier Durable Task Queue, Partitioned Search Sidecar & Task-Object Gateway (/q/) |
@@ -166,7 +169,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/page_interactions.mjs](scripts/page_interactions.mjs) | Clicks through the interactive parts of the redesigned pages (fixture server, the Worker's real page policy)… |
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
 
-## test/ (15)
+## test/ (19)
 
 | File | What it is |
 |---|---|
@@ -174,7 +177,11 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/bilateral_bridge.test.js](test/bilateral_bridge.test.js) |  |
 | [test/conversation.test.js](test/conversation.test.js) |  |
 | [test/herma_v63_boundaries_and_chat.test.js](test/herma_v63_boundaries_and_chat.test.js) |  |
+| [test/network_activity.test.js](test/network_activity.test.js) |  |
+| [test/node/banned_list.node-test.mjs](test/node/banned_list.node-test.mjs) |  |
+| [test/node/fixtures/tessera-activity-map.json](test/node/fixtures/tessera-activity-map.json) | JSON object: service, window, window_seconds, as_of, min_workers, places |
 | [test/node/help_burst.node-test.mjs](test/node/help_burst.node-test.mjs) | q/help spends Meta calls only inside its caps, even when many requests arrive at once (owner rule 8: an allow… |
+| [test/node/network_merge.node-test.mjs](test/node/network_merge.node-test.mjs) | Tests of the network map's merge (networkmerge.mjs), with a made-up place table and made-up worker ids. |
 | [test/on_demand_api_keys_and_nodes.test.js](test/on_demand_api_keys_and_nodes.test.js) |  |
 | [test/priority_work_gateway.test.js](test/priority_work_gateway.test.js) |  |
 | [test/privacy_logs.test.js](test/privacy_logs.test.js) |  |

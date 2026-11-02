@@ -511,7 +511,9 @@
         "tests/test_release_guard.py::test_wrangler_runs_the_guard_and_the_light_check_before_every_deploy",
         "tests/test_release_guard.py::test_the_gate_fails_on_every_kind_of_dirty_page_and_passes_a_clean_one",
         "tests/test_release_guard.py::test_the_gate_fails_closed_without_the_list_and_with_samples_that_catch_nothing",
-        "tests/test_release_guard.py::test_a_release_ignores_overrides_of_the_word_list"
+        "tests/test_release_guard.py::test_a_release_ignores_overrides_of_the_word_list",
+        "tests/test_release_guard.py::test_the_gate_reads_the_lists_fingerprints_group_and_keeps_its_own_floor",
+        "test/node/banned_list.node-test.mjs"
       ]
     },
     {
@@ -529,6 +531,15 @@
       "checked_by": [
         "test/privacy_logs.test.js",
         "tests/test_release_guard.py::test_the_worker_keeps_no_persisted_traces_and_no_invocation_logs"
+      ]
+    },
+    {
+      "id": "H26",
+      "statement": "The network map keeps per claim only the Cloudflare data centre and continent (never an IP address, city, coordinate, network or user agent) for 30 days and then only a count per day and continent, shows a data centre only when 2 or more distinct workers of one kind came through it (each source separately), leaves a worker that set show_on_map to false in the totals only, and answers GET /q/network cached for 15 seconds to the three sites' browsers",
+      "enforced_by": "edge",
+      "checked_by": [
+        "test/network_activity.test.js",
+        "test/node/network_merge.node-test.mjs"
       ]
     }
   ],

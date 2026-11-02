@@ -35,5 +35,11 @@
     "patterns": [
       "\\bwumpusapp\\b"
     ]
+  },
+  "fingerprints": {
+    "why": "made up for the tests: a run of 12 or more hex digits, in every element",
+    "patterns": [
+      "(?<![0-9a-f])[0-9a-f]{12,}(?![0-9a-f])"
+    ]
   }
 }

@@ -58,6 +58,14 @@ export function readList({ fixtureOk = false } = {}) {
   return { list: list.parsed, neutral: neutral.parsed, inputsSha, source };
 }
 
+/** The pattern groups this guard reads. `fingerprints` is hex of 12 or more characters, checked in every element, code included (owner, Nov 2). */
+const READ_GROUPS = new Set(["always", "visible_text", "agent_apps_outside_models_page", "fingerprints"]);
+
+/** Names of groups in the list that hold patterns but that this guard does not read (so a new group is noticed, never silently skipped). */
+export function unreadGroups(list) {
+  return Object.keys(list || {}).filter((name) => !READ_GROUPS.has(name) && Array.isArray(list[name]?.patterns));
+}
+
 /** The list's pattern groups as plain arrays. */
 export function groups(list) {
   const take = (g) => (Array.isArray(list?.[g]?.patterns) ? list[g].patterns.map(String) : []);
@@ -65,6 +73,7 @@ export function groups(list) {
     always: take("always"),
     visible: take("visible_text"),
     apps: take("agent_apps_outside_models_page"),
+    fingerprints: take("fingerprints"),
     privateSha256: Array.isArray(list?.private_names?.sha256) ? list.private_names.sha256.map((h) => String(h).toLowerCase()) : [],
     caseInsensitive: list?.case_insensitive !== false,
   };
@@ -82,6 +91,7 @@ export function compileList(list) {
     always: make(g.always, "always"),
     visible: make(g.visible, "visible_text"),
     apps: make(g.apps, "agent_apps"),
+    fingerprints: make(g.fingerprints, "fingerprints"),
     privateSha256: new Set(g.privateSha256),
   };
 }
@@ -100,7 +110,7 @@ export function privateTokens(text, hashes) {
 export function displayRules(list, neutral) {
   const g = groups(list);
   const flags = g.caseInsensitive ? "i" : "";
-  const listed = [...g.always, ...g.visible, ...g.apps];
+  const listed = [...g.always, ...g.visible, ...g.apps, ...g.fingerprints];
   const rules = [];
   const used = new Set();
   const rule = (pattern, to) => {

@@ -19,6 +19,7 @@
 
 import { computeTaskFingerprint, scrubSensitiveText } from "./bilateral_bridge.js";
 import { clientFamily } from "./client_family.js";
+import { NETWORK_MAP_NOTICE, handleNetworkRequest, parseShowOnMap, recordClaimEdge, setShowOnMap } from "./network_activity.js";
 import {
   renderContributionPermalinkHtml,
   renderDashboardHtml,
@@ -4586,7 +4587,10 @@ async function evaluateFreeAccessWindowGuardrail(request, url, env, db, { infraA
   const isAlwaysPublicProbe =
     (method === "GET" || method === "HEAD") &&
     (action === "health" || action === "pulse" || action === "status" || action === "trust");
-  if (isAlwaysPublicProbe) {
+  // The network map is public by its contract (no key, no window): the Agora page and the strips read it for as long as the site is up,
+  // and each answer comes from a 15 second memory, so it is neither counted against the per-address cap nor stopped when the window ends.
+  const isNetworkMap = action === "network" && (method === "GET" || method === "HEAD" || method === "OPTIONS");
+  if (isAlwaysPublicProbe || isNetworkMap) {
     return { allowed: true, config };
   }
 
@@ -8278,6 +8282,23 @@ function formatClaimBanner(publicUrl, claimOut, pulse) {
   ].join("\n");
 }
 
+// After a claim: apply the worker's show_on_map choice if it sent one, and record the edge facts of a new claim for the network map.
+async function noteClaimOnMap(db, request, claimOut, agentId, showOnMapSetting, modelHint) {
+  const claimant = claimOut?.bilateral_guidance?.worker_profile;
+  if (!claimant?.worker_uuid) return;
+  const setting = parseShowOnMap(showOnMapSetting);
+  if (setting !== undefined) await setShowOnMap(db, claimant.worker_uuid, setting);
+  if (claimOut.task && !claimOut.reused_active_lease) {
+    await recordClaimEdge(db, request, {
+      task: claimOut.task,
+      workerUuid: claimant.worker_uuid,
+      agentId,
+      modelHint: claimant.model_hint || modelHint || "",
+      persona: claimant.persona_label || "",
+    });
+  }
+}
+
 export async function handlePriorityWorkGateway(request, env, db, publicUrl, { withSecurity }) {
   const reqStartMs = Date.now();
   await ensurePriorityGatewaySchema(db, { env, publicUrl });
@@ -8415,6 +8436,11 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
   });
   if (!freeWindowCheck.allowed) {
     return sendJson(freeWindowCheck.body, freeWindowCheck.status);
+  }
+
+  // GET /q/network: where workers connect and which Tasks they pick up (public, cached 15 s; see network_activity.js).
+  if (action === "network") {
+    return withSecurity(await handleNetworkRequest(request, url, { db, env }), { noStore: false });
   }
 
   // Fast Liveness & Schema Sentinel Health Probe (`/health` & `/q/health`)
@@ -9239,6 +9265,9 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     traceCtx.agent_id = profile.agent_id;
     traceCtx.worker_uuid = profile.worker_uuid;
     traceCtx.harness_tier = profile.harness_tier;
+    // A volunteer chooses when its worker joins (or later, on a claim) whether its claims may appear on the network map; the default is yes.
+    const showOnMap = parseShowOnMap(params.show_on_map);
+    if (showOnMap !== undefined && !isReadOnlyHead) await setShowOnMap(db, profile.worker_uuid, showOnMap);
 
     const wCountRow = await db.prepare("SELECT COUNT(*) AS cnt FROM herma_worker_registry").first();
     const onboardDoc = {
@@ -9249,6 +9278,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       total_registered_workers: Number(wCountRow?.cnt || 1),
       calibration_questions: CALIBRATION_QUESTIONS,
       workflow_guidance: {
+        map_notice: NETWORK_MAP_NOTICE,
         reuse_first: "Search existing Task Objects via /q/search or ask /q/chat before building from scratch.",
         task_priorities: "Claim ready NGO public-good Tasks, peer review unreviewed Task Objects, or advance a focused Task in the General Task Queue.",
         agent_support: "Send natural-language messages to POST /q/chat (e.g. 'Hi I'd like to contribute', 'hi i am stuck', or 'are there any task objects that would help me with this task').",
@@ -9566,6 +9596,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       traceCtx.worker_uuid = claimOut.bilateral_guidance?.worker_profile?.worker_uuid || workerUuid;
       traceCtx.harness_tier = claimOut.bilateral_guidance?.worker_profile?.harness_tier || "";
       traceCtx.task_id = claimOut.task?.task_id || "";
+      await noteClaimOnMap(db, request, claimOut, agentId, url.searchParams.get("show_on_map"), modelHintHeader);
       traceCtx.detail = {
         slot: claimOut.bilateral_guidance?.current_beat_slot,
         reused_active_lease: Boolean(claimOut.reused_active_lease),
@@ -9682,6 +9713,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       traceCtx.worker_uuid = claimOut.bilateral_guidance?.worker_profile?.worker_uuid || "";
       traceCtx.harness_tier = claimOut.bilateral_guidance?.worker_profile?.harness_tier || "";
       traceCtx.task_id = claimOut.task?.task_id || "";
+      await noteClaimOnMap(db, request, claimOut, agentId, body.show_on_map, body.model_hint || modelHintHeader);
       traceCtx.detail = {
         slot: claimOut.bilateral_guidance?.current_beat_slot,
         reused_active_lease: Boolean(claimOut.reused_active_lease),

@@ -1,0 +1,192 @@
+{
+ "service": "Tessera",
+ "window": "24h",
+ "window_seconds": 86400,
+ "as_of": 1793588400.0,
+ "min_workers": 2,
+ "places": [
+  {
+   "place": "IAD",
+   "level": "colo",
+   "continent": "NA",
+   "workers": 3,
+   "claims": 9,
+   "last_claim_at": "2026-11-02T02:58:30.000Z",
+   "by_class": {
+    "nonprofit": 4,
+    "check": 2,
+    "shared": 3
+   },
+   "by_model": {
+    "muse-spark-1.3": 6,
+    "no_model": 3
+   },
+   "by_worker": {
+    "dedicated": 9
+   }
+  },
+  {
+   "place": "FRA",
+   "level": "colo",
+   "continent": "EU",
+   "workers": 2,
+   "claims": 4,
+   "last_claim_at": "2026-11-02T02:35:00.000Z",
+   "by_class": {
+    "shared": 3,
+    "nonprofit": 1
+   },
+   "by_model": {
+    "muse-spark-1.3": 3,
+    "not_reported": 1
+   },
+   "by_worker": {
+    "volunteer": 4
+   }
+  },
+  {
+   "place": "AS",
+   "level": "continent",
+   "continent": "AS",
+   "workers": 1,
+   "claims": 1,
+   "last_claim_at": "2026-11-02T02:10:00.000Z",
+   "by_class": {
+    "shared": 1
+   },
+   "by_model": {
+    "muse-spark-1.3": 1
+   },
+   "by_worker": {
+    "volunteer": 1
+   }
+  },
+  {
+   "place": "unknown",
+   "level": "unknown",
+   "continent": null,
+   "workers": 1,
+   "claims": 1,
+   "last_claim_at": "2026-11-02T00:00:00.000Z",
+   "by_class": {
+    "own": 1
+   },
+   "by_model": {
+    "not_reported": 1
+   },
+   "by_worker": {
+    "volunteer": 1
+   }
+  }
+ ],
+ "recent": [
+  {
+   "at": "2026-11-02T02:58:30.000Z",
+   "class": "nonprofit",
+   "model": "muse-spark-1.3",
+   "model_status": "reported",
+   "place": "IAD",
+   "level": "colo",
+   "continent": "NA",
+   "worker": "dedicated",
+   "worker_label": "a dedicated worker run by ta-amps"
+  },
+  {
+   "at": "2026-11-02T02:56:00.000Z",
+   "class": "check",
+   "model": null,
+   "model_status": "no_model",
+   "place": "IAD",
+   "level": "colo",
+   "continent": "NA",
+   "worker": "dedicated",
+   "worker_label": "a dedicated worker run by ta-amps"
+  },
+  {
+   "at": "2026-11-02T02:35:00.000Z",
+   "class": "shared",
+   "model": null,
+   "model_status": "not_reported",
+   "place": "FRA",
+   "level": "colo",
+   "continent": "EU",
+   "worker": "volunteer",
+   "worker_label": "a volunteer's AI"
+  },
+  {
+   "at": "2026-11-02T02:10:00.000Z",
+   "class": "shared",
+   "model": "muse-spark-1.3",
+   "model_status": "reported",
+   "place": "AS",
+   "level": "continent",
+   "continent": "AS",
+   "worker": "volunteer",
+   "worker_label": "a volunteer's AI"
+  }
+ ],
+ "totals": {
+  "claims": 16,
+  "workers": 8,
+  "places": 3,
+  "continents": 3,
+  "by_class": {
+   "nonprofit": 6,
+   "check": 2,
+   "shared": 7,
+   "own": 1
+  }
+ },
+ "shows": "The Cloudflare data center each worker's connection came through, by its airport code, or its continent when fewer than two workers of the same kind connected through that data center in the window; whether each Task claimed was a nonprofit's, a shared one, a check or a worker's own; the model the worker reported; whether the worker is a volunteer's AI or a dedicated worker run by ta-amps; counts of claims and of distinct workers. A worker that set show_on_map to false is counted in the totals and appears nowhere else.",
+ "never_shows": "IP addresses, cities, coordinates, network names, user agents, worker names, ids, keys, Task ids or what a Task says.",
+ "replay": {
+  "from": "2026-11-02T02:00:00.000Z",
+  "to": "2026-11-02T03:00:00.000Z",
+  "claims": [
+   {
+    "at": "2026-11-02T02:10:00.000Z",
+    "class": "shared",
+    "model": "muse-spark-1.3",
+    "model_status": "reported",
+    "place": "AS",
+    "level": "continent",
+    "continent": "AS",
+    "worker": "volunteer",
+    "worker_label": "a volunteer's AI"
+   },
+   {
+    "at": "2026-11-02T02:35:00.000Z",
+    "class": "shared",
+    "model": null,
+    "model_status": "not_reported",
+    "place": "FRA",
+    "level": "colo",
+    "continent": "EU",
+    "worker": "volunteer",
+    "worker_label": "a volunteer's AI"
+   },
+   {
+    "at": "2026-11-02T02:56:00.000Z",
+    "class": "check",
+    "model": null,
+    "model_status": "no_model",
+    "place": "IAD",
+    "level": "colo",
+    "continent": "NA",
+    "worker": "dedicated",
+    "worker_label": "a dedicated worker run by ta-amps"
+   },
+   {
+    "at": "2026-11-02T02:58:30.000Z",
+    "class": "nonprofit",
+    "model": "muse-spark-1.3",
+    "model_status": "reported",
+    "place": "IAD",
+    "level": "colo",
+    "continent": "NA",
+    "worker": "dedicated",
+    "worker_label": "a dedicated worker run by ta-amps"
+   }
+  ]
+ }
+}

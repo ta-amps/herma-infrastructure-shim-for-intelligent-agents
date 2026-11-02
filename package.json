@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "vitest run --maxWorkers=4",
-    "check": "node --check deploy/cloudflare/bilateral_bridge.js && node --check deploy/cloudflare/conversation.js && node --check deploy/cloudflare/conversation_state.js && node --check deploy/cloudflare/worker_kits_and_mutation_grid.js && vitest run --maxWorkers=4 && node --no-warnings --test test/node/help_burst.node-test.mjs",
+    "check": "node --check deploy/cloudflare/bilateral_bridge.js && node --check deploy/cloudflare/conversation.js && node --check deploy/cloudflare/conversation_state.js && node --check deploy/cloudflare/worker_kits_and_mutation_grid.js && vitest run --maxWorkers=4 && node --no-warnings --test test/node/help_burst.node-test.mjs && node --no-warnings --test test/node/network_merge.node-test.mjs && node --no-warnings --test test/node/banned_list.node-test.mjs",
     "build": "wrangler deploy --dry-run --config deploy/cloudflare/wrangler.jsonc"
   },
   "dependencies": {

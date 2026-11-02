@@ -18,14 +18,15 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { compileList, ensureGenerated, privateTokens } from "./banned_list.mjs";
+import { compileList, ensureGenerated, privateTokens, unreadGroups } from "./banned_list.mjs";
 import { inMemoryD1 } from "./memory_d1.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASE = "https://herma.ta-amps.workers.dev";
 const EM_DASH = String.fromCharCode(0x2014);
-// Owner, Nov 2: a hash or fingerprint is not shown anywhere on a page, code included. The list's own pattern covers prose; this covers all
-// visible text. (A run of hex digits that long is not a word.)
+// Owner, Nov 2: a hash or fingerprint is not shown anywhere on a page, code included. The shared list's `fingerprints` group decides what
+// counts (it is read like the other groups and checked on all visible text); this built-in floor says the same thing for 12 hex digits or more, so a
+// page can never ship a hash because the list was behind. (A run of hex digits that long is not a word.)
 const LONG_HEX = /(?<![0-9a-f])[0-9a-f]{12,}(?![0-9a-f])/i;
 
 let INPUTS;
@@ -105,7 +106,9 @@ export function pageProblems(name, html) {
       problems.push(...matchProblems(name, text, [rule], "shows banned wording"));
     }
   }
-  if (LONG_HEX.test(visibleText(html))) problems.push(`${name}: shows a long hex string (a hash or fingerprint), in code or in prose`);
+  const everything = visibleText(html);
+  problems.push(...matchProblems(name, everything, RULES.fingerprints, "shows a fingerprint (the list's fingerprints group), in code or in prose"));
+  if (LONG_HEX.test(everything)) problems.push(`${name}: shows a long hex string (a hash or fingerprint), in code or in prose`);
   if (html.includes(EM_DASH)) problems.push(`${name}: has an em dash`);
   return problems;
 }
@@ -226,6 +229,7 @@ function publicRoutes() {
     "/preview.js", "/robots.txt", "/favicon.svg", "/agent-start.json", "/agent-start.css", "/agent-start.js", "/starter", "/starter?format=json",
     "/prompts", "/prompts?format=json", "/get-started", "/dashboard", "/dashboard?format=json", "/dashboard.js", "/prompts.js", "/help", "/chat", "/status", "/health",
     "/dashboard?q=shelter&fragment=results", "/dashboard?q=shelter", "/dashboard?fragment=results",
+    "/q/network", "/q/network?replay=1", "/q/network?kind=nonprofit",
     "/feedback", "/q", "/c/nothing_here", "/w/w_nothing_here", "/q/demo/nothing_here",
     "/kits", "/kits?format=json", "/kits.js", "/kits/package.json", "/kits/mcp-manifest.json", "/kits/SKILL.md", "/kits/bootstrap.sh",
     "/kits/herma_shim.py", "/kits/worker_distributed_indexer.py", "/kits/pretool_guard.py", "/kits/herma-agent-kit.tgz", "/kits/herma-worker-kit.zip",
@@ -298,6 +302,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url) && !asPages && !asData) {
   console.log(
     `release gate passed (list version ${INPUTS.list.version}, ${INPUTS.source}): ${fetched} Worker routes, ${pages} fixture pages, ${dirtyCount} renderings of worker text full of banned items, ${files} files`
   );
+  const unread = unreadGroups(INPUTS.list);
+  if (unread.length) console.log(`note: the shared list has pattern group(s) this guard does not read yet: ${unread.join(", ")}`);
 }
 
 /**

@@ -199,6 +199,57 @@ def test_the_gate_fails_on_every_kind_of_dirty_page_and_passes_a_clean_one() -> 
     ]
 
 
+def gate_problems_with_list(pages: dict[str, str], list_file: Path) -> dict[str, list[str]]:
+    result = subprocess.run(
+        ["node", "--no-warnings", "scripts/release_gate.mjs", "--pages"],
+        cwd=REPO_ROOT,
+        input=json.dumps(pages),
+        capture_output=True,
+        text=True,
+        check=True,
+        env=made_up_environment(BANNED_WORDS_LIST=str(list_file)),
+    )
+    return dict(json.loads(result.stdout))
+
+
+def test_the_gate_reads_the_lists_fingerprints_group_and_keeps_its_own_floor(
+    tmp_path: Path,
+) -> None:
+    base = json.loads(
+        (REPO_ROOT / "tests/fixtures/made-up-banned-words.json").read_text(encoding="utf-8")
+    )
+    without = {key: value for key, value in base.items() if key != "fingerprints"}
+    stricter = {
+        **base,
+        "fingerprints": {"why": "made up", "patterns": ["(?<![0-9a-f])[0-9a-f]{8,}(?![0-9a-f])"]},
+    }
+    pages = {
+        "14 hex digits in code": "<main><h1>x</h1><pre>0a1b2c3d4e5f6a</pre></main>",
+        "10 hex digits in code": "<main><h1>x</h1><pre>0a1b2c3d4e</pre></main>",
+        "short id in code": "<main><h1>x</h1><pre>0a1b2c</pre></main>",
+    }
+    for name, document in (
+        ("no group", without),
+        ("the made-up group", base),
+        ("a stricter group", stricter),
+    ):
+        path = tmp_path / f"{name.replace(' ', '-')}.json"
+        path.write_text(json.dumps(document), encoding="utf-8")
+        found = gate_problems_with_list(pages, path)
+        assert found["14 hex digits in code"], (
+            f"{name}: 14 hex digits in code must fail (the list or the built-in floor)"
+        )
+        assert found["short id in code"] == [], f"{name}: a short id is fine"
+        if name == "a stricter group":
+            assert found["10 hex digits in code"], (
+                "the list's own group decides when it is stricter than the floor"
+            )
+        else:
+            assert found["10 hex digits in code"] == [], (
+                f"{name}: 10 hex digits are not a fingerprint"
+            )
+
+
 def run_gate(**env: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["node", "--no-warnings", "scripts/release_gate.mjs"],

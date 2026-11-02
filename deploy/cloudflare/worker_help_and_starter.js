@@ -3,6 +3,7 @@
 // and Modal Finetuning Dataset Export (`/q/training-export`) for Herma v6.3.
 
 import { MODELS_USED_LINK, documentHtml, tidyText } from "./page_shell.js";
+import { NETWORK_MAP_NOTICE } from "./network_activity.js";
 import { scrubSensitiveText } from "./bilateral_bridge.js";
 import {
   DEFAULT_CONTEXT_ENTRIES,
@@ -1434,6 +1435,7 @@ export async function handleWorkerHelpRequest(request, env, db, publicUrl, infra
         example_get: `${base}/q/help?question=How+do+I+compose+existing+shelter+schemas&task_id=ngo_seed_disaster_shelter_schema`,
         agent_chat_endpoint: `${base}/q/chat`,
         starter_hub_url: `${base}/starter`,
+        network_map_notice: NETWORK_MAP_NOTICE,
         herma_intake: intakePreview.herma_intake,
         guidance: buildDeterministicGuidance(intakePreview.herma_intake, publicUrl),
       },
