@@ -141,7 +141,7 @@ ta-agent-banner {
   background: var(--agent-banner-bg); color: var(--agent-banner-ink); border-bottom: 1px solid var(--agent-banner-line);
   --agent-banner-bg: var(--sunken); --agent-banner-ink: var(--text); --agent-banner-muted: var(--text-2);
   --agent-banner-raised: var(--surface); --agent-banner-line: var(--line); --agent-banner-edge: var(--line-strong);
-  --agent-banner-link: var(--link); --agent-banner-focus: var(--focus);
+  --agent-banner-link: var(--link); --agent-banner-focus: var(--focus); --agent-banner-paper: var(--bg);
 }
 .agent-fallback { max-width: 78rem; margin: 0 auto; padding: 0 var(--step-5); min-height: 36px; display: flex; align-items: center; gap: var(--step-3); font-size: var(--fs-small); line-height: 1.25rem; white-space: nowrap; overflow: hidden; }
 .agent-fallback-icon { flex: none; }

@@ -154,7 +154,7 @@ def test_provision_and_context_entry_schema_validation() -> None:
         title="Eranos Human-Only Kit Boundary",
         summary="Marks crisis safety planning and survivor intake as strictly human_only.",
         schema_or_body={"human_only": ["crisis_intake", "outbound_send"]},
-        source_uri="https://eranos.ta-amps.workers.dev",
+        source_uri="https://eranosforgood.org",
     )
     assert entry.updated_at
     assert entry.version == 1
@@ -396,7 +396,7 @@ def test_api_context_database_and_noun_verb_shimming(
             "title": "Eranos NGO Kit Boundary",
             "summary": "Enforces human_only crisis decisions and drafter != reviewer.",
             "schema_or_body": {"human_only": True, "independent_review": True},
-            "source_uri": "https://eranos.ta-amps.workers.dev",
+            "source_uri": "https://eranosforgood.org",
         },
     )
     assert r_single.status_code == 200

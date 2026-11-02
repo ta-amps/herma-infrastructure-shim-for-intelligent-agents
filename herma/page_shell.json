@@ -12,8 +12,8 @@
     "models_used": "https://agora.eranosforgood.org/models/"
   },
   "assets": {
-    "css": "/assets/herma-pages.css?v=295c776829",
-    "banner_js": "/assets/agent-banner.js?v=fd51472c4a",
+    "css": "/assets/herma-pages.css?v=a0d539268a",
+    "banner_js": "/assets/agent-banner.js?v=1a9e22452b",
     "preload": [
       "/assets/fonts/IBMPlexSans-wdth-wght.woff2",
       "/assets/fonts/SpaceGrotesk-wght.woff2"

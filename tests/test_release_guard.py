@@ -114,8 +114,11 @@ def test_the_policy_names_the_live_commit_and_this_history_contains_it() -> None
     assert "76a428f2c6c3182c6dabc5019e6aa4cb3e1f3cbe" in required
     assert "295bdbd50a133128566346740e232351e7640ad8" in required
     assert "c64378737bae59825304404fb2adf77b7a6477d9" in required
+    assert (
+        "4c919d1dbba2da591eeca360cb6e73db80740b44" in required
+    )  # the network map release, live from 12:35Z on Nov 2
     assert check_release.check_ancestors(REPO_ROOT, POLICY) == []
-    assert POLICY["live_when_recorded"]["version"] == "2239c98f-1763-4fdf-9555-911e0fae0df4"
+    assert POLICY["live_when_recorded"]["version"] == "3bcc48d8-f217-440b-90a1-bbf7cb886dc8"
 
 
 def test_wrangler_runs_the_guard_and_the_light_check_before_every_deploy() -> None:

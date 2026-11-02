@@ -10,7 +10,7 @@
   "inject_text": "When building nonprofit, shelter, or helpline workflows: survivor interviews, crisis safety planning, eligibility determinations on real individuals, and external outbound sends must remain strictly human_only. Every agentic deliverable requires practice-case fixtures (examples, never real people or cases) and independent verification (drafter != reviewer).",
   "uris": [
     {
-      "uri": "https://eranos.ta-amps.workers.dev",
+      "uri": "https://eranosforgood.org",
       "label": "Eranos Verified NGO Kit Catalog",
       "kind": "doc",
       "inline_excerpt": "Two-step eq01 -> eq02 -> eq03 volunteer pipeline with deterministic autonomy checks."

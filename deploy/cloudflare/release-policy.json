@@ -6,12 +6,13 @@
     "295bdbd50a133128566346740e232351e7640ad8",
     "76a428f2c6c3182c6dabc5019e6aa4cb3e1f3cbe",
     "8e27a67ef8a563c113590c9d261aebbbb54c9c3f",
-    "c64378737bae59825304404fb2adf77b7a6477d9"
+    "c64378737bae59825304404fb2adf77b7a6477d9",
+    "4c919d1dbba2da591eeca360cb6e73db80740b44"
   ],
   "live_when_recorded": {
-    "version": "2239c98f-1763-4fdf-9555-911e0fae0df4",
-    "deployed_utc": "2026-11-02T10:36:08Z",
-    "source": "c643787 (the pages release; the version before it was daaff3ec, Gemini's 76a428f)"
+    "version": "3bcc48d8-f217-440b-90a1-bbf7cb886dc8",
+    "deployed_utc": "2026-11-02T12:35:18Z",
+    "source": "4c919d1 (the network map release; the version before it was 2239c98f, the pages release)"
   },
   "rules": [
     "The working tree is clean: deploy a commit that was reviewed, never uncommitted edits.",
