@@ -9,9 +9,9 @@ import { TEAM_AGENTS_KEY, emptyTeam, isTeamAgent, parseTeamAgents, resetTeamAgen
 // (run by ta-amps)" on the dashboard; every other agent is "volunteer" on the wire and "A connected AI" on a page. A stranger cannot add itself.
 
 const BASE = "https://herma.teleionlabs.com";
-const SECRET = "team-agents-test-secret";
+const OPERATOR_KEY = `test-operator-${crypto.randomUUID()}`; // made at run time, so no secret-like literal is in the source
 const call = (path, init) => exports.default.fetch(BASE + path, init);
-const asOperator = (path, init = {}) => worker.fetch(new Request(BASE + path, { ...init, headers: { "x-bootstrap-secret": SECRET, ...(init.headers || {}) } }), { ...env, BOOTSTRAP_SECRET: SECRET });
+const asOperator = (path, init = {}) => worker.fetch(new Request(BASE + path, { ...init, headers: { "x-bootstrap-secret": OPERATOR_KEY, ...(init.headers || {}) } }), { ...env, BOOTSTRAP_SECRET: OPERATOR_KEY });
 const post = (body) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 const db = () => env.HERMA_DB;
 const minutesAgo = (m) => new Date(Date.now() - m * 60000).toISOString();
