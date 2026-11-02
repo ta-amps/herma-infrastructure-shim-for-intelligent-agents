@@ -1441,6 +1441,20 @@ export function renderKitsClientJs() {
   ].join("\n");
 }
 
+// What the kits page says about each download, in plain words (no agent-app names: those appear only on Models used). The catalog's own
+// runtime and summary strings stay in the JSON; a kit this table does not know falls back to them, filtered.
+const KIT_PAGE_WORDS = Object.freeze({
+  npm_tgz: ["Node 18 or newer", "A Node package: a small command line and library for searching, claiming and reporting."],
+  zip_bundle: ["Python 3 or Node 18 or newer", "Everything in one download: the Python helper, a Node command line, a skill file, a guard hook and a setup script."],
+  python_shim: ["Python 3, no extra packages", "A Python helper for searching, claiming, mounting a Task Object, reporting and sending feedback."],
+  distributed_indexer_py: ["Python 3, no extra packages", "Builds the search indexes on your own machine, so the server spends nothing."],
+  shell_bootstrap: ["A shell with curl, plus Python 3 or Node", "One command that sets up a kit and checks that the connection works."],
+  skill_md: ["Any agent that reads skill files", "A skill file that tells your agent how to search, mount a Task Object, hold a lease and check its work."],
+  pretool_hook: ["Python 3", "A guard hook that nudges your agent to look for a certified Task Object before it writes something from scratch."],
+  mcp_manifest: ["Any client that speaks MCP", "A manifest for agents that connect over MCP or plain web requests, with nothing to install."],
+  npm_package_json: ["Node 18 or newer", "The package file for the Node kit."],
+});
+
 export function renderKitsCatalogHtml(publicUrl, catalogDoc = {}) {
   const items = Array.isArray(catalogDoc.kits) ? catalogDoc.kits : [];
   const pitch = tidyText(
@@ -1451,12 +1465,12 @@ export function renderKitsCatalogHtml(publicUrl, catalogDoc = {}) {
   const cards = items
     .map(
       (item) => `<article class="card" id="kit-${escapeHtml(item.kit_id)}">
-<span class="tags"><span class="tag">${escapeHtml(item.runtime)}</span></span>
+<span class="tags"><span class="tag">${escapeHtml(KIT_PAGE_WORDS[item.kit_id]?.[0] ?? tidyText(item.runtime, 60))}</span></span>
 <h2 class="card-title"><a href="${escapeHtml(item.url)}">${escapeHtml(item.filename)}</a></h2>
-<p>${escapeHtml(tidyText(item.summary, 320))}</p>
+<p>${escapeHtml(KIT_PAGE_WORDS[item.kit_id]?.[1] ?? tidyText(item.summary, 320))}</p>
 <div class="row"><a class="btn btn-sm" href="${escapeHtml(item.url)}">Download (${escapeHtml(formatBytes(item.byte_length))})</a><button type="button" class="btn-quiet btn-sm" data-copy-cmd="${escapeHtml(item.install_one_liner)}">Copy the install command</button></div>
 <pre tabindex="0">${escapeHtml(item.install_one_liner)}</pre>
-<p class="hint">File fingerprint, to check the download: <code>${escapeHtml(item.sha256)}</code></p>
+<p class="hint">File fingerprint, to check the download: <code class="fingerprint">${escapeHtml(item.sha256)}</code></p>
 </article>`
     )
     .join("\n");

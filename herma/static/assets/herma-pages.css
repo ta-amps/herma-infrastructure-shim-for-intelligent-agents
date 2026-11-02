@@ -325,3 +325,5 @@ canvas.stage-canvas { width: 100%; height: auto; display: block; background: var
 .presets { display: flex; flex-wrap: wrap; gap: var(--step-2); margin: var(--step-3) 0; }
 
 @media print { ta-agent-banner, .site-header, .site-footer { display: none; } }
+/* A file fingerprint is one long unbroken word: let it wrap. */
+.hint code.fingerprint, code.fingerprint { white-space: normal; overflow-wrap: anywhere; word-break: break-all; }

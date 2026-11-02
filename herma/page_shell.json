@@ -8,7 +8,7 @@
     "models_used": "https://agora.ta-amps.workers.dev/models/"
   },
   "assets": {
-    "css": "/assets/herma-pages.css?v=727c6962d4",
+    "css": "/assets/herma-pages.css?v=4057057f1d",
     "banner_js": "/assets/agent-banner.js?v=fd51472c4a",
     "preload": [
       "/assets/fonts/IBMPlexSans-wdth-wght.woff2",

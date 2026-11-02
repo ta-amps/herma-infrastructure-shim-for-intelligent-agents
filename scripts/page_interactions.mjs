@@ -82,6 +82,20 @@ async function open(route) {
   check(await page.locator("ta-agent-banner").getByText("Paste this into your agent").isVisible(), "the banner's How panel opens");
   check(errors.length === 0, `connect has no console errors ${errors.join(" | ")}`);
 }
+{ // no page scrolls sideways on a phone, and none names an agent app (those appear only on Models used)
+  const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark" });
+  const { PAGE_ROUTES } = await import("./page_fixtures_server.mjs");
+  const apps = /\b(Claude Code|Codex|OpenCode|Antigravity|Gemini CLI|Cursor)\b/;
+  for (const route of PAGE_ROUTES) {
+    const page = await phone.newPage();
+    await page.goto(base + route, { waitUntil: "networkidle" });
+    const width = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }));
+    check(width.scroll <= width.client + 1, `${route} fits a phone without sideways scrolling (${width.scroll} of ${width.client})`);
+    const text = await page.evaluate(() => document.body.innerText);
+    check(!apps.test(text), `${route} names no agent app`);
+    await page.close();
+  }
+}
 await browser.close(); server.close();
 console.log(failures ? `\n${failures} failure(s)` : "\nall interactions work");
 process.exit(failures ? 1 : 0);
