@@ -332,6 +332,19 @@ describe("Herma v6.3 Q1-Q10 Boundary Hardening, Plain-Language Dashboard & Conve
     const oaiDoc = await oaiRes.json();
     expect(oaiDoc.choices?.[0]?.message?.content).toBeTruthy();
 
+    // First-turn informational question routes to roadblock_or_help rather than greeting/claim
+    const infoQRes = await callGateway("/q/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent_id: "fresh-question-caller",
+        message: "Did we break something, or add additional unnecessary checks or restrictions or auth?",
+      }),
+    });
+    expect(infoQRes.status).toBe(200);
+    const infoQDoc = await infoQRes.json();
+    expect(infoQDoc.intent).toBe("roadblock_or_help");
+
     // Starter kit, /q/help, /q/meta-telemetry, /q/training-export, and plain-language /dashboard
     const starterRes = await callGateway("/starter");
     expect(starterRes.status).toBe(200);

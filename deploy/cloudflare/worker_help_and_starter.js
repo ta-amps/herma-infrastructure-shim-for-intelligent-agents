@@ -2024,9 +2024,16 @@ function classifyChatIntent(userText, body, session, resolvedTaskId = "") {
   }
 
   if (
-    /\b(stuck|help|error|409|403|413|expired|fencing|did my submission|go through|last request fail|why did my|schema|how should i|what format|blocked|ambiguous|fail|failed|rejected)\b/i.test(
+    /\b(stuck|help|error|409|403|413|expired|fencing|did my submission|go through|last request fail|why did my|schema|how should i|what format|blocked|ambiguous|fail|failed|rejected|break|broken|restriction|restrictions|auth|authentication|token|tokens|permission|permissions)\b/i.test(
       lower
     )
+  ) {
+    return "roadblock_or_help";
+  }
+
+  if (
+    lower.includes("?") &&
+    !/\b(contribute|get started|how do i start|onboard)\b/i.test(lower)
   ) {
     return "roadblock_or_help";
   }
@@ -2036,9 +2043,6 @@ function classifyChatIntent(userText, body, session, resolvedTaskId = "") {
     session.turn_count === 0 ||
     /\b(hi|hello|hey|contribute|get started|how do i start|onboard)\b/i.test(lower)
   ) {
-    if (lower.includes("?") && resolvedTaskId) {
-      return "roadblock_or_help";
-    }
     return "greeting_or_onboard";
   }
 
