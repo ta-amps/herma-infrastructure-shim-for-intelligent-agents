@@ -654,7 +654,7 @@ const dMsg = await worker.fetch(new Request("https://herma.ta-amps.workers.dev/v
   body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 128, messages: [{ role: "user", content: "herma direct schema" }] }),
 }), env);
 
-const homeResp = await worker.fetch(new Request("https://herma.ta-amps.workers.dev/"), env);
+const homeResp = await worker.fetch(new Request("https://herma.ta-amps.workers.dev/shim"), env);
 const homeHtml = await homeResp.text();
 
 console.log(JSON.stringify({
@@ -1130,7 +1130,7 @@ const dryA = await (await worker.fetch(new Request("https://herma.ta-amps.worker
 const dryB = await (await worker.fetch(new Request("https://herma.ta-amps.workers.dev/v1/dry-run", {
   method: "POST", headers: hb, body: JSON.stringify({ payload: { model: "muse-spark-1.3", messages: [{ role: "user", content: "deploy production" }] } }),
 }), env)).json();
-const homeTxt = await (await worker.fetch(new Request("https://herma.ta-amps.workers.dev/"), env)).text();
+const homeTxt = await (await worker.fetch(new Request("https://herma.ta-amps.workers.dev/shim"), env)).text();
 
 console.log(JSON.stringify({
   escGet: escGet.status,
@@ -1793,10 +1793,11 @@ def test_public_preview_svg_brand_chrome_discovery_and_stateless_mcp_parity(
     assert r_hz.status_code == 200 and r_hz.json()["ok"] is True
     assert client.get("/").status_code == 403
 
-    # 2. Brand SVG chrome, responsive .table-wrap, and preview inspector on / and /connect:
-    home_html = client.get("/", headers=edge_hdr).text
+    # 2. Brand SVG chrome on every page; responsive .table-wrap and the preview inspector on /shim:
+    home_html = client.get("/shim", headers=edge_hdr).text
     connect_html = client.get("/connect", headers=edge_hdr).text
-    for page_html in (home_html, connect_html):
+    start_html = client.get("/", headers=edge_hdr).text
+    for page_html in (start_html, home_html, connect_html):
         assert '<a class="wordmark" href="/">' in page_html
         assert '<header class="site-header">' in page_html
         assert "<nav" in page_html
@@ -1896,7 +1897,7 @@ const rob = await worker.fetch(new Request("https://herma.ta-amps.workers.dev/ro
 const llms = await worker.fetch(new Request("https://herma.ta-amps.workers.dev/llms.txt"), env);
 const llmsFull = await worker.fetch(new Request("https://herma.ta-amps.workers.dev/llms-full.txt"), env);
 const card = await (await worker.fetch(new Request("https://herma.ta-amps.workers.dev/.well-known/agent-card.json"), env)).json();
-const homeHtml = await (await worker.fetch(new Request("https://herma.ta-amps.workers.dev/"), env)).text();
+const homeHtml = await (await worker.fetch(new Request("https://herma.ta-amps.workers.dev/shim"), env)).text();
 
 const prev = await (await worker.fetch(new Request("https://herma.ta-amps.workers.dev/api/preview", {
   method: "POST", headers: { "content-type": "application/json" },

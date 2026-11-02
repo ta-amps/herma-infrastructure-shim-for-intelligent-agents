@@ -96,7 +96,10 @@ def test_http_edge_lockdown_and_dry_run_across_wire_formats(
     edge_hdr = {"x-edge-auth": "edge-lock-test"}
     r_home = client.get("/", headers=edge_hdr)
     assert r_home.status_code == 200
-    assert "A context shim between an agent and its model" in r_home.text
+    assert "The shim between any agent and its model" in r_home.text
+    r_shim = client.get("/shim", headers=edge_hdr)
+    assert r_shim.status_code == 200
+    assert "A context shim between an agent and its model" in r_shim.text
 
     # Personal-assistant product names do not override a valid scoped key:
     r_consumer = client.post(
