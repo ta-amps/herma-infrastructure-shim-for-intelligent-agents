@@ -5,12 +5,13 @@
     "58f3ada68c590ffc12c0a2c637ecf97bbb7bc16e",
     "295bdbd50a133128566346740e232351e7640ad8",
     "76a428f2c6c3182c6dabc5019e6aa4cb3e1f3cbe",
-    "8e27a67ef8a563c113590c9d261aebbbb54c9c3f"
+    "8e27a67ef8a563c113590c9d261aebbbb54c9c3f",
+    "c64378737bae59825304404fb2adf77b7a6477d9"
   ],
   "live_when_recorded": {
-    "version": "daaff3ec-e276-4841-8282-ca4d9315a82b",
-    "deployed_utc": "2026-11-01T22:43:22Z",
-    "source": "76a428f (Gemini's v6.10); the logged bundle was 1409.30 KiB and a clean build of 76a428f is 1409.93 KiB"
+    "version": "2239c98f-1763-4fdf-9555-911e0fae0df4",
+    "deployed_utc": "2026-11-02T10:36:08Z",
+    "source": "c643787 (the pages release; the version before it was daaff3ec, Gemini's 76a428f)"
   },
   "rules": [
     "The working tree is clean: deploy a commit that was reviewed, never uncommitted edits.",

@@ -109,11 +109,13 @@ def test_the_commit_that_is_live_must_be_contained(repo: dict[str, Any]) -> None
 def test_the_policy_names_the_live_commit_and_this_history_contains_it() -> None:
     required = POLICY["required_ancestors"]
     assert required and all(re.fullmatch(r"[0-9a-f]{40}", c) for c in required)
-    # Gemini's v6.10, which was live at 22:43Z on Nov 1, and the Muse-first release must both be in this history.
+    # Gemini's v6.10 (live from 22:43Z on Nov 1), the Muse-first release and the pages release that went live at 10:36Z on Nov 2
+    # (c643787) must all be in this history.
     assert "76a428f2c6c3182c6dabc5019e6aa4cb3e1f3cbe" in required
     assert "295bdbd50a133128566346740e232351e7640ad8" in required
+    assert "c64378737bae59825304404fb2adf77b7a6477d9" in required
     assert check_release.check_ancestors(REPO_ROOT, POLICY) == []
-    assert POLICY["live_when_recorded"]["version"] == "daaff3ec-e276-4841-8282-ca4d9315a82b"
+    assert POLICY["live_when_recorded"]["version"] == "2239c98f-1763-4fdf-9555-911e0fae0df4"
 
 
 def test_wrangler_runs_the_guard_and_the_light_check_before_every_deploy() -> None:
