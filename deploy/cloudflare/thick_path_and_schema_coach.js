@@ -198,6 +198,15 @@ const CANONICAL_OBJECT_RECOMMENDED_FACETS = new Set([
   "output_contract",
   "visibility",
   "mutation_operator",
+  "dense_embedding_int8",
+  "embedding_model_id",
+  "embedding_norm",
+  "lsh_small_64b",
+  "lsh_medium_256b",
+  "lsh_wide_1024b",
+  "search_blocks",
+  "search_leafs",
+  "client_index",
 ]);
 
 const OBJECT_ALIAS_TO_CANONICAL = Object.freeze({
@@ -267,6 +276,7 @@ const ENVELOPE_ALIAS_TO_CANONICAL = Object.freeze({
   verbs: "followup_tasks",
   objects: "task_objects",
   nouns: "task_objects",
+  output_nouns: "task_objects",
   result_summary: "summary",
   completed_branch: "summary",
   completed_task_id: "task_id",
@@ -526,9 +536,9 @@ export function buildCanonicalSuggestedSchemas(publicUrl = "https://herma.ta-amp
       core_fields: {
         object_key: {
           type: "string",
-          maxLength: 120,
+          maxLength: 128,
           pattern: "^[a-z0-9_-]+$",
-          description: "Unique reusable noun key; keep <= 120 chars and preserve <agent_id>_YYYYMMDD_v1 suffix.",
+          description: "Unique reusable noun key; keep <= 128 chars and preserve <agent_id>_YYYYMMDD_v1 suffix.",
         },
         category: {
           type: "string",

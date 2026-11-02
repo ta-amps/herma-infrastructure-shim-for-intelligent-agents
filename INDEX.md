@@ -31,7 +31,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) |  |
 
-## deploy/ (28)
+## deploy/ (29)
 
 | File | What it is |
 |---|---|
@@ -59,6 +59,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/worker.js](deploy/cloudflare/worker.js) |  |
 | [deploy/cloudflare/worker_entropy_catalog.js](deploy/cloudflare/worker_entropy_catalog.js) | Bilateral Worker Onboarding Personas, Calibration Questions, Single-Step Atomic Remix Operators, |
 | [deploy/cloudflare/worker_help_and_starter.js](deploy/cloudflare/worker_help_and_starter.js) | Bilateral Worker Help (/q/help), Agent-to-Agent Chat (/q/chat, /q/a2a), |
+| [deploy/cloudflare/worker_kits_and_mutation_grid.js](deploy/cloudflare/worker_kits_and_mutation_grid.js) | Herma v6.11 Downloadable Worker Onboarding Kits (POSIX ustar + gzip .tgz, CRC32 PKZIP .zip, |
 | [deploy/cloudflare/worker_reputation_and_proposals.js](deploy/cloudflare/worker_reputation_and_proposals.js) | workerreputationandproposals.js |
 | [deploy/cloudflare/wrangler.jsonc](deploy/cloudflare/wrangler.jsonc) | Herma Cloud Worker: 24/7 context-shimming AI middleware on Cloudflare Workers + D1 (ta-amps-herma) |
 | [deploy/fly/Dockerfile](deploy/fly/Dockerfile) |  |
@@ -143,7 +144,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/check_architecture.py](scripts/check_architecture.py) | Check that architecture.json still describes this repo truthfully. |
 | [scripts/check_public.py](scripts/check_public.py) | Fail if a file headed for a public repo holds a secret or a private name. |
 
-## test/ (11)
+## test/ (12)
 
 | File | What it is |
 |---|---|
@@ -157,9 +158,10 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/provider_health.test.js](test/provider_health.test.js) |  |
 | [test/thick_path_and_schema_coach.test.js](test/thick_path_and_schema_coach.test.js) |  |
 | [test/triggers.test.js](test/triggers.test.js) |  |
+| [test/worker_kits_and_mutation_grid.test.js](test/worker_kits_and_mutation_grid.test.js) |  |
 | [test/worker_reputation_and_proposals.test.js](test/worker_reputation_and_proposals.test.js) |  |
 
-## tests/ (21)
+## tests/ (22)
 
 | File | What it is |
 |---|---|
@@ -184,6 +186,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [tests/test_retired_names.py](tests/test_retired_names.py) | Herma never serves or seeds a retired pack name (MUST-FOLLOW item 9, owner, October 29). |
 | [tests/test_runtime_parity.py](tests/test_runtime_parity.py) | Python and the Worker make identical spending, identity and parsing decisions. |
 | [tests/test_triggers.py](tests/test_triggers.py) | Tests for Tier-1 (keyword/regex/path/tool), Tier-2 (semantic), and Tier-3 (micromodel) triggers. |
+| [tests/test_worker_kits_archives.py](tests/test_worker_kits_archives.py) | End-to-end Python zipfile / tarfile & CLI archive verification for Herma v6.11 worker kits. |
 
 ## training/ (3)
 

@@ -16,7 +16,7 @@ async function gzipUtf8(str) {
 }
 
 describe("Herma v6.8 + v6.9 Thick-Path Plateau Grid, Schema Coach, Meta FAIR Embeddings, Zero-404/409 UX & Adaptive Co-Leasing", () => {
-  it("writes v6_10 schema sentinel into herma_runtime_kv (k, v, expires_at_ms) and serves /health & /q/health", async () => {
+  it("writes v6_11 schema sentinel into herma_runtime_kv (k, v, expires_at_ms) and serves /health & /q/health", async () => {
     const h1 = await callGateway("/health");
     expect(h1.status).toBe(200);
     const h1Json = await h1.json();
@@ -27,7 +27,7 @@ describe("Herma v6.8 + v6.9 Thick-Path Plateau Grid, Schema Coach, Meta FAIR Emb
     const h2Json = await h2.json();
     expect(h2Json.ok).toBe(true);
     expect(h2Json.schema).toBe("herma.priority_work_gateway.grid.v6_8");
-    expect(h2Json.schema_sentinel).toBe("v6_10");
+    expect(h2Json.schema_sentinel).toBe("v6_11");
     expect(h2Json.max_chunked_payload_bytes).toBe(16777216);
 
     const kvRow = await env.HERMA_DB.prepare(
@@ -35,7 +35,7 @@ describe("Herma v6.8 + v6.9 Thick-Path Plateau Grid, Schema Coach, Meta FAIR Emb
     ).first();
     expect(kvRow).toBeTruthy();
     expect(kvRow.k).toBe("gateway_schema_version");
-    expect(kvRow.v).toBe("v6_10");
+    expect(kvRow.v).toBe("v6_11");
     expect(Number(kvRow.expires_at_ms)).toBe(0);
   });
 

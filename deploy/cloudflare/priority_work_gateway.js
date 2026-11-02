@@ -28,6 +28,7 @@ import { isAdminRequest } from "./herma_engine.js";
 import {
   buildPromptCatalog,
   hydratePromptPlaceholders,
+  injectPromptToolkitGuidanceBlock,
   renderPromptsPageHtml,
   renderPromptsPageJs,
 } from "./prompts_page.js";
@@ -128,6 +129,24 @@ import {
   recordWorkerAndSetupEfficiencyOutcome,
   runV610TaxonomyAndModelBackfill,
 } from "./taxonomy_affinity_and_proactive_feedback.js";
+import {
+  applyBoundedReprioritizationPlan,
+  autoEnqueueIndexEnrichAndPeerReviewVerbs,
+  buildAggregateFleetReviewDigest,
+  buildWorkerToolkitGuidanceForClaim,
+  ensureCadenceAggregateReviewVerbs,
+  ensureWorkerKitsAndMutationGridSchema,
+  fetchClientIndexMetadata,
+  handleExperimentsLeaderboardRequest,
+  handleReprioritizeRequest,
+  handleWorkerKitsRequest,
+  recordArmFeedbackSignal,
+  recordArmSearchSignal,
+  recordArmSubmitOutcome,
+  renderPromptToolkitGuidanceBlock,
+  selectOrMutatePromptKitArm,
+  validateAndPersistClientIndexMetadata,
+} from "./worker_kits_and_mutation_grid.js";
 
 export const QUEUE_GATEWAY_GRID = Object.freeze({
   schema_id: "herma.priority_work_gateway.grid.v6_8",
@@ -140,7 +159,7 @@ export const QUEUE_GATEWAY_GRID = Object.freeze({
   agent_max_len: 48,
   worker_uuid_max_len: 64,
   worker_uuid_hex_bytes: 4,
-  task_id_max_len: 64,
+  task_id_max_len: 160,
   title_max_len: 180,
   prompt_max_len: 4000,
   payload_max_len: 262144,
@@ -185,6 +204,7 @@ export const QUEUE_GATEWAY_GRID = Object.freeze({
   max_search_limit: 50,
   default_search_limit: 10,
   candidate_pool_cap: 60,
+  sidecar_batch_stmt_limit: 1024,
   symspell_max_words_per_doc: 32,
   lease_ttl_ms: 900000,
   min_custom_lease_ms: 1000,
@@ -301,6 +321,11 @@ export const QUEUE_GATEWAY_GRID = Object.freeze({
   http_payload_too_large: 413,
   http_too_many_requests: 429,
   http_insufficient_storage: 507,
+  free_access_window_end_iso: "2026-12-31T23:59:59-05:00",
+  free_access_unauth_rpm_cap: 120,
+  free_access_rpm_window_ms: 60000,
+  free_access_memo_max_entries: 4096,
+  paid_muse_daily_calls_cap: 50,
 });
 
 const HISTORICAL_OBJECT_KEY_ALIASES = Object.freeze([
@@ -766,9 +791,18 @@ async function isServerInfraAuthorized(request, env, db = null) {
 async function ensureColumnsExist(db, tableName, columnSpecs) {
   const info = await db.prepare(`PRAGMA table_info(${tableName})`).all();
   const existing = new Set((info?.results || []).map((r) => String(r.name)));
+  const alterStmts = [];
   for (const [colName, colDef] of columnSpecs) {
     if (!existing.has(colName)) {
-      await db.prepare(`ALTER TABLE ${tableName} ADD COLUMN ${colName} ${colDef}`).run();
+      alterStmts.push(db.prepare(`ALTER TABLE ${tableName} ADD COLUMN ${colName} ${colDef}`));
+    }
+  }
+  if (!alterStmts.length) return;
+  if (typeof db.batch === "function") {
+    await db.batch(alterStmts);
+  } else {
+    for (const stmt of alterStmts) {
+      await stmt.run();
     }
   }
 }
@@ -1110,7 +1144,7 @@ async function indexSidecarDocument(
       }
     }
 
-    const batchChunk = QUEUE_GATEWAY_GRID.candidate_pool_cap;
+    const batchChunk = QUEUE_GATEWAY_GRID.sidecar_batch_stmt_limit;
     for (let offset = 0; offset < stmts.length; offset += batchChunk) {
       await db.batch(stmts.slice(offset, offset + batchChunk));
     }
@@ -1129,6 +1163,7 @@ async function indexSidecarDocument(
 }
 
 const INITIALIZED_GATEWAY_DBS = new WeakSet();
+const INFLIGHT_GATEWAY_SCHEMA_BY_DB = new WeakMap();
 let ISOLATE_SCHEMA_READY = false;
 let LAST_PRODUCTION_DB_REF = null;
 
@@ -1150,16 +1185,248 @@ function markGatewayDbSchemaV69Ready(db) {
       configurable: true,
       enumerable: false,
     });
+    Object.defineProperty(db, "__hermaSchemaV611Ready", {
+      value: true,
+      configurable: true,
+      enumerable: false,
+    });
   } catch {
-    // frozen mock DB object in synthetic unit test
+    // frozen mock DB object in unit test
   }
 }
 
-export async function ensurePriorityGatewaySchema(db, { isLiveRuntime = false } = {}) {
+async function seedV611TaskObjectNoun(db, env, publicUrl, nounSpec) {
+  if (!nounSpec?.object_key) return;
+  const objKey = String(nounSpec.object_key).trim();
+  const existing = await db
+    .prepare("SELECT id, sha256_hash FROM herma_task_objects WHERE object_key = ? LIMIT 1")
+    .bind(objKey)
+    .first();
+  if (existing?.id) return;
+
+  const seedNow = new Date().toISOString();
+  const payloadJson = JSON.stringify(nounSpec.payload || {});
+  const payloadSha = await sha256HexGateway(payloadJson);
+  const payloadBytes = new TextEncoder().encode(payloadJson).byteLength;
+  const tax = enrichTaxonomyRecord({
+    ...nounSpec,
+    entityKind: "object",
+    labels: Array.isArray(nounSpec.labels) ? nounSpec.labels : [nounSpec.category || "portable_agent_kit", "seed_v6_11"],
+  });
+  const hints = normalizeSearchHints(nounSpec.search_hints || tax.search_hints, {
+    ...nounSpec,
+    intent_bucket: nounSpec.intent_bucket || tax.intent_bucket,
+    opt_goal: nounSpec.opt_goal || tax.opt_goal,
+    target_env: nounSpec.target_env || tax.target_env,
+    prog_lang: nounSpec.prog_lang || tax.prog_lang,
+    deliverable_kind: nounSpec.deliverable_kind || tax.deliverable_kind,
+  });
+  const shObj = nounSpec.search_hints || tax.search_hints || {};
+  const hintTerms = [
+    shObj.intent_signature || "",
+    ...(Array.isArray(shObj.search_keywords) ? shObj.search_keywords : []),
+    ...(Array.isArray(shObj.search_phrases) ? shObj.search_phrases : []),
+    ...(Array.isArray(shObj.semantic_synonyms) ? shObj.semantic_synonyms : []),
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const idx = await indexSidecarDocument(db, {
+    title: objKey,
+    bodyText: `${nounSpec.summary || ""} ${hintTerms}`,
+    category: nounSpec.category || "portable_agent_kit",
+    labels: tax.labels,
+    inputContract: "json_object",
+    outputContract: nounSpec.category || "portable_agent_kit",
+    searchHints: nounSpec.search_hints || tax.search_hints,
+  });
+
+  if (env?.TESSERA?.fetch) {
+    try {
+      const tesseraHealth = await probeTesseraEmbodiment(env);
+      if (tesseraHealth?.available) {
+        await mirrorPublicArtifactToTesseraAnonymous(
+          env,
+          "herma-seed-v6-11",
+          objKey,
+          {
+            object_key: objKey,
+            category: nounSpec.category || "portable_agent_kit",
+            summary: nounSpec.summary || "",
+            sha256_hash: payloadSha,
+          },
+          db
+        );
+      }
+    } catch {
+      // keep D1 seed non-blocking if service binding is offline in unit test
+    }
+  }
+
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO herma_task_objects
+       (object_key, requested_object_key, version_num, category, visibility, producer_agent, source_task_id, summary, payload_json,
+        simhash64_hex, sha256_hash, tessera_synced, created_at,
+        partition_slot, labels_json, input_shape_hash, output_shape_hash, lsh_band_0, lsh_band_1,
+        quality_milli, eval_count, content_sha256, worker_uuid, generation_depth,
+        intent_bucket, opt_goal, target_env, prog_lang, locale_country, deliverable_kind, search_hints_json,
+        chunk_count, total_payload_bytes, verification_verdict, audience_reach_milli, step_mode, reuse_mode)
+       VALUES (?, ?, 1, ?, 'public_commons', 'herma-seed-v6-11', 'seed_v6_11', ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'w_system_seed_v6_11', 0, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'VERIFIED_SEED', 920, ?, ?)`
+    )
+    .bind(
+      objKey,
+      objKey,
+      nounSpec.category || "portable_agent_kit",
+      nounSpec.summary || objKey,
+      payloadJson,
+      idx.simhash64_hex,
+      payloadSha,
+      seedNow,
+      idx.partition_slot,
+      JSON.stringify(tax.labels),
+      idx.input_shape_hash,
+      idx.output_shape_hash,
+      idx.lsh_band_0,
+      idx.lsh_band_1,
+      QUEUE_GATEWAY_GRID.verified_seed_quality_milli,
+      idx.content_sha256,
+      hints.intent_bucket || tax.intent_bucket,
+      hints.opt_goal || tax.opt_goal,
+      hints.target_env || tax.target_env,
+      hints.prog_lang || tax.prog_lang,
+      hints.locale_country || tax.locale_country || "",
+      hints.deliverable_kind || tax.deliverable_kind || "portable_agent_kit",
+      hints.serialized || tax.search_hints_json,
+      payloadBytes,
+      nounSpec.step_mode || tax.step_mode || "atomic_build_step",
+      nounSpec.reuse_mode || tax.reuse_mode || "deterministic_code_bypass"
+    )
+    .run();
+}
+
+async function seedV611VerbIfMissing(db, verbSpec) {
+  if (!verbSpec?.task_id) return;
+  const taskId = String(verbSpec.task_id).trim().slice(0, QUEUE_GATEWAY_GRID.task_id_max_len);
+  const present = await db
+    .prepare("SELECT 1 AS ok FROM herma_durable_queue WHERE task_id = ? LIMIT 1")
+    .bind(taskId)
+    .first();
+  if (present) return;
+
+  const nowIso = new Date().toISOString();
+  const tier = verbSpec.tier === "ngo_priority" ? "ngo_priority" : "public_general";
+  const vis = tier === "ngo_priority" ? "public_ngo" : "public_commons";
+  const prio = Number(verbSpec.priority || QUEUE_GATEWAY_GRID.priority_eval_default);
+  const category = String(verbSpec.category || "eval_and_rank");
+  const verbKind = String(verbSpec.verb_kind || "eval_and_rank");
+  const stepMode = String(verbSpec.step_mode || "atomic_verification_step");
+  const title = String(verbSpec.title || taskId).slice(0, QUEUE_GATEWAY_GRID.title_max_len);
+  const prompt = String(verbSpec.prompt || title).slice(0, QUEUE_GATEWAY_GRID.prompt_max_len);
+  const labels = Array.isArray(verbSpec.labels) ? verbSpec.labels : [verbKind, category];
+  const producerAgent = cleanAgentId(verbSpec.producer_agent || "herma-seed-v6-11");
+  const producerWorkerUuid = cleanWorkerUuid(verbSpec.producer_worker_uuid || "");
+  const parentTaskId = verbSpec.parent_task_id ? String(verbSpec.parent_task_id).slice(0, QUEUE_GATEWAY_GRID.task_id_max_len) : null;
+
+  const vTax = enrichTaxonomyRecord({
+    task_id: taskId,
+    tier,
+    category,
+    verb_kind: verbKind,
+    step_mode: stepMode,
+    intent_bucket: verbSpec.intent_bucket || "",
+    title,
+    prompt,
+    labels,
+    required_capabilities: Array.isArray(verbSpec.required_capabilities) ? verbSpec.required_capabilities : [],
+    preferred_worker_setup: verbSpec.preferred_worker_setup || null,
+  });
+  let indexBodyText = prompt;
+  if (prompt.startsWith("{")) {
+    try {
+      const parsedPrompt = JSON.parse(prompt);
+      indexBodyText = String(parsedPrompt.instruction || title);
+    } catch {
+      indexBodyText = title;
+    }
+  }
+  const idx = await indexSidecarDocument(db, {
+    title,
+    bodyText: indexBodyText,
+    category,
+    labels: vTax.labels,
+    inputContract: "json_object",
+    outputContract: "verified_task_object",
+    searchHints: vTax.search_hints,
+  });
+  const compMilli = estimateTaskComplexityMilli({
+    verb_kind: verbKind,
+    title,
+    prompt,
+    opt_goal: vTax.opt_goal,
+    target_env: vTax.target_env,
+    prog_lang: vTax.prog_lang,
+    deliverable_kind: vTax.deliverable_kind,
+  });
+
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO herma_durable_queue
+       (task_id, tier, visibility, priority, state, title, prompt, input_contract, output_contract,
+        parent_task_id, simhash64_hex, producer_agent, producer_worker_uuid, created_at, updated_at,
+        partition_slot, category, labels_json, input_shape_hash, output_shape_hash,
+        lsh_band_0, lsh_band_1, quality_milli, content_sha256, verb_kind, generation_depth,
+        intent_bucket, opt_goal, target_env, prog_lang, deliverable_kind, search_hints_json,
+        required_capabilities_json, complexity_milli, min_capability_milli, step_mode)
+       VALUES (?, ?, ?, ?, 'ready', ?, ?, 'json_object', 'verified_task_object',
+               ?, ?, ?, ?, ?, ?,
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0,
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      taskId,
+      tier,
+      vis,
+      prio,
+      title,
+      prompt,
+      parentTaskId,
+      idx.simhash64_hex,
+      producerAgent,
+      producerWorkerUuid,
+      nowIso,
+      nowIso,
+      idx.partition_slot,
+      category,
+      JSON.stringify(vTax.labels),
+      idx.input_shape_hash,
+      idx.output_shape_hash,
+      idx.lsh_band_0,
+      idx.lsh_band_1,
+      QUEUE_GATEWAY_GRID.verified_seed_quality_milli,
+      idx.content_sha256,
+      verbKind,
+      vTax.intent_bucket,
+      vTax.opt_goal,
+      vTax.target_env,
+      vTax.prog_lang,
+      vTax.deliverable_kind,
+      vTax.search_hints_json,
+      vTax.required_capabilities_json,
+      compMilli,
+      QUEUE_GATEWAY_GRID.capability_min_floor_milli,
+      stepMode
+    )
+    .run();
+}
+
+export async function ensurePriorityGatewaySchema(
+  db,
+  { isLiveRuntime = false, env = null, publicUrl = "https://herma.ta-amps.workers.dev" } = {}
+) {
   if (!db || typeof db !== "object") {
     return;
   }
-  if (db.__hermaSchemaV610Ready || INITIALIZED_GATEWAY_DBS.has(db)) {
+  if (db.__hermaSchemaV611Ready || INITIALIZED_GATEWAY_DBS.has(db)) {
     markGatewayDbSchemaV69Ready(db);
     return;
   }
@@ -1167,12 +1434,30 @@ export async function ensurePriorityGatewaySchema(db, { isLiveRuntime = false } 
     markGatewayDbSchemaV69Ready(db);
     return;
   }
+  const existingInit = INFLIGHT_GATEWAY_SCHEMA_BY_DB.get(db);
+  if (existingInit) {
+    await existingInit;
+    return;
+  }
+  const initPromise = runPriorityGatewaySchemaInitOnce(db, { isLiveRuntime, env, publicUrl });
+  INFLIGHT_GATEWAY_SCHEMA_BY_DB.set(db, initPromise);
+  try {
+    await initPromise;
+  } finally {
+    INFLIGHT_GATEWAY_SCHEMA_BY_DB.delete(db);
+  }
+}
+
+async function runPriorityGatewaySchemaInitOnce(
+  db,
+  { isLiveRuntime = false, env = null, publicUrl = "https://herma.ta-amps.workers.dev" } = {}
+) {
   if (typeof db.batch === "function" && typeof db.prepare === "function") {
     try {
       const sentinelRow = await db
         .prepare("SELECT v FROM herma_runtime_kv WHERE k = 'gateway_schema_version' LIMIT 1")
         .first();
-      if (sentinelRow && sentinelRow.v === "v6_10") {
+      if (sentinelRow && sentinelRow.v === "v6_11") {
         ISOLATE_SCHEMA_READY = true;
         if (isLiveRuntime) {
           LAST_PRODUCTION_DB_REF = db;
@@ -1184,8 +1469,19 @@ export async function ensurePriorityGatewaySchema(db, { isLiveRuntime = false } 
       // Brand-new or unmigrated DB without herma_runtime_kv yet -- run full idempotent schema setup once
     }
   }
-  await db
-    .prepare(
+  const runBatchOrSeq = async (stmts) => {
+    if (!stmts.length) return;
+    if (typeof db.batch === "function") {
+      await db.batch(stmts);
+    } else {
+      for (const s of stmts) {
+        await s.run();
+      }
+    }
+  };
+
+  await runBatchOrSeq([
+    db.prepare(
       `CREATE TABLE IF NOT EXISTS herma_durable_queue (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         task_id TEXT NOT NULL UNIQUE,
@@ -1208,12 +1504,220 @@ export async function ensurePriorityGatewaySchema(db, { isLiveRuntime = false } 
         result_summary TEXT,
         receipt_hash TEXT,
         created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        partition_slot INTEGER NOT NULL DEFAULT 0,
+        category TEXT NOT NULL DEFAULT 'general_verb',
+        labels_json TEXT NOT NULL DEFAULT '[]',
+        input_shape_hash TEXT NOT NULL DEFAULT '',
+        output_shape_hash TEXT NOT NULL DEFAULT '',
+        lsh_band_0 TEXT NOT NULL DEFAULT '',
+        lsh_band_1 TEXT NOT NULL DEFAULT '',
+        quality_milli INTEGER NOT NULL DEFAULT 750,
+        content_sha256 TEXT NOT NULL DEFAULT '',
+        verb_kind TEXT NOT NULL DEFAULT 'general_verb',
+        owner_worker_uuid TEXT NOT NULL DEFAULT '',
+        producer_worker_uuid TEXT NOT NULL DEFAULT '',
+        generation_depth INTEGER NOT NULL DEFAULT 0,
+        mutation_operator TEXT NOT NULL DEFAULT '',
+        actual_importance_milli INTEGER NOT NULL DEFAULT 750,
+        potential_importance_milli INTEGER NOT NULL DEFAULT 800,
+        novelty_milli INTEGER NOT NULL DEFAULT 750,
+        eval_count INTEGER NOT NULL DEFAULT 0,
+        convergence_flags INTEGER NOT NULL DEFAULT 0,
+        intent_bucket TEXT NOT NULL DEFAULT '',
+        opt_goal TEXT NOT NULL DEFAULT '',
+        target_env TEXT NOT NULL DEFAULT '',
+        prog_lang TEXT NOT NULL DEFAULT '',
+        locale_country TEXT NOT NULL DEFAULT '',
+        deliverable_kind TEXT NOT NULL DEFAULT '',
+        search_hints_json TEXT NOT NULL DEFAULT '{}',
+        complexity_milli INTEGER NOT NULL DEFAULT 500,
+        min_capability_milli INTEGER NOT NULL DEFAULT 200,
+        required_capabilities_json TEXT NOT NULL DEFAULT '[]',
+        blocked_by_task_id TEXT NOT NULL DEFAULT '',
+        expired_lease_count INTEGER NOT NULL DEFAULT 0,
+        last_expired_by TEXT NOT NULL DEFAULT '',
+        step_mode TEXT NOT NULL DEFAULT '',
+        is_diagnostic_probe INTEGER NOT NULL DEFAULT 0,
+        tessera_mirror_receipt_hash TEXT NOT NULL DEFAULT '',
+        leased_worker_uuid TEXT NOT NULL DEFAULT ''
+      )`
+    ),
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS herma_task_objects (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        object_key TEXT NOT NULL,
+        category TEXT NOT NULL,
+        visibility TEXT NOT NULL,
+        producer_agent TEXT NOT NULL,
+        source_task_id TEXT,
+        summary TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        simhash64_hex TEXT NOT NULL,
+        sha256_hash TEXT NOT NULL,
+        tessera_synced INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        partition_slot INTEGER NOT NULL DEFAULT 0,
+        labels_json TEXT NOT NULL DEFAULT '[]',
+        input_shape_hash TEXT NOT NULL DEFAULT '',
+        output_shape_hash TEXT NOT NULL DEFAULT '',
+        lsh_band_0 TEXT NOT NULL DEFAULT '',
+        lsh_band_1 TEXT NOT NULL DEFAULT '',
+        quality_milli INTEGER NOT NULL DEFAULT 800,
+        is_tombstoned INTEGER NOT NULL DEFAULT 0,
+        content_sha256 TEXT NOT NULL DEFAULT '',
+        worker_uuid TEXT NOT NULL DEFAULT '',
+        generation_depth INTEGER NOT NULL DEFAULT 0,
+        mutation_operator TEXT NOT NULL DEFAULT '',
+        actual_importance_milli INTEGER NOT NULL DEFAULT 800,
+        potential_importance_milli INTEGER NOT NULL DEFAULT 820,
+        novelty_milli INTEGER NOT NULL DEFAULT 780,
+        eval_count INTEGER NOT NULL DEFAULT 0,
+        convergence_flags INTEGER NOT NULL DEFAULT 0,
+        intent_bucket TEXT NOT NULL DEFAULT '',
+        opt_goal TEXT NOT NULL DEFAULT '',
+        target_env TEXT NOT NULL DEFAULT '',
+        prog_lang TEXT NOT NULL DEFAULT '',
+        locale_country TEXT NOT NULL DEFAULT '',
+        deliverable_kind TEXT NOT NULL DEFAULT '',
+        search_hints_json TEXT NOT NULL DEFAULT '{}',
+        chunk_count INTEGER NOT NULL DEFAULT 0,
+        total_payload_bytes INTEGER NOT NULL DEFAULT 0,
+        step_mode TEXT NOT NULL DEFAULT '',
+        reuse_mode TEXT NOT NULL DEFAULT '',
+        version_num INTEGER NOT NULL DEFAULT 1,
+        requested_object_key TEXT NOT NULL DEFAULT '',
+        verification_verdict TEXT NOT NULL DEFAULT 'UNREVIEWED'
+      )`
+    ),
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS herma_object_chunks (
+        object_id INTEGER NOT NULL,
+        chunk_idx INTEGER NOT NULL,
+        chunk_text TEXT NOT NULL,
+        PRIMARY KEY (object_id, chunk_idx)
+      )`
+    ),
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS herma_worker_registry (
+        worker_uuid TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        persona_id TEXT NOT NULL,
+        persona_label TEXT NOT NULL,
+        specialty_lens TEXT NOT NULL,
+        transport_mode TEXT NOT NULL DEFAULT 'auto',
+        schedule_cadence_min INTEGER NOT NULL DEFAULT 45,
+        calibration_json TEXT NOT NULL DEFAULT '{}',
+        iteration_count INTEGER NOT NULL DEFAULT 0,
+        ngo_completed INTEGER NOT NULL DEFAULT 0,
+        eval_completed INTEGER NOT NULL DEFAULT 0,
+        own_completed INTEGER NOT NULL DEFAULT 0,
+        last_task_id TEXT,
+        last_beat_slot TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        harness_tier TEXT NOT NULL DEFAULT 'tier_2_sandboxed_chat_worker',
+        capability_milli INTEGER NOT NULL DEFAULT 620,
+        model_hint TEXT NOT NULL DEFAULT '',
+        completed_complexity_ema_milli INTEGER NOT NULL DEFAULT 500,
+        mean_artifact_bytes INTEGER NOT NULL DEFAULT 0,
+        timeout_count INTEGER NOT NULL DEFAULT 0,
+        worker_token_sha256 TEXT NOT NULL DEFAULT '',
+        is_diagnostic_probe INTEGER NOT NULL DEFAULT 0
+      )`
+    ),
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS herma_gateway_trace_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        trace_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        http_method TEXT NOT NULL,
+        path TEXT NOT NULL,
+        http_status INTEGER NOT NULL,
+        error_code TEXT NOT NULL DEFAULT '',
+        agent_id TEXT NOT NULL DEFAULT '',
+        worker_uuid TEXT NOT NULL DEFAULT '',
+        harness_tier TEXT NOT NULL DEFAULT '',
+        cf_colo TEXT NOT NULL DEFAULT '',
+        user_agent TEXT NOT NULL DEFAULT '',
+        task_id TEXT NOT NULL DEFAULT '',
+        request_bytes INTEGER NOT NULL DEFAULT 0,
+        latency_ms INTEGER NOT NULL DEFAULT 0,
+        detail_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+      )`
+    ),
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS herma_routing_stats (
+        harness_tier TEXT NOT NULL,
+        complexity_bucket TEXT NOT NULL,
+        verb_kind TEXT NOT NULL,
+        dispatch_count INTEGER NOT NULL DEFAULT 0,
+        success_count INTEGER NOT NULL DEFAULT 0,
+        timeout_count INTEGER NOT NULL DEFAULT 0,
+        mean_quality_milli INTEGER NOT NULL DEFAULT 750,
+        mean_novelty_milli INTEGER NOT NULL DEFAULT 750,
+        mean_latency_ms INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (harness_tier, complexity_bucket, verb_kind)
+      )`
+    ),
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS herma_evaluations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        evaluator_worker_uuid TEXT NOT NULL,
+        evaluator_agent_id TEXT NOT NULL,
+        target_kind TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        actual_importance INTEGER NOT NULL,
+        potential_importance INTEGER NOT NULL,
+        estimated_priority INTEGER NOT NULL,
+        novelty_milli INTEGER NOT NULL,
+        convergence_flag INTEGER NOT NULL DEFAULT 0,
+        rationale TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        verification_verdict TEXT NOT NULL DEFAULT 'UNREVIEWED'
+      )`
+    ),
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS herma_search_sidecar (
+        content_sha256 TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        canonical_keywords TEXT NOT NULL,
+        semantic_aliases TEXT NOT NULL,
+        summary_scent TEXT NOT NULL,
+        simhash64_hex TEXT NOT NULL,
+        embed_sketch64_hex TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )`
-    )
-    .run();
+    ),
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS herma_search_postings (
+        term_kind TEXT NOT NULL,
+        term TEXT NOT NULL,
+        content_sha256 TEXT NOT NULL,
+        weight_milli INTEGER NOT NULL,
+        PRIMARY KEY (term_kind, term, content_sha256)
+      )`
+    ),
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS herma_lsh_bands (
+        band_key TEXT NOT NULL,
+        content_sha256 TEXT NOT NULL,
+        PRIMARY KEY (band_key, content_sha256)
+      )`
+    ),
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS herma_symspell_deletes (
+        delete_key TEXT NOT NULL,
+        canonical_word TEXT NOT NULL,
+        doc_freq INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (delete_key, canonical_word)
+      )`
+    ),
+  ]);
 
-  // Non-destructive column evolution for partitioned routing, I/O shapes, LSH bands, sidecar FK, v5 3-beat & v6 facet axes
+  // Non-destructive column evolution for existing production tables created before v6.11
   await ensureColumnsExist(db, "herma_durable_queue", [
     ["partition_slot", "INTEGER NOT NULL DEFAULT 0"],
     ["category", "TEXT NOT NULL DEFAULT 'general_verb'"],
@@ -1248,64 +1752,10 @@ export async function ensurePriorityGatewaySchema(db, { isLiveRuntime = false } 
     ["expired_lease_count", "INTEGER NOT NULL DEFAULT 0"],
     ["last_expired_by", "TEXT NOT NULL DEFAULT ''"],
     ["step_mode", "TEXT NOT NULL DEFAULT ''"],
+    ["is_diagnostic_probe", "INTEGER NOT NULL DEFAULT 0"],
+    ["tessera_mirror_receipt_hash", "TEXT NOT NULL DEFAULT ''"],
+    ["leased_worker_uuid", "TEXT NOT NULL DEFAULT ''"],
   ]);
-
-  await db
-    .prepare(
-      `CREATE INDEX IF NOT EXISTS idx_hdq_claim
-       ON herma_durable_queue (state, visibility, priority DESC, id ASC)`
-    )
-    .run();
-  await db
-    .prepare(
-      `CREATE INDEX IF NOT EXISTS idx_hdq_affinity
-       ON herma_durable_queue (state, visibility, lsh_band_0, priority DESC)`
-    )
-    .run();
-  await db
-    .prepare(
-      `CREATE INDEX IF NOT EXISTS idx_hdq_owner_worker
-       ON herma_durable_queue (state, owner_worker_uuid, priority DESC, id ASC)`
-    )
-    .run();
-  await db
-    .prepare(
-      `CREATE INDEX IF NOT EXISTS idx_hdq_verb_kind
-       ON herma_durable_queue (state, verb_kind, priority DESC, id ASC)`
-    )
-    .run();
-  await db
-    .prepare(
-      `CREATE INDEX IF NOT EXISTS idx_hdq_content_sha
-       ON herma_durable_queue (content_sha256)`
-    )
-    .run();
-  await db
-    .prepare(
-      `CREATE INDEX IF NOT EXISTS idx_hdq_receipt
-       ON herma_durable_queue (receipt_hash)`
-    )
-    .run();
-
-  await db
-    .prepare(
-      `CREATE TABLE IF NOT EXISTS herma_task_objects (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        object_key TEXT NOT NULL,
-        category TEXT NOT NULL,
-        visibility TEXT NOT NULL,
-        producer_agent TEXT NOT NULL,
-        source_task_id TEXT,
-        summary TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        simhash64_hex TEXT NOT NULL,
-        sha256_hash TEXT NOT NULL,
-        tessera_synced INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL
-      )`
-    )
-    .run();
-
   await ensureColumnsExist(db, "herma_task_objects", [
     ["partition_slot", "INTEGER NOT NULL DEFAULT 0"],
     ["labels_json", "TEXT NOT NULL DEFAULT '[]'"],
@@ -1335,48 +1785,10 @@ export async function ensurePriorityGatewaySchema(db, { isLiveRuntime = false } 
     ["total_payload_bytes", "INTEGER NOT NULL DEFAULT 0"],
     ["step_mode", "TEXT NOT NULL DEFAULT ''"],
     ["reuse_mode", "TEXT NOT NULL DEFAULT ''"],
+    ["version_num", "INTEGER NOT NULL DEFAULT 1"],
+    ["requested_object_key", "TEXT NOT NULL DEFAULT ''"],
+    ["verification_verdict", "TEXT NOT NULL DEFAULT 'UNREVIEWED'"],
   ]);
-
-  await db
-    .prepare(
-      `CREATE TABLE IF NOT EXISTS herma_object_chunks (
-        object_id INTEGER NOT NULL,
-        chunk_idx INTEGER NOT NULL,
-        chunk_text TEXT NOT NULL,
-        PRIMARY KEY (object_id, chunk_idx)
-      )`
-    )
-    .run();
-  await db
-    .prepare(
-      `CREATE INDEX IF NOT EXISTS idx_hto_key
-       ON herma_task_objects (object_key, id DESC)`
-    )
-    .run();
-
-  await db
-    .prepare(
-      `CREATE TABLE IF NOT EXISTS herma_worker_registry (
-        worker_uuid TEXT PRIMARY KEY,
-        agent_id TEXT NOT NULL,
-        persona_id TEXT NOT NULL,
-        persona_label TEXT NOT NULL,
-        specialty_lens TEXT NOT NULL,
-        transport_mode TEXT NOT NULL DEFAULT 'auto',
-        schedule_cadence_min INTEGER NOT NULL DEFAULT 45,
-        calibration_json TEXT NOT NULL DEFAULT '{}',
-        iteration_count INTEGER NOT NULL DEFAULT 0,
-        ngo_completed INTEGER NOT NULL DEFAULT 0,
-        eval_completed INTEGER NOT NULL DEFAULT 0,
-        own_completed INTEGER NOT NULL DEFAULT 0,
-        last_task_id TEXT,
-        last_beat_slot TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )`
-    )
-    .run();
-
   await ensureColumnsExist(db, "herma_worker_registry", [
     ["harness_tier", "TEXT NOT NULL DEFAULT 'tier_2_sandboxed_chat_worker'"],
     ["capability_milli", "INTEGER NOT NULL DEFAULT 620"],
@@ -1384,142 +1796,26 @@ export async function ensurePriorityGatewaySchema(db, { isLiveRuntime = false } 
     ["completed_complexity_ema_milli", "INTEGER NOT NULL DEFAULT 500"],
     ["mean_artifact_bytes", "INTEGER NOT NULL DEFAULT 0"],
     ["timeout_count", "INTEGER NOT NULL DEFAULT 0"],
+    ["worker_token_sha256", "TEXT NOT NULL DEFAULT ''"],
+    ["is_diagnostic_probe", "INTEGER NOT NULL DEFAULT 0"],
+  ]);
+  await ensureColumnsExist(db, "herma_evaluations", [
+    ["verification_verdict", "TEXT NOT NULL DEFAULT 'UNREVIEWED'"],
   ]);
 
-  await db
-    .prepare(
-      `CREATE TABLE IF NOT EXISTS herma_gateway_trace_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        trace_id TEXT NOT NULL,
-        action TEXT NOT NULL,
-        http_method TEXT NOT NULL,
-        path TEXT NOT NULL,
-        http_status INTEGER NOT NULL,
-        error_code TEXT NOT NULL DEFAULT '',
-        agent_id TEXT NOT NULL DEFAULT '',
-        worker_uuid TEXT NOT NULL DEFAULT '',
-        harness_tier TEXT NOT NULL DEFAULT '',
-        cf_colo TEXT NOT NULL DEFAULT '',
-        user_agent TEXT NOT NULL DEFAULT '',
-        task_id TEXT NOT NULL DEFAULT '',
-        request_bytes INTEGER NOT NULL DEFAULT 0,
-        latency_ms INTEGER NOT NULL DEFAULT 0,
-        detail_json TEXT NOT NULL DEFAULT '{}',
-        created_at TEXT NOT NULL
-      )`
-    )
-    .run();
-  await db
-    .prepare(
-      `CREATE INDEX IF NOT EXISTS idx_hgtl_action_status
-       ON herma_gateway_trace_log (action, http_status, id DESC)`
-    )
-    .run();
-
-  await db
-    .prepare(
-      `CREATE TABLE IF NOT EXISTS herma_routing_stats (
-        harness_tier TEXT NOT NULL,
-        complexity_bucket TEXT NOT NULL,
-        verb_kind TEXT NOT NULL,
-        dispatch_count INTEGER NOT NULL DEFAULT 0,
-        success_count INTEGER NOT NULL DEFAULT 0,
-        timeout_count INTEGER NOT NULL DEFAULT 0,
-        mean_quality_milli INTEGER NOT NULL DEFAULT 750,
-        mean_novelty_milli INTEGER NOT NULL DEFAULT 750,
-        mean_latency_ms INTEGER NOT NULL DEFAULT 0,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (harness_tier, complexity_bucket, verb_kind)
-      )`
-    )
-    .run();
-
-  await db
-    .prepare(
-      `CREATE TABLE IF NOT EXISTS herma_evaluations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        evaluator_worker_uuid TEXT NOT NULL,
-        evaluator_agent_id TEXT NOT NULL,
-        target_kind TEXT NOT NULL,
-        target_id TEXT NOT NULL,
-        actual_importance INTEGER NOT NULL,
-        potential_importance INTEGER NOT NULL,
-        estimated_priority INTEGER NOT NULL,
-        novelty_milli INTEGER NOT NULL,
-        convergence_flag INTEGER NOT NULL DEFAULT 0,
-        rationale TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      )`
-    )
-    .run();
-  await db
-    .prepare(
-      `CREATE INDEX IF NOT EXISTS idx_heval_target
-       ON herma_evaluations (target_kind, target_id, id DESC)`
-    )
-    .run();
-
-  await db
-    .prepare(
-      `CREATE INDEX IF NOT EXISTS idx_hto_vis
-       ON herma_task_objects (visibility, id DESC)`
-    )
-    .run();
-  await db
-    .prepare(
-      `CREATE INDEX IF NOT EXISTS idx_hto_content_sha
-       ON herma_task_objects (content_sha256)`
-    )
-    .run();
-
-  // Export-safe D1 B-tree Search Sidecar Tables (no VIRTUAL TABLE USING fts5 so `wrangler d1 export` always succeeds)
-  await db
-    .prepare(
-      `CREATE TABLE IF NOT EXISTS herma_search_sidecar (
-        content_sha256 TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        canonical_keywords TEXT NOT NULL,
-        semantic_aliases TEXT NOT NULL,
-        summary_scent TEXT NOT NULL,
-        simhash64_hex TEXT NOT NULL,
-        embed_sketch64_hex TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )`
-    )
-    .run();
-
-  await db
-    .prepare(
-      `CREATE TABLE IF NOT EXISTS herma_search_postings (
-        term_kind TEXT NOT NULL,
-        term TEXT NOT NULL,
-        content_sha256 TEXT NOT NULL,
-        weight_milli INTEGER NOT NULL,
-        PRIMARY KEY (term_kind, term, content_sha256)
-      )`
-    )
-    .run();
-
-  await db
-    .prepare(
-      `CREATE TABLE IF NOT EXISTS herma_lsh_bands (
-        band_key TEXT NOT NULL,
-        content_sha256 TEXT NOT NULL,
-        PRIMARY KEY (band_key, content_sha256)
-      )`
-    )
-    .run();
-
-  await db
-    .prepare(
-      `CREATE TABLE IF NOT EXISTS herma_symspell_deletes (
-        delete_key TEXT NOT NULL,
-        canonical_word TEXT NOT NULL,
-        doc_freq INTEGER NOT NULL DEFAULT 1,
-        PRIMARY KEY (delete_key, canonical_word)
-      )`
-    )
-    .run();
+  await runBatchOrSeq([
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_hdq_claim ON herma_durable_queue (state, visibility, priority DESC, id ASC)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_hdq_affinity ON herma_durable_queue (state, visibility, lsh_band_0, priority DESC)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_hdq_owner_worker ON herma_durable_queue (state, owner_worker_uuid, priority DESC, id ASC)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_hdq_verb_kind ON herma_durable_queue (state, verb_kind, priority DESC, id ASC)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_hdq_content_sha ON herma_durable_queue (content_sha256)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_hdq_receipt ON herma_durable_queue (receipt_hash)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_hto_key ON herma_task_objects (object_key, id DESC)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_hgtl_action_status ON herma_gateway_trace_log (action, http_status, id DESC)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_heval_target ON herma_evaluations (target_kind, target_id, id DESC)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_hto_vis ON herma_task_objects (visibility, id DESC)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_hto_content_sha ON herma_task_objects (content_sha256)`),
+  ]);
 
   const existing = await db.prepare("SELECT COUNT(*) AS cnt FROM herma_durable_queue").first();
   if (Number(existing?.cnt || 0) === 0) {
@@ -1680,28 +1976,8 @@ export async function ensurePriorityGatewaySchema(db, { isLiveRuntime = false } 
     }
   }
 
-  // v6.3 + v6.4 migrations: worker_token_sha256, leased_worker_uuid, verification_verdict, is_diagnostic_probe, tessera_mirror_receipt_hash, object versioning, idempotency, aliases
-  await ensureColumnsExist(db, "herma_durable_queue", [
-    ["is_diagnostic_probe", "INTEGER NOT NULL DEFAULT 0"],
-    ["tessera_mirror_receipt_hash", "TEXT NOT NULL DEFAULT ''"],
-    ["leased_worker_uuid", "TEXT NOT NULL DEFAULT ''"],
-  ]);
-  await ensureColumnsExist(db, "herma_task_objects", [
-    ["version_num", "INTEGER NOT NULL DEFAULT 1"],
-    ["requested_object_key", "TEXT NOT NULL DEFAULT ''"],
-    ["verification_verdict", "TEXT NOT NULL DEFAULT 'UNREVIEWED'"],
-  ]);
-  await ensureColumnsExist(db, "herma_evaluations", [
-    ["verification_verdict", "TEXT NOT NULL DEFAULT 'UNREVIEWED'"],
-  ]);
-  await ensureColumnsExist(db, "herma_worker_registry", [
-    ["worker_token_sha256", "TEXT NOT NULL DEFAULT ''"],
-    ["is_diagnostic_probe", "INTEGER NOT NULL DEFAULT 0"],
-  ]);
-  await ensureReputationAndProposalsSchema(db);
-
-  await db
-    .prepare(
+  await runBatchOrSeq([
+    db.prepare(
       `CREATE TABLE IF NOT EXISTS herma_submission_idempotency (
         idempotency_scope_key TEXT PRIMARY KEY,
         agent_id TEXT NOT NULL,
@@ -1711,24 +1987,19 @@ export async function ensurePriorityGatewaySchema(db, { isLiveRuntime = false } 
         response_json TEXT NOT NULL,
         created_at TEXT NOT NULL
       )`
-    )
-    .run();
-  await db
-    .prepare(
+    ),
+    db.prepare(
       `CREATE INDEX IF NOT EXISTS idx_hsi_agent_task
        ON herma_submission_idempotency (agent_id, task_id, created_at DESC)`
-    )
-    .run();
-
-  await db
-    .prepare(
+    ),
+    db.prepare(
       `CREATE TABLE IF NOT EXISTS herma_object_aliases (
         alias_key TEXT PRIMARY KEY,
         target_object_key TEXT NOT NULL,
         created_at TEXT NOT NULL
       )`
-    )
-    .run();
+    ),
+  ]);
 
   const aliasNow = new Date().toISOString();
   const aliasStmts = HISTORICAL_OBJECT_KEY_ALIASES.map(([aliasKey, targetKey]) =>
@@ -1736,84 +2007,74 @@ export async function ensurePriorityGatewaySchema(db, { isLiveRuntime = false } 
       .prepare("INSERT OR IGNORE INTO herma_object_aliases (alias_key, target_object_key, created_at) VALUES (?, ?, ?)")
       .bind(aliasKey, targetKey, aliasNow)
   );
-  if (aliasStmts.length) {
-    await db.batch(aliasStmts);
-  }
+  await runBatchOrSeq(aliasStmts);
 
-  // Dynamically backfill aliases for any historical fallback `_obj_` keys carrying embedded `object_id` / `object_name`
-  const fallbackRows = await db
-    .prepare(
-      `SELECT object_key, payload_json FROM herma_task_objects
-       WHERE object_key LIKE '%_obj_%' AND (payload_json LIKE '{"object_id":%' OR payload_json LIKE '{"object_name":%')
-       LIMIT ?`
-    )
-    .bind(QUEUE_GATEWAY_GRID.candidate_pool_cap)
-    .all();
-  for (const fr of fallbackRows?.results || []) {
-    try {
-      const parsed = JSON.parse(fr.payload_json || "{}");
-      const candAlias = String(parsed.object_id || parsed.object_name || "")
-        .trim()
-        .replace(/[^A-Za-z0-9_.:-]+/g, "_")
-        .slice(0, QUEUE_GATEWAY_GRID.task_id_max_len);
-      if (candAlias && candAlias !== fr.object_key) {
-        await db
-          .prepare("INSERT OR IGNORE INTO herma_object_aliases (alias_key, target_object_key, created_at) VALUES (?, ?, ?)")
-          .bind(candAlias, fr.object_key, aliasNow)
-          .run();
+  if (Number(existing?.cnt || 0) > 0) {
+    // Dynamically backfill aliases and legacy migrations only when upgrading a non-empty pre-existing DB
+    const fallbackRows = await db
+      .prepare(
+        `SELECT object_key, payload_json FROM herma_task_objects
+         WHERE object_key LIKE '%_obj_%' AND (payload_json LIKE '{"object_id":%' OR payload_json LIKE '{"object_name":%')
+         LIMIT ?`
+      )
+      .bind(QUEUE_GATEWAY_GRID.candidate_pool_cap)
+      .all();
+    for (const fr of fallbackRows?.results || []) {
+      try {
+        const parsed = JSON.parse(fr.payload_json || "{}");
+        const candAlias = String(parsed.object_id || parsed.object_name || "")
+          .trim()
+          .replace(/[^A-Za-z0-9_.:-]+/g, "_")
+          .slice(0, QUEUE_GATEWAY_GRID.object_key_max_len);
+        if (candAlias && candAlias !== fr.object_key) {
+          await db
+            .prepare("INSERT OR IGNORE INTO herma_object_aliases (alias_key, target_object_key, created_at) VALUES (?, ?, ?)")
+            .bind(candAlias, fr.object_key, aliasNow)
+            .run();
+        }
+      } catch {
+        // ignore truncated legacy rows
       }
-    } catch {
-      // ignore truncated legacy rows
     }
+
+    await runBatchOrSeq([
+      db
+        .prepare("UPDATE herma_task_objects SET quality_milli = 0 WHERE eval_count = 0 AND quality_milli = ?")
+        .bind(QUEUE_GATEWAY_GRID.verified_seed_quality_milli),
+      db.prepare(
+        "UPDATE herma_task_objects SET total_payload_bytes = LENGTH(CAST(payload_json AS BLOB)) WHERE total_payload_bytes = 0 AND LENGTH(payload_json) > 0"
+      ),
+      db.prepare(
+        `UPDATE herma_durable_queue SET is_diagnostic_probe = 1
+         WHERE is_diagnostic_probe = 0 AND (
+           LOWER(producer_agent) LIKE 'race-isolation-coord%' OR
+           LOWER(producer_agent) LIKE 'fencing-epoch-auditor%' OR
+           LOWER(producer_agent) LIKE 'test-%' OR
+           LOWER(producer_agent) LIKE 'probe-%' OR
+           LOWER(producer_agent) LIKE 'cas-seeder%' OR
+           LOWER(completed_by) LIKE 'race-isolation-coord%' OR
+           LOWER(completed_by) LIKE 'fencing-epoch-auditor%' OR
+           LOWER(completed_by) LIKE 'racer-%' OR
+           LOWER(title) LIKE '[race-probe%' OR
+           LOWER(title) LIKE 'cas race probe%' OR
+           LOWER(title) LIKE 'review_%'
+         )`
+      ),
+      db.prepare(
+        `UPDATE herma_worker_registry SET is_diagnostic_probe = 1
+         WHERE is_diagnostic_probe = 0 AND (
+           LOWER(agent_id) LIKE 'race-isolation-coord%' OR
+           LOWER(agent_id) LIKE 'fencing-epoch-auditor%' OR
+           LOWER(agent_id) LIKE 'test-%' OR
+           LOWER(agent_id) LIKE 'probe-%' OR
+           LOWER(agent_id) LIKE 'cas-seeder%' OR
+           LOWER(agent_id) LIKE 'racer-%' OR
+           LOWER(agent_id) LIKE 'stale-worker%' OR
+           LOWER(agent_id) LIKE 'late-zombie%'
+         )`
+      ),
+    ]);
   }
-
-  // Q6 honesty migration: unreviewed task_objects (eval_count = 0) must not claim verified_seed_quality_milli (920)
-  await db
-    .prepare("UPDATE herma_task_objects SET quality_milli = 0 WHERE eval_count = 0 AND quality_milli = ?")
-    .bind(QUEUE_GATEWAY_GRID.verified_seed_quality_milli)
-    .run();
-
-  // Backfill historical pre-v6 task_objects where total_payload_bytes remained 0
-  await db
-    .prepare(
-      "UPDATE herma_task_objects SET total_payload_bytes = LENGTH(CAST(payload_json AS BLOB)) WHERE total_payload_bytes = 0 AND LENGTH(payload_json) > 0"
-    )
-    .run();
-
-  // Q9 diagnostic probe tagging migration on existing rows
-  await db
-    .prepare(
-      `UPDATE herma_durable_queue SET is_diagnostic_probe = 1
-       WHERE is_diagnostic_probe = 0 AND (
-         LOWER(producer_agent) LIKE 'race-isolation-coord%' OR
-         LOWER(producer_agent) LIKE 'fencing-epoch-auditor%' OR
-         LOWER(producer_agent) LIKE 'test-%' OR
-         LOWER(producer_agent) LIKE 'probe-%' OR
-         LOWER(producer_agent) LIKE 'cas-seeder%' OR
-         LOWER(completed_by) LIKE 'race-isolation-coord%' OR
-         LOWER(completed_by) LIKE 'fencing-epoch-auditor%' OR
-         LOWER(completed_by) LIKE 'racer-%' OR
-         LOWER(title) LIKE '[race-probe%' OR
-         LOWER(title) LIKE 'cas race probe%' OR
-         LOWER(title) LIKE 'review_%'
-       )`
-    )
-    .run();
-  await db
-    .prepare(
-      `UPDATE herma_worker_registry SET is_diagnostic_probe = 1
-       WHERE is_diagnostic_probe = 0 AND (
-         LOWER(agent_id) LIKE 'race-isolation-coord%' OR
-         LOWER(agent_id) LIKE 'fencing-epoch-auditor%' OR
-         LOWER(agent_id) LIKE 'test-%' OR
-         LOWER(agent_id) LIKE 'probe-%' OR
-         LOWER(agent_id) LIKE 'cas-seeder%' OR
-         LOWER(agent_id) LIKE 'racer-%' OR
-         LOWER(agent_id) LIKE 'stale-worker%' OR
-         LOWER(agent_id) LIKE 'late-zombie%'
-       )`
-    )
-    .run();
 
   await ensureHelpAndStarterSchema(db);
   await ensureOnDemandApiSchema(db);
@@ -1915,6 +2176,11 @@ export async function ensurePriorityGatewaySchema(db, { isLiveRuntime = false } 
     .run();
 
   await ensureTaxonomyAffinityAndFeedbackSchema(db);
+  await ensureWorkerKitsAndMutationGridSchema(db, env, {
+    publicUrl,
+    seedTaskObjectNoun: (spec, e) => seedV611TaskObjectNoun(db, e || env, publicUrl, spec),
+    seedVerbIfMissing: (vSpec) => seedV611VerbIfMissing(db, vSpec),
+  });
   await runV610TaxonomyAndModelBackfill(db);
 
   await db
@@ -1924,7 +2190,7 @@ export async function ensurePriorityGatewaySchema(db, { isLiveRuntime = false } 
     .run();
   await db
     .prepare(
-      "INSERT OR REPLACE INTO herma_runtime_kv (k, v, expires_at_ms) VALUES ('gateway_schema_version', 'v6_10', 0)"
+      "INSERT OR REPLACE INTO herma_runtime_kv (k, v, expires_at_ms) VALUES ('gateway_schema_version', 'v6_11', 0)"
     )
     .run();
 
@@ -2628,7 +2894,7 @@ async function lookupTaskObjectByKey(db, infraAllowed, objectKey, publicUrl, que
 
   // Check cross-producer namespaced key if ?producer=<agent_id> was requested
   if (!row && producerFilter) {
-    const nsKey = `${lookupKey}__by_${producerFilter}`.slice(0, QUEUE_GATEWAY_GRID.task_id_max_len);
+    const nsKey = `${lookupKey}__by_${producerFilter}`.slice(0, QUEUE_GATEWAY_GRID.object_key_max_len);
     const nsSpec = buildLookupQuery(nsKey);
     row = await db.prepare(nsSpec.sql).bind(...nsSpec.binds).first();
     if (row) lookupKey = nsKey;
@@ -2710,7 +2976,7 @@ async function lookupTaskObjectByKey(db, infraAllowed, objectKey, publicUrl, que
   if (row.visibility === "server_infra" && !infraAllowed) return { forbidden: true };
 
   const assembled = await reassembleTaskObjectPayload(db, row);
-  const [evals, lineageStats, graphCtx] = await Promise.all([
+  const [evals, lineageStats, graphCtx, clientIndex] = await Promise.all([
     db
       .prepare("SELECT * FROM herma_evaluations WHERE target_kind = 'object' AND target_id = ? ORDER BY id DESC LIMIT ?")
       .bind(row.object_key, QUEUE_GATEWAY_GRID.max_pulse_items)
@@ -2724,6 +2990,7 @@ async function lookupTaskObjectByKey(db, infraAllowed, objectKey, publicUrl, que
       .bind(baseKey, baseKey)
       .first(),
     fetchObjectGraphContext(db, row.object_key),
+    fetchClientIndexMetadata(db, row.object_key, { includeDenseVector: true }),
   ]);
 
   let labels = [];
@@ -2802,6 +3069,7 @@ async function lookupTaskObjectByKey(db, infraAllowed, objectKey, publicUrl, que
     compose_url: `${publicUrl}/q/compose?keys=${encodeURIComponent(row.object_key)}`,
     lsh_band_0: row.lsh_band_0,
     simhash64_hex: row.simhash64_hex,
+    ...(clientIndex ? { client_index: clientIndex } : {}),
     sha256_hash: row.sha256_hash,
     payload_sha256_verified: assembled.verified,
     payload_json_valid: assembled.json_valid,
@@ -3111,7 +3379,8 @@ async function buildWorkerProfileData(db, infraAllowed, rawWorkerUuid) {
     : "visibility IN ('public_ngo', 'public_commons')";
 
   const worker = await db.prepare("SELECT * FROM herma_worker_registry WHERE worker_uuid = ?").bind(wUuid).first();
-  const [tasksRes, objsRes, reputation] = await Promise.all([
+  const workerAgent = String(worker?.agent_id || "").trim();
+  const [tasksRes, objsRes, reputation, spawnedCountsRes, spawnedRowsRes] = await Promise.all([
     db
       .prepare(
         `SELECT task_id, tier, verb_kind, state, priority, title, generation_depth, updated_at
@@ -3131,12 +3400,61 @@ async function buildWorkerProfileData(db, infraAllowed, rawWorkerUuid) {
       .bind(wUuid, QUEUE_GATEWAY_GRID.max_search_limit)
       .all(),
     buildWorkerScoreAndBadges(db, wUuid),
+    db
+      .prepare(
+        `SELECT state, COUNT(*) AS cnt
+         FROM herma_durable_queue
+         WHERE (producer_worker_uuid = ? OR (? != '' AND producer_agent = ?)) AND ${visFilter}
+         GROUP BY state`
+      )
+      .bind(wUuid, workerAgent, workerAgent)
+      .all(),
+    db
+      .prepare(
+        `SELECT task_id, tier, verb_kind, state, priority, title, leased_by, leased_worker_uuid,
+                completed_by, receipt_hash, created_at, updated_at
+         FROM herma_durable_queue
+         WHERE (producer_worker_uuid = ? OR (? != '' AND producer_agent = ?)) AND ${visFilter}
+         ORDER BY id DESC LIMIT ?`
+      )
+      .bind(wUuid, workerAgent, workerAgent, QUEUE_GATEWAY_GRID.max_search_limit)
+      .all(),
   ]);
+
+  const spawnedCounts = { total: 0, ready: 0, leased: 0, done: 0 };
+  for (const r of spawnedCountsRes?.results || []) {
+    const st = String(r.state || "ready");
+    const c = Number(r.cnt || 0);
+    spawnedCounts.total += c;
+    if (st === "ready" || st === "leased" || st === "done") {
+      spawnedCounts[st] += c;
+    }
+  }
+  const recentSpawnedTasks = (spawnedRowsRes?.results || []).map((r) => ({
+    task_id: r.task_id,
+    tier: r.tier,
+    verb_kind: r.verb_kind || "general_verb",
+    status: r.state || "ready",
+    state: r.state || "ready",
+    priority: Number(r.priority || 0),
+    title: r.title,
+    leased_by: r.leased_by || null,
+    leased_worker_uuid: r.leased_worker_uuid || null,
+    solved_by: r.completed_by || null,
+    solved_by_worker_uuid: r.state === "done" ? r.leased_worker_uuid || null : null,
+    receipt_hash: r.receipt_hash || null,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+  }));
 
   return {
     worker_uuid: wUuid,
     worker: worker || null,
     reputation,
+    spawned_tasks_attribution: {
+      counts: spawnedCounts,
+      recent_spawned_tasks: recentSpawnedTasks,
+    },
     tasks: tasksRes?.results || [],
     objects: objsRes?.results || [],
   };
@@ -4479,7 +4797,134 @@ async function buildLiveEvaluationCandidates(db, infraAllowed, limit = QUEUE_GAT
   };
 }
 
-async function buildPulseSnapshot(db, env, infraAllowed) {
+const UNAUTH_FREE_WINDOW_RPM_BUCKETS = new Map();
+
+function resolveFreeAccessWindowConfig(env) {
+  const freeUntilIso =
+    String(env?.FREE_ACCESS_WINDOW_END_ISO || QUEUE_GATEWAY_GRID.free_access_window_end_iso).trim() ||
+    QUEUE_GATEWAY_GRID.free_access_window_end_iso;
+  const killRaw = String(env?.FREE_ACCESS_KILL_SWITCH || "").trim().toLowerCase();
+  const killSwitchActive = killRaw === "1" || killRaw === "true" || killRaw === "yes";
+  const nowOverride = env?.HERMA_FREE_WINDOW_NOW_ISO ? Date.parse(String(env.HERMA_FREE_WINDOW_NOW_ISO)) : NaN;
+  const nowMs = Number.isFinite(nowOverride) ? nowOverride : Date.now();
+  const endMs = Date.parse(freeUntilIso);
+  const windowExpired = Number.isFinite(endMs) ? nowMs > endMs : false;
+  const unauthRpmCap = Math.max(
+    1,
+    Number(env?.FREE_ACCESS_UNAUTH_RPM_CAP || QUEUE_GATEWAY_GRID.free_access_unauth_rpm_cap)
+  );
+  const paidMuseDailyCallsCap = Math.max(
+    1,
+    Number(env?.HERMA_PAID_MUSE_CALLS_PER_DAY || QUEUE_GATEWAY_GRID.paid_muse_daily_calls_cap)
+  );
+  return {
+    free_unauthenticated_until: freeUntilIso,
+    kill_switch_active: killSwitchActive,
+    window_expired: windowExpired,
+    unauthenticated_access_active: !killSwitchActive && !windowExpired,
+    unauthenticated_rpm_cap: unauthRpmCap,
+    paid_muse_daily_calls_cap: paidMuseDailyCallsCap,
+  };
+}
+
+async function evaluateFreeAccessWindowGuardrail(request, url, env, db, { infraAllowed, action, method }) {
+  const config = resolveFreeAccessWindowConfig(env);
+  if (infraAllowed) {
+    return { allowed: true, config };
+  }
+  const isAlwaysPublicProbe =
+    (method === "GET" || method === "HEAD") &&
+    (action === "health" || action === "pulse" || action === "status" || action === "trust");
+  if (isAlwaysPublicProbe) {
+    return { allowed: true, config };
+  }
+
+  const presentedScopedKey = extractPresentedScopedKey(request, url);
+  if (presentedScopedKey) {
+    const keyAuth = await authenticateScopedKey(db, presentedScopedKey, { touchUsage: true });
+    if (keyAuth.ok) {
+      return { allowed: true, config, scopedKey: keyAuth };
+    }
+    if (keyAuth.rateLimited) {
+      return {
+        allowed: false,
+        status: QUEUE_GATEWAY_GRID.http_too_many_requests,
+        body: {
+          ok: false,
+          code: keyAuth.code || "rate_limit_exceeded",
+          detail: keyAuth.detail,
+          free_unauthenticated_until: config.free_unauthenticated_until,
+          kill_switch_active: config.kill_switch_active,
+        },
+      };
+    }
+    if (!config.unauthenticated_access_active) {
+      return {
+        allowed: false,
+        status: QUEUE_GATEWAY_GRID.http_unauthorized,
+        body: {
+          ok: false,
+          code: keyAuth.code || "invalid_api_key",
+          detail: keyAuth.detail || "Valid scoped API key (hk_*) required.",
+          free_unauthenticated_until: config.free_unauthenticated_until,
+          kill_switch_active: config.kill_switch_active,
+        },
+      };
+    }
+  }
+
+  if (!config.unauthenticated_access_active) {
+    return {
+      allowed: false,
+      status: QUEUE_GATEWAY_GRID.http_unauthorized,
+      body: {
+        ok: false,
+        code: config.kill_switch_active ? "free_access_kill_switch_active" : "free_access_window_expired",
+        detail: config.kill_switch_active
+          ? "Unauthenticated free-access kill switch is active; present a valid scoped API key (hk_*) via Authorization: Bearer hk_... or X-Herma-Api-Key."
+          : `Unauthenticated free-access window ended at ${config.free_unauthenticated_until}; present a valid scoped API key (hk_*) via Authorization: Bearer hk_... or X-Herma-Api-Key.`,
+        free_unauthenticated_until: config.free_unauthenticated_until,
+        kill_switch_active: config.kill_switch_active,
+      },
+    };
+  }
+
+  const clientIp = String(request.headers.get("cf-connecting-ip") || "").trim();
+  if (clientIp) {
+    const bucketIdx = Math.floor(Date.now() / QUEUE_GATEWAY_GRID.free_access_rpm_window_ms);
+    const bucketKey = `${clientIp}:${bucketIdx}`;
+    const used = (UNAUTH_FREE_WINDOW_RPM_BUCKETS.get(bucketKey) || 0) + 1;
+    if (UNAUTH_FREE_WINDOW_RPM_BUCKETS.size > QUEUE_GATEWAY_GRID.free_access_memo_max_entries) {
+      const oldestKey = UNAUTH_FREE_WINDOW_RPM_BUCKETS.keys().next().value;
+      if (oldestKey) UNAUTH_FREE_WINDOW_RPM_BUCKETS.delete(oldestKey);
+    }
+    UNAUTH_FREE_WINDOW_RPM_BUCKETS.set(bucketKey, used);
+    if (used > config.unauthenticated_rpm_cap) {
+      return {
+        allowed: false,
+        status: QUEUE_GATEWAY_GRID.http_too_many_requests,
+        body: {
+          ok: false,
+          code: "free_window_unauthenticated_rate_limit",
+          detail: `Unauthenticated free-window rate cap (${config.unauthenticated_rpm_cap} requests/min per IP) exceeded.`,
+          free_unauthenticated_until: config.free_unauthenticated_until,
+          kill_switch_active: config.kill_switch_active,
+        },
+      };
+    }
+  }
+
+  return { allowed: true, config };
+}
+
+async function buildPulseSnapshot(db, env, infraAllowed, publicUrl = "https://herma.ta-amps.workers.dev") {
+  await ensureCadenceAggregateReviewVerbs(db, publicUrl, {
+    infraAllowed,
+    scrubSensitiveText,
+    cleanAgentId,
+    seedTaskObjectNoun: (spec) => seedV611TaskObjectNoun(db, env, publicUrl, spec),
+    seedVerbIfMissing: (vSpec) => seedV611VerbIfMissing(db, vSpec),
+  });
   const tesseraHealth = await probeTesseraEmbodiment(env);
   const nowIso = new Date().toISOString();
   const visFilter = infraAllowed
@@ -4598,10 +5043,14 @@ async function buildPulseSnapshot(db, env, infraAllowed) {
   }
 
   const todayPath = nowIso.slice(0, 10).replace(/-/g, "/");
+  const freeWindowMeta = resolveFreeAccessWindowConfig(env);
   return {
     ok: true,
     schema: QUEUE_GATEWAY_GRID.schema_id,
     caller_role: infraAllowed ? "server_infrastructure_worker" : "public_or_volunteer_worker",
+    free_unauthenticated_until: freeWindowMeta.free_unauthenticated_until,
+    kill_switch_active: freeWindowMeta.kill_switch_active,
+    free_access_window: freeWindowMeta,
     substantive_completed_tasks: Number(diagCountsRow?.substantive_done || 0),
     diagnostic_probe_tasks: Number(diagCountsRow?.diagnostic_total || 0),
     priority_policy: infraAllowed
@@ -4612,6 +5061,9 @@ async function buildPulseSnapshot(db, env, infraAllowed) {
       substantive_registered_workers: Number(workerStats?.substantive_cnt || 0),
       total_evaluations: Number(evalStats?.cnt || 0),
       starter_hub_url: "/starter",
+      kits_catalog_url: "/kits",
+      experiments_endpoint: "/q/experiments",
+      reprioritize_endpoint: "/q/reprioritize",
       help_endpoint: "/q/help",
       feedback_endpoint: "/q/feedback",
       schema_coach_endpoint: "/q/schema",
@@ -4857,6 +5309,21 @@ function formatLeasedTaskEnvelope(
     branch_label: row.branch_label,
     simhash64_hex: row.simhash64_hex,
     lsh_band_0: row.lsh_band_0,
+    ...(row.verb_kind === "aggregate_work_review_and_reprioritize"
+      ? (() => {
+          try {
+            const parsedPrompt = JSON.parse(String(row.prompt || "{}"));
+            return parsedPrompt?.aggregate_telemetry_digest
+              ? {
+                  digest_object_key: parsedPrompt.digest_object_key || null,
+                  aggregate_telemetry_digest: parsedPrompt.aggregate_telemetry_digest,
+                }
+              : {};
+          } catch {
+            return {};
+          }
+        })()
+      : {}),
     routing_telemetry: routingTelemetry || undefined,
     affinity_telemetry: routingTelemetry?.affinity_telemetry || undefined,
   };
@@ -4872,6 +5339,9 @@ async function claimNextAuthorizedTask(
     workerUuid = "",
     workerToken = "",
     slot = null,
+    generalist = false,
+    intentBucket = "",
+    publicUrl = "https://herma.ta-amps.workers.dev",
     modelHint = "",
     harnessTier = "",
     userAgent = "",
@@ -4898,7 +5368,13 @@ async function claimNextAuthorizedTask(
     .trim()
     .toLowerCase()
     .slice(0, QUEUE_GATEWAY_GRID.facet_max_len);
+  const cleanIntentBucketFilter = scrubSensitiveText(intentBucket || "")
+    .trim()
+    .toLowerCase()
+    .slice(0, QUEUE_GATEWAY_GRID.facet_max_len);
   const cleanStepModeFilter = normalizeStepMode(stepMode);
+  const isGeneralistExplicit =
+    generalist === true || generalist === "1" || generalist === "true" || generalist === 1;
   const allowCoLeaseExplicit =
     allowCoLease === true || allowCoLease === "1" || allowCoLease === "true" || allowCoLease === 1
       ? true
@@ -4936,6 +5412,13 @@ async function claimNextAuthorizedTask(
   const isBareSharedHandle = (!explicitWorkerUuid || isLegacySharedDefaultUuid) && GENERIC_EPHEMERAL_AGENTS.has(cleanAgent);
 
   await reapExpiredLeases(db);
+  await ensureCadenceAggregateReviewVerbs(db, publicUrl, {
+    infraAllowed,
+    scrubSensitiveText,
+    cleanAgentId,
+    seedTaskObjectNoun: (spec) => seedV611TaskObjectNoun(db, null, publicUrl, spec),
+    seedVerbIfMissing: (vSpec) => seedV611VerbIfMissing(db, vSpec),
+  });
   const safeBatchSize = Math.max(
     1,
     Math.min(QUEUE_GATEWAY_GRID.max_batch_claim, Number(batchSize || 1) || 1)
@@ -4968,8 +5451,10 @@ async function claimNextAuthorizedTask(
     : null;
 
   const normalizedSlot = slot ? String(slot).toLowerCase().trim() : "";
-  const effectiveSlot =
-    normalizedSlot === "ngo" || normalizedSlot === "eval" || normalizedSlot === "own"
+  const isGeneralistMode = isGeneralistExplicit || normalizedSlot === "generalist";
+  const effectiveSlot = isGeneralistMode
+    ? "generalist"
+    : normalizedSlot === "ngo" || normalizedSlot === "eval" || normalizedSlot === "own"
       ? normalizedSlot
       : normalizedSlot === "any"
         ? "any"
@@ -5329,7 +5814,7 @@ async function claimNextAuthorizedTask(
         }
         picked = { row: targetRow, scored: targetScored };
       }
-    } else if (cleanFamilyFilter || cleanVerbKindFilter || cleanStepModeFilter) {
+    } else if (cleanFamilyFilter || cleanVerbKindFilter || cleanStepModeFilter || cleanIntentBucketFilter) {
       let famSql = `SELECT * FROM herma_durable_queue
                     WHERE state = 'ready' AND ${visAllowed}
                       AND (owner_worker_uuid = '' OR owner_worker_uuid = ? OR updated_at < ?) ${prereqReadyClause}`;
@@ -5341,6 +5826,10 @@ async function claimNextAuthorizedTask(
       if (cleanVerbKindFilter) {
         famSql += " AND LOWER(verb_kind) = ?";
         famBinds.push(cleanVerbKindFilter);
+      }
+      if (cleanIntentBucketFilter) {
+        famSql += " AND LOWER(intent_bucket) = ?";
+        famBinds.push(cleanIntentBucketFilter);
       }
       if (cleanStepModeFilter) {
         famSql += " AND step_mode = ?";
@@ -5366,6 +5855,24 @@ async function claimNextAuthorizedTask(
         .bind(requestedTier, ...bandBind, poolLimit)
         .all();
       picked = pickBestScoredCandidate(pool?.results || [], affinityBand, null);
+    } else if (isGeneralistMode) {
+      const genHeadPool = await db
+        .prepare(
+          `SELECT * FROM herma_durable_queue
+           WHERE state = 'ready' AND ${visAllowed} AND COALESCE(is_diagnostic_probe, 0) = 0
+             AND (owner_worker_uuid = '' OR owner_worker_uuid = ? OR updated_at < ?) ${prereqReadyClause}
+           ORDER BY priority DESC, (CASE WHEN tier = 'ngo_priority' THEN 0 ELSE 1 END) ASC, id ASC
+           LIMIT ?`
+        )
+        .bind(profile.worker_uuid, staleOwnerCutoffIso, poolLimit)
+        .all();
+      for (const r of genHeadPool?.results || []) {
+        const scored = scoreCandidate(r, affinityBand, null);
+        if (!scored.excludedSelfReview) {
+          picked = { row: r, scored };
+          break;
+        }
+      }
     } else if (infraAllowed && !workerUuid && !normalizedSlot) {
       const pool = await db
         .prepare(
@@ -6268,6 +6775,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
 
   const rawObjectsInput =
     payload.task_objects ||
+    payload.output_nouns ||
     payload.objects ||
     payload.nouns ||
     (payload.task_object && typeof payload.task_object === "object" ? [payload.task_object] : []);
@@ -6761,6 +7269,8 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
 
   // 1. Store & index reusable `task_objects` with Q7 cross-producer protection, Q10 UTF-8 safe atomic chunking, and Q6 unreviewed quality=0
   const storedObjects = [];
+  const clientIndexSummaries = [];
+  const autoEnqueuedIndexAndReviewVerbs = [];
   for (let i = 0; i < prevalidatedObjects.length; i += 1) {
     const { item, serializedRaw, payloadByteLen, objVis } = prevalidatedObjects[i];
     const pObj = item.payload && typeof item.payload === "object" ? item.payload : null;
@@ -7140,6 +7650,56 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       }
     }
 
+    const clientIdxSummary = await validateAndPersistClientIndexMetadata(db, {
+      objectKey: effectiveObjKey,
+      item,
+      payloadObj: pObj,
+      topPayload: prevalidatedObjects.length === 1 ? payload : null,
+      simhash64Hex: idxMeta.simhash64_hex,
+      agentId,
+      workerUuid: workerProfile.worker_uuid,
+      nowIso,
+    });
+    clientIndexSummaries.push(clientIdxSummary);
+
+    let autoIdxAndReview = { enqueued_index_enrich_task_id: null, enqueued_peer_review_task_id: null };
+    if (!salvagedConcurrentTwinAttempt) {
+      autoIdxAndReview = await autoEnqueueIndexEnrichAndPeerReviewVerbs(
+        db,
+        publicUrl,
+        {
+          objectKey: effectiveObjKey,
+          summary: objSummary,
+          producerAgent: agentId,
+          producerWorkerUuid: workerProfile.worker_uuid,
+          sourceTaskId: taskId,
+          hasDenseEmbedding: clientIdxSummary.has_dense_embedding,
+          hasMediumLsh: clientIdxSummary.has_medium_lsh,
+          isDiagnostic: isDiagSubmit,
+          visibility: objVis,
+        },
+        {
+          seedVerbIfMissing: (vSpec) => seedV611VerbIfMissing(db, vSpec),
+        }
+      );
+      if (autoIdxAndReview.enqueued_index_enrich_task_id) {
+        autoEnqueuedIndexAndReviewVerbs.push({
+          task_id: autoIdxAndReview.enqueued_index_enrich_task_id,
+          role: "index_enrichment",
+          target_object_key: effectiveObjKey,
+          preferred_worker_setup: ["embedding_capable"],
+        });
+      }
+      if (autoIdxAndReview.enqueued_peer_review_task_id) {
+        autoEnqueuedIndexAndReviewVerbs.push({
+          task_id: autoIdxAndReview.enqueued_peer_review_task_id,
+          role: "peer_review",
+          target_object_key: effectiveObjKey,
+          reviewer_constraint: "reviewer != author",
+        });
+      }
+    }
+
     storedObjects.push({
       object_key: effectiveObjKey,
       requested_object_key: requestedObjKey,
@@ -7163,6 +7723,15 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       ...(autoEnqueuedDependentRecheckTaskId
         ? { auto_enqueued_dependent_recheck_task_id: autoEnqueuedDependentRecheckTaskId }
         : {}),
+      ...(clientIdxSummary.persisted || clientIdxSummary.validation_issues?.length
+        ? { client_index: clientIdxSummary }
+        : {}),
+      ...(autoIdxAndReview.enqueued_index_enrich_task_id
+        ? { auto_enqueued_index_enrich_task_id: autoIdxAndReview.enqueued_index_enrich_task_id }
+        : {}),
+      ...(autoIdxAndReview.enqueued_peer_review_task_id
+        ? { auto_enqueued_peer_review_task_id: autoIdxAndReview.enqueued_peer_review_task_id }
+        : {}),
       worker_uuid: workerProfile.worker_uuid,
       generation_depth: objGenDepth,
       chunk_count: chunkSlices.length,
@@ -7173,6 +7742,33 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       pinned_object_url: `${publicUrl}/q/object/${encodeURIComponent(effectiveObjKey)}?sha256=${objHash.slice(0, QUEUE_GATEWAY_GRID.shape_hash_chars)}`,
       permalink_url: `${publicUrl}/c/${encodeURIComponent(effectiveObjKey)}`,
     });
+  }
+
+  // Foreign peer completing `verb_index_enrich_<object_key>` can attach dense/LSH/chunk vectors directly to `<object_key>`
+  if (String(taskId || "").startsWith("verb_index_enrich_") && !salvagedConcurrentTwinAttempt) {
+    const targetEnrichKey = String(taskId)
+      .slice("verb_index_enrich_".length)
+      .trim()
+      .slice(0, QUEUE_GATEWAY_GRID.object_key_max_len);
+    if (targetEnrichKey && !storedObjects.some((so) => so.object_key === targetEnrichKey)) {
+      const targetRow = await db
+        .prepare("SELECT simhash64_hex FROM herma_task_objects WHERE object_key = ? ORDER BY id DESC LIMIT 1")
+        .bind(targetEnrichKey)
+        .first();
+      const enrichSummary = await validateAndPersistClientIndexMetadata(db, {
+        objectKey: targetEnrichKey,
+        item: rawObjects[0] && typeof rawObjects[0] === "object" ? rawObjects[0] : {},
+        payloadObj: rawObjects[0]?.payload && typeof rawObjects[0].payload === "object" ? rawObjects[0].payload : null,
+        topPayload: payload,
+        simhash64Hex: targetRow?.simhash64_hex || "",
+        agentId,
+        workerUuid: workerProfile.worker_uuid,
+        nowIso,
+      });
+      if (enrichSummary.persisted) {
+        clientIndexSummaries.push(enrichSummary);
+      }
+    }
   }
 
   // 2. Apply task & task_object evaluations / rankings
@@ -7346,7 +7942,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
                     ? "own"
                     : tier.slice(0, 3);
     const explicitVerbId =
-      v.task_id && /^[A-Za-z0-9_.:-]{4,64}$/.test(String(v.task_id))
+      v.task_id && /^[A-Za-z0-9_.:-]{4,160}$/.test(String(v.task_id))
         ? String(v.task_id)
         : `verb_${prefixTag}_${newIdHash}`;
     const childDiagFlag = isDiagnosticProbeEntity({
@@ -7516,6 +8112,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
     receiptHash,
     storedObjects,
     rawObjects: prevalidatedObjects,
+    clientIndexSummaries,
     appliedEvaluations: appliedEvaluations.map((ev) => ({
       ...ev,
       quality_milli: ev.updated_quality_milli ?? QUEUE_GATEWAY_GRID.default_quality_milli,
@@ -7695,6 +8292,78 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
     }
   }
 
+  const reuseEdgesFromStored = storedObjects.reduce(
+    (acc, o) => acc + (Array.isArray(o.built_on_edges) ? o.built_on_edges.length : 0),
+    0
+  );
+  const topLevelReuses = Array.isArray(payload.builds_on)
+    ? payload.builds_on.length
+    : Array.isArray(payload.reused_task_objects)
+      ? payload.reused_task_objects.length
+      : 0;
+  const totalReuseEdgesThisSubmit = Math.max(reuseEdgesFromStored, topLevelReuses);
+  const submitWallMs = Number(payload?.execution_telemetry?.wall_ms || reqMeta.latencyMs || 0);
+  const submitTokensUsed = Number(
+    payload?.execution_telemetry?.tokens_used ||
+      Math.max(
+        TAXONOMY_AFFINITY_FEEDBACK_GRID.default_tokens_estimate,
+        Math.round(totalBytesThisSubmit / TAXONOMY_AFFINITY_FEEDBACK_GRID.chars_per_estimated_token)
+      )
+  );
+  const banditArmOutcome = await recordArmSubmitOutcome(db, {
+    arm: String(payload.arm || payload.variant_cell_id || ""),
+    agentId,
+    workerUuid: workerProfile.worker_uuid,
+    taskId,
+    succeeded: true,
+    reuseEdgesCount: totalReuseEdgesThisSubmit,
+    tokensUsed: submitTokensUsed,
+    wallMs: submitWallMs,
+  });
+  if (proactiveFeedbackIngested.length > 0) {
+    await recordArmFeedbackSignal(db, {
+      arm: String(payload.arm || payload.variant_cell_id || ""),
+      agentId,
+      workerUuid: workerProfile.worker_uuid,
+      taskId,
+    });
+  }
+
+  let reprioritizationApplied = null;
+  const hasReprioritizationFields =
+    (payload.reprioritization_plan && typeof payload.reprioritization_plan === "object") ||
+    (String(taskId || "").startsWith("verb_agg_review_") &&
+      (Array.isArray(payload.task_adjustments) ||
+        Array.isArray(payload.adjustments) ||
+        Array.isArray(payload.priority_updates) ||
+        Array.isArray(payload.duplicate_task_ids) ||
+        Array.isArray(payload.gap_verbs) ||
+        payload.boost_stale_tasks === true));
+  if (hasReprioritizationFields) {
+    const rawPlan =
+      payload.reprioritization_plan && typeof payload.reprioritization_plan === "object"
+        ? payload.reprioritization_plan
+        : payload;
+    reprioritizationApplied = await applyBoundedReprioritizationPlan(
+      db,
+      publicUrl,
+      {
+        ...rawPlan,
+        agent_id: agentId,
+        worker_uuid: workerProfile.worker_uuid,
+        source_verb_id: taskId,
+        rationale: rawPlan.rationale || summary,
+      },
+      {
+        infraAllowed,
+        scrubSensitiveText,
+        cleanAgentId,
+        seedTaskObjectNoun: (spec) => seedV611TaskObjectNoun(db, env, publicUrl, spec),
+        seedVerbIfMissing: (vSpec) => seedV611VerbIfMissing(db, vSpec),
+      }
+    );
+  }
+
   const primaryPermalinkId =
     existingTask && !salvagedConcurrentTwinAttempt && !preservePriorPrimaryCompletion
       ? verificationCode
@@ -7709,6 +8378,8 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
     ...(browserGetFenceAutoResolved ? { browser_get_fence_auto_resolved: true } : {}),
     ...(ensembleGroup ? { ensemble_group: ensembleGroup } : {}),
     ...(affinityOutcome ? { affinity_outcome: affinityOutcome } : {}),
+    ...(banditArmOutcome ? { experiment_arm_outcome: banditArmOutcome } : {}),
+    ...(reprioritizationApplied ? { reprioritization_applied: reprioritizationApplied } : {}),
     ...(feedbackPeerReviewOut ? { feedback_peer_review: feedbackPeerReviewOut } : {}),
     ...(proactiveFeedbackIngested.length > 0
       ? {
@@ -7753,6 +8424,9 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
     worker_permalink: `${publicUrl}/w/${encodeURIComponent(workerProfile.worker_uuid)}`,
     dashboard_url: `${publicUrl}/dashboard`,
     stored_task_objects: storedObjects,
+    ...(autoEnqueuedIndexAndReviewVerbs.length > 0
+      ? { auto_enqueued_index_and_review_verbs: autoEnqueuedIndexAndReviewVerbs }
+      : {}),
     applied_evaluations: appliedEvaluations,
     enqueued_followup_tasks: enqueuedVerbs,
     enqueued_followup_verbs: enqueuedVerbs,
@@ -7855,7 +8529,7 @@ function formatClaimBanner(publicUrl, claimOut, pulse) {
 
 export async function handlePriorityWorkGateway(request, env, db, publicUrl, { withSecurity }) {
   const reqStartMs = Date.now();
-  await ensurePriorityGatewaySchema(db);
+  await ensurePriorityGatewaySchema(db, { env, publicUrl });
   const url = new URL(request.url);
   const method = request.method.toUpperCase();
   const segments = url.pathname.replace(/^\/+|\/+$/g, "").split("/");
@@ -7863,33 +8537,41 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
   const action =
     rootSeg === "health"
       ? "health"
-      : rootSeg === "feedback"
-        ? "feedback"
-        : rootSeg === "status"
-          ? "status"
-          : rootSeg === "starter"
-            ? "starter"
-            : rootSeg === "help"
-              ? "help"
-              : rootSeg === "chat"
-                ? "chat"
-                : rootSeg === "prompts" || rootSeg === "get-started"
-                  ? segments[1] === "raw"
-                    ? "prompts_raw"
-                    : "prompts_html"
-                  : rootSeg === "prompts.js"
-                    ? "prompts_js"
-                    : rootSeg === "dashboard"
-                      ? "dashboard"
-                      : rootSeg === "dashboard.js"
-                        ? "dashboard_js"
-                        : rootSeg === "c"
-                          ? "permalink_c"
-                          : rootSeg === "w"
-                            ? "permalink_w"
-                            : rootSeg === "api" && segments[1] === "object"
-                              ? "api"
-                              : segments[1] || "pulse";
+      : rootSeg === "kits"
+        ? "kits"
+        : rootSeg === "kits.js"
+          ? "kits_js"
+          : rootSeg === "experiments"
+            ? "experiments"
+            : rootSeg === "reprioritize"
+              ? "reprioritize"
+              : rootSeg === "feedback"
+                ? "feedback"
+                : rootSeg === "status"
+                  ? "status"
+                  : rootSeg === "starter"
+                    ? "starter"
+                    : rootSeg === "help"
+                      ? "help"
+                      : rootSeg === "chat"
+                        ? "chat"
+                        : rootSeg === "prompts" || rootSeg === "get-started"
+                          ? segments[1] === "raw"
+                            ? "prompts_raw"
+                            : "prompts_html"
+                          : rootSeg === "prompts.js"
+                            ? "prompts_js"
+                            : rootSeg === "dashboard"
+                              ? "dashboard"
+                              : rootSeg === "dashboard.js"
+                                ? "dashboard_js"
+                                : rootSeg === "c"
+                                  ? "permalink_c"
+                                  : rootSeg === "w"
+                                    ? "permalink_w"
+                                    : rootSeg === "api" && segments[1] === "object"
+                                      ? "api"
+                                      : segments[1] || "pulse";
   const infraAllowed = await isServerInfraAuthorized(request, env, db);
   const wantsJson =
     (request.headers.get("accept") || "").includes("application/json") || url.searchParams.get("format") === "json";
@@ -7912,13 +8594,15 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
   const shouldLogSpan =
     action !== "traces" &&
     action !== "health" &&
+    action !== "kits_js" &&
+    action !== "kits.js" &&
     action !== "dashboard_js" &&
     action !== "dashboard.js" &&
     action !== "demo-runner.js" &&
     action !== "prompts_js" &&
     action !== "prompts.js";
 
-  const MUTATING_GET_ACTIONS = new Set(["claim", "submit", "enqueue", "onboard", "heartbeat"]);
+  const MUTATING_GET_ACTIONS = new Set(["claim", "submit", "complete", "enqueue", "onboard", "register", "heartbeat"]);
   const finalizeWithTrace = async (resp, status, errorCode = "") => {
     const skipReadOnlyTrace =
       method === "HEAD" ||
@@ -7972,6 +8656,16 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       errorCode
     );
 
+  // Free-Access Window Guardrail (`2026-12-31T23:59:59-05:00` + `FREE_ACCESS_KILL_SWITCH` + scoped `hk_*` key bypass)
+  const freeWindowCheck = await evaluateFreeAccessWindowGuardrail(request, url, env, db, {
+    infraAllowed,
+    action,
+    method,
+  });
+  if (!freeWindowCheck.allowed) {
+    return sendJson(freeWindowCheck.body, freeWindowCheck.status);
+  }
+
   // Fast Liveness & Schema Sentinel Health Probe (`/health` & `/q/health`)
   if (action === "health") {
     if (method !== "GET" && method !== "HEAD") {
@@ -7982,10 +8676,43 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       status: "healthy",
       service: "herma",
       schema: QUEUE_GATEWAY_GRID.schema_id,
-      schema_sentinel: "v6_10",
+      schema_sentinel: "v6_11",
       max_chunked_payload_bytes: QUEUE_GATEWAY_GRID.max_chunked_payload_bytes,
       timestamp: new Date().toISOString(),
     });
+  }
+
+  // Real Downloadable Worker Onboarding Kits (`/kits`, `/kits.js`, `/kits/*`, `/q/kits/*`)
+  if (action === "kits" || action === "kits_js" || action === "kits.js") {
+    const out = await handleWorkerKitsRequest(request, url, db, publicUrl);
+    if (out.json) {
+      return sendJson(out.json, out.status, out.headers || {});
+    }
+    return finalizeWithTrace(
+      new Response(out.rawBody, {
+        status: out.status,
+        headers: out.headers || {},
+      }),
+      out.status
+    );
+  }
+
+  // Server-Side Prompt, Instruction, & Toolkit Evolutionary Mutation Grid (`/q/experiments`)
+  if (action === "experiments") {
+    const out = await handleExperimentsLeaderboardRequest(request, url, db, publicUrl);
+    return sendJson(out.body, out.status);
+  }
+
+  // Cadence Aggregate Work-Review & Bounded Queue Reprioritization (`/q/reprioritize`)
+  if (action === "reprioritize") {
+    const out = await handleReprioritizeRequest(request, url, db, publicUrl, {
+      infraAllowed,
+      scrubSensitiveText,
+      cleanAgentId,
+      seedTaskObjectNoun: (spec) => seedV611TaskObjectNoun(db, env, publicUrl, spec),
+      seedVerbIfMissing: (vSpec) => seedV611VerbIfMissing(db, vSpec),
+    });
+    return sendJson(out.body, out.status);
   }
 
   // Bounded D1 Request, Error & Lease-Expiry Trace Log (`/q/traces`)
@@ -8178,6 +8905,20 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       infraAllowed,
       gatewayOps,
     });
+    if (method === "POST" && out.status < QUEUE_GATEWAY_GRID.http_bad_request) {
+      await recordArmFeedbackSignal(db, {
+        arm: url.searchParams.get("arm") || request.headers.get("x-herma-arm") || "",
+        agentId:
+          out.body?.stored_issue_object?.producer_agent ||
+          url.searchParams.get("agent_id") ||
+          request.headers.get("x-agent-label") ||
+          "",
+        workerUuid:
+          out.body?.stored_issue_object?.worker_uuid ||
+          url.searchParams.get("worker_uuid") ||
+          "",
+      });
+    }
     return sendJson(out.body, out.status);
   }
 
@@ -8217,6 +8958,95 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     }
     const out = await handleListDurableTasksRequest(url, db, publicUrl, { infraAllowed });
     return sendJson(out.body, out.status);
+  }
+
+  if ((action === "objects" || action === "object") && method === "POST") {
+    const parsedReq = await readPossiblyGzippedJson(request, QUEUE_GATEWAY_GRID.max_chunked_payload_bytes * 2);
+    if (parsedReq.payloadTooLarge) {
+      return sendJson(
+        {
+          ok: false,
+          code: "payload_too_large",
+          max_bytes: parsedReq.max_bytes,
+          actual_bytes: parsedReq.actual_bytes,
+          detail: "Compressed or uncompressed object envelope exceeds gateway envelope ceiling.",
+        },
+        QUEUE_GATEWAY_GRID.http_payload_too_large
+      );
+    }
+    if (parsedReq.invalidGzip || parsedReq.invalidEncoding) {
+      return sendJson(
+        { ok: false, code: "invalid_gzip", detail: parsedReq.detail || "Invalid gzip stream on POST /q/objects." },
+        QUEUE_GATEWAY_GRID.http_bad_request
+      );
+    }
+    if (parsedReq.invalidJson) {
+      return sendJson({ ok: false, code: "invalid_json" }, QUEUE_GATEWAY_GRID.http_bad_request);
+    }
+    const body = parsedReq.json || {};
+    const hasExplicitArray = Array.isArray(body.task_objects || body.output_nouns || body.objects || body.nouns);
+    const wrappedBody = hasExplicitArray
+      ? {
+          ...body,
+          task_id: body.task_id || "self_seed",
+          summary: body.summary || "Direct POST /q/objects submission",
+        }
+      : {
+          ...body,
+          task_id: body.task_id || "self_seed",
+          summary:
+            body.summary ||
+            body.description ||
+            `Direct object submission: ${body.object_key || body.key || "task_object"}`,
+          task_objects: [body],
+        };
+    traceCtx.agent_id = cleanAgentId(wrappedBody.agent_id || wrappedBody.agent || wrappedBody.worker || "");
+    traceCtx.task_id = String(wrappedBody.task_id || "self_seed");
+    const out = await processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed, wrappedBody, {
+      action: "submit",
+      transportMethod: "POST",
+      wasGzipped: Boolean(parsedReq.wasGzipped),
+      userAgent,
+      clientIp: request.headers.get("cf-connecting-ip") || "",
+      workerToken:
+        wrappedBody.worker_token ||
+        request.headers.get("x-herma-worker-token") ||
+        url.searchParams.get("worker_token") ||
+        "",
+      modelHint: wrappedBody.model_hint || modelHintHeader,
+      harnessTier: wrappedBody.harness_tier || "",
+      latencyMs: Date.now() - reqStartMs,
+    });
+    if (out.forbidden) {
+      return sendJson({ ok: false, code: out.code || "forbidden_tier", detail: out.detail }, QUEUE_GATEWAY_GRID.http_forbidden);
+    }
+    if (out.payloadTooLarge) {
+      return sendJson(
+        {
+          ok: false,
+          code: "payload_too_large",
+          max_bytes: out.max_bytes,
+          actual_bytes: out.actual_bytes,
+          detail: out.detail,
+        },
+        QUEUE_GATEWAY_GRID.http_payload_too_large
+      );
+    }
+    if (out.conflict) {
+      return sendJson(
+        {
+          ok: false,
+          code: out.code || "stale_fencing_token",
+          detail: out.detail,
+          expected_fencing_token: out.expected_fencing_token,
+          task_state: out.task_state,
+        },
+        QUEUE_GATEWAY_GRID.http_conflict
+      );
+    }
+    traceCtx.worker_uuid = out.worker_uuid || "";
+    traceCtx.harness_tier = out.harness_tier || "";
+    return sendJson(out);
   }
 
   if (action === "objects" || action === "catalog") {
@@ -8377,16 +9207,27 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     return sendHtml(renderContributionPermalinkHtml(publicUrl, pData), status, found ? "" : "permalink_not_found");
   }
 
-  if (action === "permalink_w" || action === "w") {
+  if (action === "permalink_w" || action === "w" || action === "worker") {
     if (method !== "GET" && method !== "HEAD") {
       return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
-    const wUuid = decodeURIComponent(rootSeg === "w" ? segments[1] || "" : segments[2] || "");
+    const wUuid = decodeURIComponent(
+      rootSeg === "w" ? segments[1] || "" : segments[2] || url.searchParams.get("worker_uuid") || ""
+    );
     traceCtx.worker_uuid = wUuid;
     const wData = await buildWorkerProfileData(db, infraAllowed, wUuid);
-    const found = Boolean(wData.worker || wData.tasks.length || wData.objects.length);
+    const found = Boolean(
+      wData.worker ||
+        wData.tasks.length ||
+        wData.objects.length ||
+        Number(wData.spawned_tasks_attribution?.counts?.total || 0) > 0
+    );
     const status = found ? QUEUE_GATEWAY_GRID.http_ok : QUEUE_GATEWAY_GRID.http_not_found;
-    if (wantsJson && url.searchParams.get("format") === "json") {
+    const returnJson =
+      action === "worker"
+        ? !(request.headers.get("accept") || "").includes("text/html") || wantsJson
+        : wantsJson;
+    if (returnJson) {
       return sendJson({ ok: found, ...wData }, status);
     }
     return sendHtml(renderWorkerProfileHtml(publicUrl, wData), status, found ? "" : "worker_not_found");
@@ -8490,11 +9331,60 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         : rawPromptId;
     const catalog = buildPromptCatalog(publicUrl);
     const found = catalog.find((p) => p.id === promptId) || catalog[0];
-    const hydrated = hydratePromptPlaceholders(found.body, {
+    let bodyTemplate = found.body;
+    let extraPromptHeaders = {};
+    if (
+      found.id === "codex_unlimited_frontier_loop_v9" ||
+      found.id === "codex_unlimited_frontier_loop_v10" ||
+      found.id === "codex_unlimited_frontier_loop_v11" ||
+      url.searchParams.has("arm") ||
+      url.searchParams.has("pitch_framing") ||
+      url.searchParams.has("kit_order") ||
+      url.searchParams.has("inline_code_density") ||
+      url.searchParams.has("task_encouragement") ||
+      url.searchParams.has("mutate")
+    ) {
+      const qAgent = url.searchParams.get("agent_id") || request.headers.get("x-agent-label") || "";
+      const qUuid = url.searchParams.get("worker_uuid") || "";
+      const armRow = await selectOrMutatePromptKitArm(db, {
+        agentId: qAgent,
+        workerUuid: qUuid,
+        arm: url.searchParams.get("arm") || request.headers.get("x-herma-arm") || "",
+        pitchFraming: url.searchParams.get("pitch_framing") || request.headers.get("x-herma-pitch-framing") || "",
+        kitOrder: url.searchParams.get("kit_order") || request.headers.get("x-herma-kit-order") || "",
+        inlineCodeDensity:
+          url.searchParams.get("inline_code_density") || request.headers.get("x-herma-inline-code-density") || "",
+        taskEncouragement:
+          url.searchParams.get("task_encouragement") || request.headers.get("x-herma-task-encouragement") || "",
+        epsilonMutationMilli:
+          url.searchParams.get("epsilon_mutation_milli") ??
+          request.headers.get("x-herma-epsilon-mutation-milli") ??
+          undefined,
+        mutate: url.searchParams.get("mutate") ?? request.headers.get("x-herma-mutate") ?? undefined,
+        seed: url.searchParams.get("seed") || "",
+        modelHint: modelHintHeader,
+        harnessTier: url.searchParams.get("harness_tier") || "",
+        sampleBandit: Boolean(qAgent),
+        recordExposure: method === "GET" && Boolean(qAgent || url.searchParams.get("mutate") === "1"),
+      });
+      const guidanceBlock = await renderPromptToolkitGuidanceBlock(publicUrl, armRow, { agentId: qAgent });
+      bodyTemplate = injectPromptToolkitGuidanceBlock(bodyTemplate, guidanceBlock);
+      extraPromptHeaders = {
+        "x-herma-variant-cell-id": armRow.variant_cell_id,
+        "x-herma-mutation-signature": armRow.mutation_signature,
+      };
+    }
+    const hydrated = hydratePromptPlaceholders(bodyTemplate, {
       agentId: url.searchParams.get("agent_id") || "",
       workerUuid: url.searchParams.get("worker_uuid") || "",
     });
-    return sendText(hydrated);
+    return finalizeWithTrace(
+      new Response(method === "HEAD" ? null : hydrated, {
+        status: QUEUE_GATEWAY_GRID.http_ok,
+        headers: { "content-type": "text/plain; charset=utf-8", ...extraPromptHeaders },
+      }),
+      QUEUE_GATEWAY_GRID.http_ok
+    );
   }
 
   if (action === "prompts_html" || action === "start" || action === "prompts") {
@@ -8519,8 +9409,8 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     );
   }
 
-  // Bilateral Onboarding & `worker_uuid` Minting (`/q/onboard` & `/q/onboard/<agent_id>`)
-  if (action === "onboard") {
+  // Bilateral Onboarding & `worker_uuid` Minting (`/q/onboard`, `/q/register` & `/q/onboard/<agent_id>`)
+  if (action === "onboard" || action === "register") {
     let params = Object.fromEntries(url.searchParams.entries());
     if (method === "POST") {
       try {
@@ -8560,7 +9450,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     const shouldMint = explicitMintNew || !passedUuid;
     const isReadOnlyHead = method === "HEAD";
     const calPatch = {
-      capabilities: params.capabilities || null,
+      capabilities: params.capability_tags || params.capabilities || null,
       answers: params.answers || null,
       model_hint: params.model_hint || modelHintHeader || null,
       harness_tier: params.harness_tier || null,
@@ -8788,6 +9678,16 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     if (searchOut.forbidden) {
       return sendJson({ ok: false, code: "forbidden_tier", detail: searchOut.detail }, QUEUE_GATEWAY_GRID.http_forbidden);
     }
+    const searchArm = params.arm || params.variant_cell_id || request.headers.get("x-herma-arm") || "";
+    const searchAgent = params.agent_id || params.agent || request.headers.get("x-agent-label") || "";
+    const searchUuid = params.worker_uuid || "";
+    if (searchArm || searchAgent || searchUuid) {
+      await recordArmSearchSignal(db, {
+        arm: searchArm,
+        agentId: searchAgent,
+        workerUuid: searchUuid,
+      });
+    }
     traceCtx.detail.matches = searchOut.total_matches;
     return sendJson(searchOut);
   }
@@ -8879,7 +9779,11 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         leaseSeconds: url.searchParams.get("lease_seconds") ?? null,
         family: url.searchParams.get("family") || url.searchParams.get("tag") || url.searchParams.get("topic") || "",
         verbKind: url.searchParams.get("verb_kind") || "",
+        intentBucket: url.searchParams.get("intent_bucket") || "",
         stepMode: url.searchParams.get("step_mode") || "",
+        generalist:
+          url.searchParams.get("generalist") === "1" || url.searchParams.get("generalist") === "true" || undefined,
+        publicUrl,
         allowCoLease: allowCoLeaseRaw,
       });
       if (claimOut.forbidden) {
@@ -8903,6 +9807,34 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         batch_count: claimOut.co_leased_batch?.length || (claimOut.task ? 1 : 0),
         visibility: claimOut.task?.visibility || "public_commons",
       };
+      if (
+        claimOut.task?.verb_kind === "aggregate_work_review_and_reprioritize" &&
+        !claimOut.task.aggregate_telemetry_digest
+      ) {
+        claimOut.task.aggregate_telemetry_digest = await buildAggregateFleetReviewDigest(db, publicUrl);
+      }
+      const workerToolkitGuidance = await buildWorkerToolkitGuidanceForClaim(db, publicUrl, {
+        agentId,
+        workerUuid: traceCtx.worker_uuid,
+        leasedTask: claimOut.task,
+        arm: url.searchParams.get("arm") || request.headers.get("x-herma-arm") || "",
+        pitchFraming: url.searchParams.get("pitch_framing") || request.headers.get("x-herma-pitch-framing") || "",
+        kitOrder: url.searchParams.get("kit_order") || request.headers.get("x-herma-kit-order") || "",
+        inlineCodeDensity:
+          url.searchParams.get("inline_code_density") || request.headers.get("x-herma-inline-code-density") || "",
+        taskEncouragement:
+          url.searchParams.get("task_encouragement") || request.headers.get("x-herma-task-encouragement") || "",
+        epsilonMutationMilli:
+          url.searchParams.get("epsilon_mutation_milli") ??
+          request.headers.get("x-herma-epsilon-mutation-milli") ??
+          undefined,
+        mutate: url.searchParams.get("mutate") ?? request.headers.get("x-herma-mutate") ?? undefined,
+        seed: url.searchParams.get("seed") || "",
+        modelHint: modelHintHeader,
+        harnessTier: traceCtx.harness_tier,
+        userAgent,
+      });
+      claimOut.worker_toolkit_guidance = workerToolkitGuidance;
       const pulse = await buildPulseSnapshot(db, env, infraAllowed);
       if (wantsJson) {
         return sendJson({
@@ -8926,6 +9858,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
               }
             : {}),
           ...(claimOut.collision_warning ? { collision_warning: claimOut.collision_warning } : {}),
+          worker_toolkit_guidance: workerToolkitGuidance,
           bilateral_guidance: claimOut.bilateral_guidance,
           pulse,
         });
@@ -8961,7 +9894,10 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           leaseSeconds: body.lease_seconds ?? null,
           family: body.family || body.tag || body.label || body.topic || "",
           verbKind: body.verb_kind || "",
+          intentBucket: body.intent_bucket || "",
           stepMode: body.step_mode || "",
+          generalist: body.generalist !== undefined ? Boolean(body.generalist) : undefined,
+          publicUrl,
           allowCoLease: body.allow_co_lease ?? body.co_lease ?? null,
           workerSetup: body.worker_setup && typeof body.worker_setup === "object" ? body.worker_setup : null,
         }
@@ -8987,6 +9923,42 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         batch_count: claimOut.co_leased_batch?.length || (claimOut.task ? 1 : 0),
         visibility: claimOut.task?.visibility || "public_commons",
       };
+      if (
+        claimOut.task?.verb_kind === "aggregate_work_review_and_reprioritize" &&
+        !claimOut.task.aggregate_telemetry_digest
+      ) {
+        claimOut.task.aggregate_telemetry_digest = await buildAggregateFleetReviewDigest(db, publicUrl);
+      }
+      const workerToolkitGuidance = await buildWorkerToolkitGuidanceForClaim(db, publicUrl, {
+        agentId,
+        workerUuid: traceCtx.worker_uuid,
+        leasedTask: claimOut.task,
+        arm: body.arm || body.variant_cell_id || url.searchParams.get("arm") || request.headers.get("x-herma-arm") || "",
+        pitchFraming:
+          body.pitch_framing || url.searchParams.get("pitch_framing") || request.headers.get("x-herma-pitch-framing") || "",
+        kitOrder: body.kit_order || url.searchParams.get("kit_order") || request.headers.get("x-herma-kit-order") || "",
+        inlineCodeDensity:
+          body.inline_code_density ||
+          url.searchParams.get("inline_code_density") ||
+          request.headers.get("x-herma-inline-code-density") ||
+          "",
+        taskEncouragement:
+          body.task_encouragement ||
+          url.searchParams.get("task_encouragement") ||
+          request.headers.get("x-herma-task-encouragement") ||
+          "",
+        epsilonMutationMilli:
+          body.epsilon_mutation_milli ??
+          url.searchParams.get("epsilon_mutation_milli") ??
+          request.headers.get("x-herma-epsilon-mutation-milli") ??
+          undefined,
+        mutate: body.mutate ?? url.searchParams.get("mutate") ?? request.headers.get("x-herma-mutate") ?? undefined,
+        seed: body.seed || url.searchParams.get("seed") || "",
+        modelHint: body.model_hint || body.worker_setup?.model_hint || modelHintHeader,
+        harnessTier: body.harness_tier || body.worker_setup?.harness_tier || traceCtx.harness_tier,
+        userAgent,
+        toolsAvailable: body.worker_setup?.tools_available || null,
+      });
       const pulse = await buildPulseSnapshot(db, env, infraAllowed);
       return sendJson({
         ok: true,
@@ -8996,9 +9968,9 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         reused_active_lease: Boolean(claimOut.reused_active_lease),
         ...(claimOut.co_leased_parallel_slot
           ? {
-              co_leased_parallel_slot: claimOut.co_leased_parallel_slot,
-              co_lease_mode: claimOut.co_lease_mode,
-            }
+               co_leased_parallel_slot: claimOut.co_leased_parallel_slot,
+               co_lease_mode: claimOut.co_lease_mode,
+             }
           : {}),
         ...(claimOut.step_mode_filter ? { step_mode_filter: claimOut.step_mode_filter } : {}),
         ...(claimOut.family_filter !== undefined
@@ -9013,6 +9985,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           harness_tier: claimOut.bilateral_guidance?.worker_profile?.harness_tier || "",
           capability_milli: claimOut.bilateral_guidance?.worker_profile?.capability_milli || 0,
         },
+        worker_toolkit_guidance: workerToolkitGuidance,
         bilateral_guidance: claimOut.bilateral_guidance,
         pulse,
       });
@@ -9020,7 +9993,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
   }
 
-  if (action === "submit" || action === "enqueue") {
+  if (action === "submit" || action === "complete" || action === "enqueue") {
     if (method === "GET") {
       const rawSegAgent = segments[2] || "";
       const rawSegTask = segments[3] || "";
@@ -9088,6 +10061,13 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         );
       }
       if (out.conflict) {
+        await recordArmSubmitOutcome(db, {
+          arm: String(url.searchParams.get("arm") || ""),
+          agentId,
+          workerUuid: url.searchParams.get("worker_uuid") || parsed.worker_uuid || "",
+          taskId,
+          succeeded: false,
+        });
         return sendJson(
           {
             ok: false,
@@ -9181,6 +10161,13 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         );
       }
       if (out.conflict) {
+        await recordArmSubmitOutcome(db, {
+          arm: String(body.arm || body.variant_cell_id || ""),
+          agentId: traceCtx.agent_id,
+          workerUuid: String(body.worker_uuid || ""),
+          taskId: traceCtx.task_id,
+          succeeded: false,
+        });
         return sendJson(
           {
             ok: false,

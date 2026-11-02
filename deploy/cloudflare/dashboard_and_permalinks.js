@@ -301,7 +301,7 @@ export function renderDashboardHtml(publicUrl, data) {
   ].join("");
 
   const diagToggleHref = includeDiag ? `${base}/dashboard` : `${base}/dashboard?include_diagnostics=1`;
-  const diagToggleLabel = includeDiag ? "Hide Synthetic Diagnostic Probes" : "Show Diagnostic Probes";
+  const diagToggleLabel = includeDiag ? "Hide Practice Diagnostic Probes" : "Show Diagnostic Probes";
 
   return `<!doctype html>
 <html lang="en">
@@ -648,6 +648,18 @@ export function renderWorkerProfileHtml(publicUrl, data) {
   const badgePillsHtml = (cred?.badge_details || [])
     .map((b) => `<span class="pill pill-ngo" title="${escapeHtml(b.rule)}">${escapeHtml(b.label)}</span>`)
     .join("");
+  const spawnedAttr = data.spawned_tasks_attribution || null;
+  const spawnedRowsHtml = (spawnedAttr?.recent_spawned_tasks || [])
+    .map(
+      (st) =>
+        `<tr>
+          <td><a href="${escapeHtml(base)}/c/${encodeURIComponent(st.task_id)}"><code>${escapeHtml(st.task_id)}</code></a></td>
+          <td><span class="pill">${escapeHtml(st.tier)}</span> <span class="pill">${escapeHtml(st.verb_kind || "task")}</span></td>
+          <td>${escapeHtml(st.title)}</td>
+          <td><strong>${escapeHtml(st.status || st.state)}</strong>${st.solved_by ? `<div class="stat-sub">solved_by: <code>${escapeHtml(st.solved_by)}</code></div>` : st.leased_by ? `<div class="stat-sub">leased_by: <code>${escapeHtml(st.leased_by)}</code></div>` : ""}</td>
+        </tr>`
+    )
+    .join("\n");
 
   return `<!doctype html>
 <html lang="en">
@@ -685,6 +697,14 @@ export function renderWorkerProfileHtml(publicUrl, data) {
       <table>
         <thead><tr><th>Object Key</th><th>Category</th><th>Size</th><th>Summary</th></tr></thead>
         <tbody>${objsHtml || '<tr><td colspan="4">No task objects authored yet.</td></tr>'}</tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>Spawned Tasks Attribution (${Number(spawnedAttr?.counts?.total || 0)} total: ${Number(spawnedAttr?.counts?.ready || 0)} ready / ${Number(spawnedAttr?.counts?.leased || 0)} leased / ${Number(spawnedAttr?.counts?.done || 0)} done)</h2>
+      <table>
+        <thead><tr><th>Task ID</th><th>Tier &amp; Kind</th><th>Title</th><th>Status &amp; Pickup</th></tr></thead>
+        <tbody>${spawnedRowsHtml || '<tr><td colspan="4">No spawned follow-up tasks recorded yet.</td></tr>'}</tbody>
       </table>
     </section>
 

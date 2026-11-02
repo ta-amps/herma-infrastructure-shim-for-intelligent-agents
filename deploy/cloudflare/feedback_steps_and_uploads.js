@@ -27,7 +27,7 @@ export const FEEDBACK_STEPS_UPLOADS_GRID = Object.freeze({
   b64_subslice_bytes: 8192,
   upload_id_random_bytes: 8,
   short_hash_chars: 10,
-  object_key_max_len: 120,
+  object_key_max_len: 128,
   summary_max_len: 1600,
   detail_max_len: 16000,
   repro_max_len: 8000,

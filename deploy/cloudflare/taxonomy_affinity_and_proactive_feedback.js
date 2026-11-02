@@ -45,7 +45,7 @@ export const TAXONOMY_AFFINITY_FEEDBACK_GRID = Object.freeze({
   affinity_worker_limit: 40,
   affinity_task_sample_limit: 20,
   model_hint_max_len: 80,
-  object_key_max_len: 120,
+  object_key_max_len: 128,
   http_ok: 200,
   http_bad_request: 400,
   http_method_not_allowed: 405,
@@ -204,7 +204,17 @@ export function buildDefaultPreferredWorkerSetup(stepMode = "atomic_cognitive_st
     minCtx = TAXONOMY_AFFINITY_FEEDBACK_GRID.default_context_tokens;
   }
 
-  const ov = overrides && typeof overrides === "object" ? overrides : {};
+  const ov = Array.isArray(overrides)
+    ? {
+        preferred_setup_tags: overrides.map((x) => String(x || "").trim()).filter(Boolean),
+        required_tools: overrides.map((x) => String(x || "").trim()).filter(Boolean),
+      }
+    : overrides && typeof overrides === "object"
+      ? overrides
+      : {};
+  const prefTags = Array.isArray(ov.preferred_setup_tags)
+    ? ov.preferred_setup_tags.map((x) => String(x || "").trim()).filter(Boolean)
+    : [];
   const prefTiers =
     Array.isArray(ov.preferred_harness_tiers) && ov.preferred_harness_tiers.length > 0
       ? ov.preferred_harness_tiers.map((x) => String(x || "").trim()).filter(Boolean)
@@ -239,6 +249,7 @@ export function buildDefaultPreferredWorkerSetup(stepMode = "atomic_cognitive_st
   return {
     preferred_harness_tiers: prefTiers,
     required_tools: reqTools,
+    ...(prefTags.length > 0 ? { preferred_setup_tags: prefTags } : {}),
     min_context_tokens: minContextTokens,
     preferred_model_families: prefModels,
     preferred_worker_uuids: prefUuids,
@@ -388,8 +399,12 @@ export function enrichTaxonomyRecord(raw = {}) {
   const rawReqCaps = Array.isArray(raw.required_capabilities)
     ? raw.required_capabilities.map((x) => String(x || "").trim()).filter(Boolean)
     : [];
-  const explicitSetup =
-    raw.preferred_worker_setup && typeof raw.preferred_worker_setup === "object"
+  const explicitSetup = Array.isArray(raw.preferred_worker_setup)
+    ? {
+        preferred_setup_tags: raw.preferred_worker_setup.map((x) => String(x || "").trim()).filter(Boolean),
+        required_tools: raw.preferred_worker_setup.map((x) => String(x || "").trim()).filter(Boolean),
+      }
+    : raw.preferred_worker_setup && typeof raw.preferred_worker_setup === "object"
       ? raw.preferred_worker_setup
       : {};
   const preferredWorkerSetup = buildDefaultPreferredWorkerSetup(stepMode, {
@@ -576,9 +591,8 @@ export async function runV610TaxonomyAndModelBackfill(db) {
   if (!db || typeof db.prepare !== "function") return;
   await ensureTaxonomyAffinityAndFeedbackSchema(db);
 
-  // 1. Canonicalize drifted model_hint strings in herma_worker_registry & herma_worker_lease_telemetry
-  await db
-    .prepare(
+  const backfillStmts = [
+    db.prepare(
       `UPDATE herma_worker_registry
        SET model_hint = REPLACE(
          CASE
@@ -589,31 +603,8 @@ export async function runV610TaxonomyAndModelBackfill(db) {
          '-'
        )
        WHERE model_hint != '' AND (model_hint != LOWER(TRIM(model_hint)) OR model_hint LIKE '%/%' OR model_hint LIKE '%_%')`
-    )
-    .run();
-
-  try {
-    await db
-      .prepare(
-        `UPDATE herma_worker_lease_telemetry
-         SET model_hint = REPLACE(
-           CASE
-             WHEN LOWER(TRIM(model_hint)) LIKE '%/%' THEN LOWER(TRIM(SUBSTR(model_hint, INSTR(model_hint, '/') + 1)))
-             ELSE LOWER(TRIM(model_hint))
-           END,
-           '_',
-           '-'
-         )
-         WHERE model_hint != '' AND (model_hint != LOWER(TRIM(model_hint)) OR model_hint LIKE '%/%' OR model_hint LIKE '%_%')`
-      )
-      .run();
-  } catch {
-    // telemetry table optional in mocked unit environments
-  }
-
-  // 2. Backfill herma_durable_queue taxonomy axes, required_capabilities_json, and search_hints_json
-  await db
-    .prepare(
+    ),
+    db.prepare(
       `UPDATE herma_durable_queue
        SET intent_bucket = CASE
              WHEN COALESCE(intent_bucket, '') != '' THEN intent_bucket
@@ -653,11 +644,8 @@ export async function runV610TaxonomyAndModelBackfill(db) {
           OR COALESCE(prog_lang, '') = ''
           OR COALESCE(deliverable_kind, '') = ''
           OR COALESCE(opt_goal, '') = ''`
-    )
-    .run();
-
-  await db
-    .prepare(
+    ),
+    db.prepare(
       `UPDATE herma_durable_queue
        SET required_capabilities_json = CASE
              WHEN step_mode = 'atomic_build_step' THEN '{"required_capabilities":["shell_exec","python_or_node_runtime","test_runner"],"preferred_worker_setup":{"preferred_harness_tiers":["tier_3_cli_code_harness","tier_4_deep_architect_astra"],"required_tools":["shell_exec","python_or_node_runtime","test_runner"],"min_context_tokens":131072,"preferred_model_families":[],"preferred_worker_uuids":[],"step_mode":"atomic_build_step"}}'
@@ -665,11 +653,8 @@ export async function runV610TaxonomyAndModelBackfill(db) {
              ELSE '{"required_capabilities":["structured_json_reasoning"],"preferred_worker_setup":{"preferred_harness_tiers":["tier_1_light_chat","tier_1_lightweight_get","tier_2_sandboxed_chat_worker","tier_3_cli_code_harness"],"required_tools":["structured_json_reasoning"],"min_context_tokens":32768,"preferred_model_families":[],"preferred_worker_uuids":[],"step_mode":"atomic_cognitive_step"}}'
            END
        WHERE COALESCE(required_capabilities_json, '') IN ('', '[]', '{}')`
-    )
-    .run();
-
-  await db
-    .prepare(
+    ),
+    db.prepare(
       `UPDATE herma_durable_queue
        SET search_hints_json = json_object(
              'intent_signature', intent_bucket,
@@ -682,12 +667,8 @@ export async function runV610TaxonomyAndModelBackfill(db) {
              )
            )
        WHERE COALESCE(search_hints_json, '') IN ('', '{}')`
-    )
-    .run();
-
-  // 3. Backfill herma_task_objects taxonomy axes, search_hints_json, and tessera_synced on public rows
-  await db
-    .prepare(
+    ),
+    db.prepare(
       `UPDATE herma_task_objects
        SET intent_bucket = CASE
              WHEN COALESCE(intent_bucket, '') != '' THEN intent_bucket
@@ -727,11 +708,8 @@ export async function runV610TaxonomyAndModelBackfill(db) {
           OR COALESCE(prog_lang, '') = ''
           OR COALESCE(deliverable_kind, '') = ''
           OR COALESCE(opt_goal, '') = ''`
-    )
-    .run();
-
-  await db
-    .prepare(
+    ),
+    db.prepare(
       `UPDATE herma_task_objects
        SET search_hints_json = json_object(
              'intent_signature', intent_bucket,
@@ -744,33 +722,51 @@ export async function runV610TaxonomyAndModelBackfill(db) {
              )
            )
        WHERE COALESCE(search_hints_json, '') IN ('', '{}')`
-    )
-    .run();
-
-  await db
-    .prepare(
+    ),
+    db.prepare(
       `UPDATE herma_durable_queue
        SET labels_json = json_array('intent:' || intent_bucket, 'env:' || target_env, 'lang:' || prog_lang, 'kind:' || deliverable_kind)
        WHERE COALESCE(labels_json, '') IN ('', '[]')`
-    )
-    .run();
-
-  await db
-    .prepare(
+    ),
+    db.prepare(
       `UPDATE herma_task_objects
        SET labels_json = json_array('intent:' || intent_bucket, 'env:' || target_env, 'lang:' || prog_lang, 'kind:' || deliverable_kind)
        WHERE COALESCE(labels_json, '') IN ('', '[]')`
-    )
-    .run();
-
-  await db
-    .prepare(
+    ),
+    db.prepare(
       `UPDATE herma_task_objects
        SET tessera_synced = 1
        WHERE COALESCE(tessera_synced, 0) = 0
          AND visibility IN ('public_ngo', 'public_commons')`
-    )
-    .run();
+    ),
+  ];
+
+  if (typeof db.batch === "function") {
+    await db.batch(backfillStmts);
+  } else {
+    for (const stmt of backfillStmts) {
+      await stmt.run();
+    }
+  }
+
+  try {
+    await db
+      .prepare(
+        `UPDATE herma_worker_lease_telemetry
+         SET model_hint = REPLACE(
+           CASE
+             WHEN LOWER(TRIM(model_hint)) LIKE '%/%' THEN LOWER(TRIM(SUBSTR(model_hint, INSTR(model_hint, '/') + 1)))
+             ELSE LOWER(TRIM(model_hint))
+           END,
+           '_',
+           '-'
+         )
+         WHERE model_hint != '' AND (model_hint != LOWER(TRIM(model_hint)) OR model_hint LIKE '%/%' OR model_hint LIKE '%_%')`
+      )
+      .run();
+  } catch {
+    // telemetry table optional in mocked unit environments
+  }
 }
 
 export function computeSetupSignature({
@@ -954,10 +950,12 @@ export function evaluateTaskWorkerAffinity({
   const callerUuid = String(workerProfile.worker_uuid || "").trim();
   const callerAgent = String(workerProfile.agent_id || "").trim().toLowerCase();
 
-  // Enforce drafter != reviewer on feedback verification tasks (`verb_fbk_review_*`)
+  // Enforce drafter != reviewer on feedback & object peer-review verification tasks (`verb_fbk_review_*`, `verb_peer_review_*`)
   const excludedUuids = pref.excluded_reporter_worker_uuids || [];
   const excludedAgents = pref.excluded_reporter_agent_ids || [];
-  const isFeedbackReviewTask = String(candidateRow.task_id || "").startsWith("verb_fbk_review_");
+  const taskIdStr = String(candidateRow.task_id || "");
+  const isFeedbackReviewTask =
+    taskIdStr.startsWith("verb_fbk_review_") || taskIdStr.startsWith("verb_peer_review_");
   if (
     (callerUuid && excludedUuids.includes(callerUuid)) ||
     (callerAgent && excludedAgents.includes(callerAgent)) ||
