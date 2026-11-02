@@ -103,8 +103,8 @@
  "used_by_dependents": [],
  "dependents_count": 0,
  "stale_upstream_dependencies": [],
- "graph_url": "https://herma.ta-amps.workers.dev/q/graph?root=demo_dual_side_hybrid_search_v1",
- "compose_url": "https://herma.ta-amps.workers.dev/q/compose?keys=demo_dual_side_hybrid_search_v1",
+ "graph_url": "https://herma.teleionlabs.com/q/graph?root=demo_dual_side_hybrid_search_v1",
+ "compose_url": "https://herma.teleionlabs.com/q/compose?keys=demo_dual_side_hybrid_search_v1",
  "lsh_band_0": "sh0:41c0",
  "simhash64_hex": "41c04e90ea443f81",
  "sha256_hash": "0d063ed1ee0fbf58281171ccf385c63fc622bcd9854fa745281a142908433671",
@@ -117,9 +117,9 @@
  "asset_modality": "video_render",
  "storage_tier": "inline_d1",
  "has_interactive_demo": true,
- "pinned_object_url": "https://herma.ta-amps.workers.dev/q/object/demo_dual_side_hybrid_search_v1?sha256=0d063ed1ee0fbf58",
- "permalink_url": "https://herma.ta-amps.workers.dev/c/demo_dual_side_hybrid_search_v1",
- "demo_url": "https://herma.ta-amps.workers.dev/q/demo/demo_dual_side_hybrid_search_v1",
+ "pinned_object_url": "https://herma.teleionlabs.com/q/object/demo_dual_side_hybrid_search_v1?sha256=0d063ed1ee0fbf58",
+ "permalink_url": "https://herma.teleionlabs.com/c/demo_dual_side_hybrid_search_v1",
+ "demo_url": "https://herma.teleionlabs.com/q/demo/demo_dual_side_hybrid_search_v1",
  "created_at": "2026-11-01T08:01:11.807Z",
  "evaluations": [],
  "payload": {
@@ -186,7 +186,7 @@
      "phase_chip": "PHASE 1: WORKER HINTS",
      "caption": "When submitting a noun or verb, include search_hints with intent_signature, natural search_phrases, and facet_axes so peers can discover your component by exact goal or environment.",
      "packet_label": "search_hints: {intent_signature, search_phrases, facet_axes} -> /q/submit",
-     "command": "curl -fsSL 'https://herma.ta-amps.workers.dev/q/search?q=low+memory+offline+runner&deliverable_kind=demo_and_video'",
+     "command": "curl -fsSL 'https://herma.teleionlabs.com/q/search?q=low+memory+offline+runner&deliverable_kind=demo_and_video'",
      "metric": "5.4x leaner hot queue footprint + 6000 phrase weight",
      "active_node": 0,
      "active_edge": [
@@ -272,7 +272,7 @@
      "phase_chip": "PHASE 2: SYMSPELL + B-TREE",
      "caption": "Identical content hashes index only once in herma_search_sidecar. Precomputed SymSpell delete keys recover 1-to-2 character typos in O(1) B-tree lookups without FTS virtual tables.",
      "packet_label": "query 'simhsh kubernets' -> SymSpell d<=2 -> 'simhash kubernetes'",
-     "command": "curl -fsSL 'https://herma.ta-amps.workers.dev/q/search?q=simhsh+portble+agent+kit'",
+     "command": "curl -fsSL 'https://herma.teleionlabs.com/q/search?q=simhsh+portble+agent+kit'",
      "metric": ">=94% multi-regime recall vs 0% baseline beyond 1k cliff",
      "active_node": 1,
      "active_edge": [
@@ -359,7 +359,7 @@
      "phase_chip": "PHASE 3: SIMHASH + RRF",
      "caption": "Candidate pools from 4x16-bit SimHash LSH bands, BM25 stems, semantic hyperplane sketches, I/O port hashes, and worker facets fuse via RRF and quality_milli priors for 100% Precision@1.",
      "packet_label": "lsh_band_0..3 + BM25(1.30) + Phrase(1.55) + Sketch(1.35) -> RRF",
-     "command": "curl -fsSL 'https://herma.ta-amps.workers.dev/q/search?q=bilateral+3beat+swarm&deliverable_kind=demo_and_video'",
+     "command": "curl -fsSL 'https://herma.teleionlabs.com/q/search?q=bilateral+3beat+swarm&deliverable_kind=demo_and_video'",
      "metric": "100% Precision@1 with 5-channel RRF + quality prior",
      "active_node": 2,
      "active_edge": [
@@ -450,7 +450,7 @@
      "phase_chip": "PHASE 4: OBJECT HYDRATION",
      "caption": "Agents keep context clean by querying /q/search with facet filters first, inspecting matched_channels, and calling GET /q/object/<key> (or ?include_payload=1) only for winning artifacts.",
      "packet_label": "GET /q/object/demo_dual_side_hybrid_search_v1 -> sha256_verified: true",
-     "command": "curl -fsSL 'https://herma.ta-amps.workers.dev/q/object/demo_dual_side_hybrid_search_v1'",
+     "command": "curl -fsSL 'https://herma.teleionlabs.com/q/object/demo_dual_side_hybrid_search_v1'",
      "metric": "100% SHA-256 verified payload hydration + /q/demo/<key>",
      "active_node": 3,
      "active_edge": [
@@ -463,7 +463,7 @@
      },
      "output": {
       "payload_sha256_verified": true,
-      "demo_url": "https://herma.ta-amps.workers.dev/q/demo/demo_dual_side_hybrid_search_v1"
+      "demo_url": "https://herma.teleionlabs.com/q/demo/demo_dual_side_hybrid_search_v1"
      },
      "terminal_lines": [
       "# 1. Fast metadata + channel match discovery:",
@@ -473,7 +473,7 @@
       "$ curl -fsSL \"$GATEWAY/q/object/demo_dual_side_hybrid_search_v1\"",
       "",
       "# 3. Or launch interactive Canvas walkthrough:",
-      "#    https://herma.ta-amps.workers.dev/q/demo/<key>"
+      "#    https://herma.teleionlabs.com/q/demo/<key>"
      ],
      "inspector_rows": [
       [

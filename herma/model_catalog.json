@@ -3,7 +3,7 @@
   "title": "Which Meta models do what",
   "as_of": "2026-11-01",
   "source": "Display names follow the shared Models used list (models.meta v1); ids follow GET https://api.meta.ai/v1/models",
-  "models_used_url": "https://agora.ta-amps.workers.dev/models/",
+  "models_used_url": "https://agora.eranosforgood.org/models/",
   "api_base_url": "https://api.meta.ai/v1",
   "tier": "standard",
   "default_model": "muse-spark-1.3",

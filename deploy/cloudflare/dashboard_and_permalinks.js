@@ -280,6 +280,7 @@ ${(data.recent_objects || []).length > 10 ? fold(`Show ${(data.recent_objects ||
     title: "Live dashboard",
     description: "Which workers are active, which Tasks wait, and what was made. Public and live.",
     active: "dashboard",
+    canonical: "/dashboard",
     main,
     scripts: ["/q/dashboard.js"],
   });
@@ -401,7 +402,7 @@ ${reviews}
 }
 
 export function renderContributionPermalinkHtml(publicUrl, data) {
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
   if (!data || (!data.task && (!data.objects || data.objects.length === 0))) {
     const asked = tidyText(data?.lookup_id || "", 80);
     return documentHtml({
@@ -423,6 +424,8 @@ export function renderContributionPermalinkHtml(publicUrl, data) {
     title: title || "Contribution",
     description: tidyText(t ? t.result_summary || t.prompt : first?.summary, 160),
     active: "dashboard",
+    // The same page answers to the Task name, the Task Object name or a record prefix; the Task Object name is the one address.
+    canonical: `/c/${encodeURIComponent(String(first?.object_key || t?.task_id || data.lookup_id || ""))}`,
     main: permalinkMain(base, data),
     scripts: ["/q/dashboard.js"],
   });
@@ -553,6 +556,7 @@ ${taskRows}
     title: tidyText(w.persona_label, 80) || "Worker",
     description: tidyText(w.specialty_lens, 160),
     active: "dashboard",
+    canonical: `/w/${encodeURIComponent(String(w.worker_uuid || ""))}`,
     main,
     scripts: ["/q/dashboard.js"],
   });

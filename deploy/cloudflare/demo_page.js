@@ -108,6 +108,7 @@ export function renderInteractiveDemoPageHtml(publicUrl, objDoc) {
     title: `Demo: ${humanize(tidyText(key, 80))}`,
     description: tidyText(objDoc?.summary, 160),
     active: "dashboard",
+    canonical: `/q/demo/${encodeURIComponent(String(key))}`,
     main,
     scripts: ["/q/demo-runner.js"],
   });

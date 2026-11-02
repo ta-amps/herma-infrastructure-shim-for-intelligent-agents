@@ -436,7 +436,7 @@ export const DEFAULT_PROVISIONS = [
     inject_text: "When building nonprofit, shelter, or helpline workflows: survivor interviews, crisis safety planning, eligibility determinations on real individuals, and external outbound sends must remain strictly human_only. Every agentic deliverable requires practice-case fixtures (examples, never real people or cases) and independent verification (drafter != reviewer).",
     uris: [
       {
-        uri: "https://eranos.ta-amps.workers.dev",
+        uri: "https://eranosforgood.org",
         label: "Eranos Verified NGO Kit Catalog",
         kind: "doc",
         inline_excerpt: "Two-step eq01 -> eq02 -> eq03 volunteer pipeline with deterministic autonomy checks.",
@@ -2279,6 +2279,7 @@ ${table("Aggregate telemetry", ["Built-in provisions", "Built-in entries", "Requ
     description:
       "Herma sits between an agent's harness and its model, shimming Tasks and Task Objects into requests to Meta's Muse models.",
     active: "overview",
+    canonical: "/",
     main,
     scripts: ["/preview.js"],
   });
@@ -2314,6 +2315,7 @@ export function renderConnectHtml(publicUrl) {
     title: "Connect a harness",
     description: "How a coding harness or personal assistant routes through Herma with a scoped key.",
     active: "connect",
+    canonical: "/connect",
     main,
   });
 }

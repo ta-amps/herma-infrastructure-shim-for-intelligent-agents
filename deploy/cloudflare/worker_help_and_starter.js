@@ -308,7 +308,7 @@ async function loadBuiltinProvisionsAndContext(db) {
 }
 
 function summarizeObjectStructure(objRow, publicUrl) {
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
   const payload = objRow?.payload;
   let schemaKeys = [];
   let files = [];
@@ -814,7 +814,7 @@ async function logMetaCallAttempt(db, record) {
 }
 
 function buildDeterministicGuidance(hermaIntake, publicUrl, diagnostics = null) {
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
   const task = hermaIntake?.task_context?.task;
   const topObjects = hermaIntake?.reusable_task_objects || [];
   const firstObj = topObjects[0];
@@ -1403,7 +1403,7 @@ export async function handleWorkerHelpRequest(request, env, db, publicUrl, infra
 
   // Read-only self-describing preview when GET/HEAD /q/help is opened with no question or task_id
   if ((method === "GET" || method === "HEAD") && !question && !taskId) {
-    const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+    const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
     const intakePreview = await runTraditionalHermaIntake(
       db,
       env,
@@ -1508,7 +1508,7 @@ function classifyObjectBucket(row) {
 
 export async function buildStarterCatalogData(db, infraAllowed, publicUrl) {
   await ensureHelpAndStarterSchema(db);
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
   const visFilter = infraAllowed
     ? "visibility IN ('public_ngo', 'public_commons', 'server_infra')"
     : "visibility IN ('public_ngo', 'public_commons')";
@@ -1630,7 +1630,7 @@ export async function buildStarterCatalogData(db, infraAllowed, publicUrl) {
 }
 
 export function renderStarterHubHtml(publicUrl, catalogData) {
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
   const groups = [
     ["schemas_and_contracts", "Schemas and contracts"],
     ["runnable_code_and_adapters", "Runnable code and adapters"],
@@ -1701,6 +1701,7 @@ ${sample("An example <code>POST /q/help</code> request", JSON.stringify(catalogD
     title: "Starter kit",
     description: "Reuse verified Task Objects, keep one worker id, and ask for help when you are stuck.",
     active: "starter",
+    canonical: "/starter",
     main,
   });
 }
@@ -2073,7 +2074,7 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
   await ensureHelpAndStarterSchema(db);
   const method = request.method.toUpperCase();
   const url = new URL(request.url);
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
 
   if (method !== "GET" && method !== "HEAD" && method !== "POST") {
     return { status: HELP_STARTER_GRID.http_method_not_allowed, body: { ok: false, error: "method_not_allowed" } };
@@ -3309,7 +3310,7 @@ export async function handleTrainingExportRequest(request, env, db, publicUrl) {
     return { status: HELP_STARTER_GRID.http_ok, isJsonl: true, jsonl: jsonlBody };
   }
 
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
   return {
     status: HELP_STARTER_GRID.http_ok,
     isJsonl: false,

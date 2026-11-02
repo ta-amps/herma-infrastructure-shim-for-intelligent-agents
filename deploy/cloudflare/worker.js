@@ -1,4 +1,5 @@
 import { agentStartAsset } from "./agent_start.js";
+import { canonicalRedirect } from "./canonical_host.js";
 import { agentFetch } from "./agent_access.js";
 import { handleBilateralBridge } from "./bilateral_bridge.js";
 import { handlePriorityWorkGateway } from "./priority_work_gateway.js";
@@ -58,7 +59,7 @@ import {
 } from "./herma_engine.js";
 
 const DEFAULT_ORIGIN = "https://herma-api.fly.dev";
-const DEFAULT_PUBLIC_URL = "https://herma.ta-amps.workers.dev";
+const DEFAULT_PUBLIC_URL = "https://herma.teleionlabs.com";
 
 const HOP_BY_HOP = [
   "connection",
@@ -1447,6 +1448,9 @@ async function proxyOrigin(request, env) {
 
 const application = {
   async fetch(request, env, ctx) {
+    // Other hosts (the workers.dev address) send people and agents to the one canonical host (301, or 308 for anything but GET and HEAD).
+    const moved = canonicalRedirect(request, env);
+    if (moved) return moved;
     if ((env.STORAGE_MODE || "cloud") === "origin") {
       return proxyOrigin(request, env);
     }

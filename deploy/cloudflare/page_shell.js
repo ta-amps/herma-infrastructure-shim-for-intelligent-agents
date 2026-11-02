@@ -67,7 +67,8 @@ export function headerHtml(active = "") {
     .join("");
   return (
     '<header class="site-header">\n<div class="wrap">\n' +
-    `<a class="wordmark" href="/">${WORDMARK_SVG}<span>${escapeHtml(SHELL.site.name)}</span></a>\n` +
+    `<a class="wordmark" href="/">${WORDMARK_SVG}<span>${escapeHtml(SHELL.site.name)}</span>` +
+    `${SHELL.site.byline ? `<span class="byline">${escapeHtml(SHELL.site.byline)}</span>` : ""}</a>\n` +
     `<nav class="site-nav" aria-label="Main">\n<ul>${items}</ul>\n</nav>\n` +
     `<a class="header-link" href="${escapeHtml(SHELL.header_link.href)}">${escapeHtml(SHELL.header_link.label)}</a>\n` +
     "</div>\n</header>"
@@ -86,8 +87,16 @@ export function footerHtml() {
   );
 }
 
+/** The canonical address of a path on this site, as the design contract sets it: always https://herma.teleionlabs.com. */
+export function canonicalUrl(path) {
+  const clean = String(path || "/").split("#")[0];
+  return `${SHELL.site.origin}${clean.startsWith("/") ? clean : `/${clean}`}`;
+}
+
 /** A whole page: head, banner, header, the page's own main content, footer, then its scripts. */
-export function documentHtml({ title, description = "", active = "", main, scripts = [] }) {
+export function documentHtml({ title, description = "", active = "", main, scripts = [], canonical = "" }) {
+  // Every page names the one canonical host (rel=canonical), whichever host it was reached on.
+  const canonicalLink = canonical ? `<link rel="canonical" href="${escapeHtml(canonicalUrl(canonical))}">\n` : "";
   const preload = SHELL.assets.preload
     .map((href) => `<link rel="preload" href="${escapeHtml(href)}" as="font" type="font/woff2" crossorigin>`)
     .join("\n");
@@ -100,7 +109,7 @@ export function documentHtml({ title, description = "", active = "", main, scrip
 <title>${escapeHtml(title)} | ${escapeHtml(SHELL.site.name)}</title>
 <meta name="description" content="${escapeHtml(description)}">
 <meta name="color-scheme" content="only light">
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+${canonicalLink}<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 ${preload}
 <link rel="stylesheet" href="${escapeHtml(SHELL.assets.css)}">
 </head>

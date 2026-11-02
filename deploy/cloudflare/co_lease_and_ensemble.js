@@ -796,10 +796,10 @@ export async function handleLeaseHeartbeatRequest(
   };
 }
 
-export async function buildLeaseIntelligenceSnapshot(db, publicUrl = "https://herma.ta-amps.workers.dev") {
+export async function buildLeaseIntelligenceSnapshot(db, publicUrl = "https://herma.teleionlabs.com") {
   await ensureCoLeaseAndEnsembleSchema(db);
   const nowIso = new Date().toISOString();
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
 
   const [activeRes, completedTasksRes, workerTelRes] = await Promise.all([
     db

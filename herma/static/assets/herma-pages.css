@@ -162,6 +162,7 @@ ta-agent-banner[data-ready] .agent-fallback { display: none; }
 .wordmark { display: inline-flex; align-items: center; gap: 10px; flex: none; min-height: 44px; color: var(--text); text-decoration: none; font-family: var(--font-display); font-weight: 700; font-size: 1.3125rem; letter-spacing: -0.01em; }
 .wordmark:hover { color: var(--text); text-decoration: none; }
 .wordmark svg { flex: none; width: 26px; height: 26px; }
+.wordmark .byline { font-family: var(--font-text); font-weight: 400; font-size: 0.875rem; letter-spacing: 0; color: var(--text-2); }
 .site-nav { flex: 1 1 auto; min-width: 0; }
 .site-nav ul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .site-nav a { display: inline-flex; align-items: center; min-height: 40px; padding: 8px 12px; border-radius: 10px; color: var(--text-2); text-decoration: none; font-size: var(--fs-ui); font-weight: 500; white-space: nowrap; }

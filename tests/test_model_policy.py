@@ -94,7 +94,7 @@ GET_PATHS = [
     "/robots.txt",
     "/favicon.svg",
 ]
-BASE = "https://herma.ta-amps.workers.dev"
+BASE = "https://herma.teleionlabs.com"
 # Routes only the Worker serves (the queue gateway, prompts hub, dashboard and permalinks). They are live, so
 # they must keep answering and must be as clean as the rest.
 GATEWAY_PATHS = [
@@ -172,7 +172,7 @@ def python_surface(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str,
 WORKER_SURFACE = r"""
 const db = new SqliteD1();
 const env = { STORAGE_MODE: "cloud", HERMA_DB: db };
-const base = "https://herma.ta-amps.workers.dev";
+const base = "https://herma.teleionlabs.com";
 const get = async (path) => (await worker.fetch(new Request(base + path), env)).text();
 const post = async (path, body) => (await worker.fetch(new Request(base + path, {
   method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), env)).text();
@@ -232,7 +232,7 @@ def test_catalog_lists_meta_models_first_and_keeps_agent_programs_out(tmp_path: 
     assert "harness_note" not in catalog, (
         "agent apps are listed only on the shared Models used page"
     )
-    assert catalog["models_used_url"] == "https://agora.ta-amps.workers.dev/models/"
+    assert catalog["models_used_url"] == "https://agora.eranosforgood.org/models/"
     assert catalog["tier"] == "standard"
     assert routed_model_ids() == {"muse-wonder-1.0", "muse-spark-1.3"}
     assert listed_model_ids() >= routed_model_ids()
@@ -314,7 +314,7 @@ def test_models_section_and_text_are_identical_in_both_runtimes(
     assert models_text() in worker_pages["/llms-full.txt"]
     for page in (python_pages["/"], worker_pages["/"]):
         assert '<h2 id="models-h">Which Meta Models Do What</h2>' in page
-        assert 'href="https://agora.ta-amps.workers.dev/models/">Models used ↗</a>' in page
+        assert 'href="https://agora.eranosforgood.org/models/">Models used ↗</a>' in page
     for app in AGENT_APP_NAMES:
         assert app not in section, "the models section names models only"
         assert app not in models_text()
@@ -325,7 +325,7 @@ def test_models_section_and_text_are_identical_in_both_runtimes(
     assert (
         (REPO_ROOT / "README.md")
         .read_text(encoding="utf-8")
-        .count("https://agora.ta-amps.workers.dev/models/")
+        .count("https://agora.eranosforgood.org/models/")
     )
 
 

@@ -1425,7 +1425,7 @@ async function seedV611VerbIfMissing(db, verbSpec) {
 
 export async function ensurePriorityGatewaySchema(
   db,
-  { isLiveRuntime = false, env = null, publicUrl = "https://herma.ta-amps.workers.dev" } = {}
+  { isLiveRuntime = false, env = null, publicUrl = "https://herma.teleionlabs.com" } = {}
 ) {
   if (!db || typeof db !== "object") {
     return;
@@ -1454,7 +1454,7 @@ export async function ensurePriorityGatewaySchema(
 
 async function runPriorityGatewaySchemaInitOnce(
   db,
-  { isLiveRuntime = false, env = null, publicUrl = "https://herma.ta-amps.workers.dev" } = {}
+  { isLiveRuntime = false, env = null, publicUrl = "https://herma.teleionlabs.com" } = {}
 ) {
   if (typeof db.batch === "function" && typeof db.prepare === "function") {
     try {
@@ -2357,7 +2357,7 @@ async function reassembleTaskObjectPayload(db, objRow) {
   };
 }
 
-async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https://herma.ta-amps.workers.dev") {
+async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https://herma.teleionlabs.com") {
   const rawQuery = String(params.q || params.query || "").trim();
   const scope = String(params.scope || "all").toLowerCase(); // 'all' | 'tasks' | 'objects'
   const reqTier = params.tier ? String(params.tier) : null;
@@ -3810,7 +3810,7 @@ async function recordRoutingOutcome(
   }
 }
 
-async function buildRoutingTelemetrySnapshot(db, infraAllowed, publicUrl = "https://herma.ta-amps.workers.dev") {
+async function buildRoutingTelemetrySnapshot(db, infraAllowed, publicUrl = "https://herma.teleionlabs.com") {
   const visFilter = infraAllowed
     ? "visibility IN ('public_ngo', 'public_commons', 'server_infra')"
     : "visibility IN ('public_ngo', 'public_commons')";
@@ -4674,7 +4674,7 @@ async function evaluateFreeAccessWindowGuardrail(request, url, env, db, { infraA
   return { allowed: true, config };
 }
 
-async function buildPulseSnapshot(db, env, infraAllowed, publicUrl = "https://herma.ta-amps.workers.dev") {
+async function buildPulseSnapshot(db, env, infraAllowed, publicUrl = "https://herma.teleionlabs.com") {
   await ensureCadenceAggregateReviewVerbs(db, publicUrl, {
     infraAllowed,
     scrubSensitiveText,
@@ -5098,7 +5098,7 @@ async function claimNextAuthorizedTask(
     slot = null,
     generalist = false,
     intentBucket = "",
-    publicUrl = "https://herma.ta-amps.workers.dev",
+    publicUrl = "https://herma.teleionlabs.com",
     modelHint = "",
     harnessTier = "",
     userAgent = "",
@@ -9445,11 +9445,11 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       traces_url: `${publicUrl}/q/traces`,
       object_lookup_url: `${publicUrl}/q/object/<object_key>`,
       verifiable_provenance_links: {
-        eranos_public_marketplace: "https://eranos.ta-amps.workers.dev/",
-        eranos_agent_manifest: "https://eranos.ta-amps.workers.dev/.well-known/agent.json",
-        rfc9116_security_txt: "https://eranos.ta-amps.workers.dev/.well-known/security.txt",
-        privacy_and_terms: "https://eranos.ta-amps.workers.dev/privacy",
-        open_source_mirror_manifest: "https://agora.ta-amps.workers.dev/source/manifest.json",
+        eranos_public_marketplace: "https://eranosforgood.org/",
+        eranos_agent_manifest: "https://eranosforgood.org/.well-known/agent.json",
+        rfc9116_security_txt: "https://eranosforgood.org/.well-known/security.txt",
+        privacy_and_terms: "https://eranosforgood.org/privacy",
+        open_source_mirror_manifest: "https://agora.eranosforgood.org/source/manifest.json",
       },
       authorized_chat_context_generalization: {
         explicitly_permitted_when_pasted_by_user: [

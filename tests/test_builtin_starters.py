@@ -22,7 +22,7 @@ WORKER = r"""
 const { canonicalJson, sha256Hex } = await import(process.env.WORKER_URL.replace(/worker\.js$/, "herma_engine.js"));
 const db = new SqliteD1();
 const env = { STORAGE_MODE: "cloud", HERMA_DB: db, BOOTSTRAP_SECRET: "boot-starters" };
-const base = "https://herma.ta-amps.workers.dev";
+const base = "https://herma.teleionlabs.com";
 await worker.fetch(new Request(base + "/healthz"), env);
 const key = await (await worker.fetch(new Request(base + "/v1/admin/keys", { method: "POST",
   headers: { "content-type": "application/json", "x-bootstrap-secret": "boot-starters" },
@@ -61,7 +61,7 @@ const {
 } = await import(process.env.WORKER_URL.replace(/worker\.js$/, "herma_engine.js"));
 const db = new SqliteD1();
 const env = { STORAGE_MODE: "cloud", HERMA_DB: db, BOOTSTRAP_SECRET: "boot-parity" };
-const base = "https://herma.ta-amps.workers.dev";
+const base = "https://herma.teleionlabs.com";
 await worker.fetch(new Request(base + "/healthz"), env);
 const homeHtml = await (await worker.fetch(new Request(base + "/"), env)).text();
 

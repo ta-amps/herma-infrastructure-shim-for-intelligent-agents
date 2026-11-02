@@ -418,6 +418,7 @@ def render_overview_page(
             "into requests to Meta's Muse models."
         ),
         active="overview",
+        canonical="/",
         main=main,
         scripts=("/preview.js",),
     )
@@ -453,5 +454,6 @@ def render_connect_page(public_url: str) -> str:
         title="Connect a harness",
         description="How a coding harness or personal assistant routes through Herma with a scoped key.",
         active="connect",
+        canonical="/connect",
         main=main,
     )

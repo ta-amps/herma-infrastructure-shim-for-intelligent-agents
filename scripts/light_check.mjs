@@ -8,7 +8,7 @@
 // It fails closed: a missing browser, an unreachable page or an unreadable stylesheet is a failure, never a skip.
 //
 //   node scripts/light_check.mjs                          local fixtures, rendered by the Worker's own page modules
-//   node scripts/light_check.mjs --base https://herma.ta-amps.workers.dev [--routes /,/dashboard]   a deployed site (GETs only)
+//   node scripts/light_check.mjs --base https://herma.teleionlabs.com [--routes /,/dashboard]   a deployed site (GETs only)
 //
 // Playwright comes from this repo's devDependencies (`npm ci`; browsers: `npx playwright install chromium`), or from
 // PLAYWRIGHT_MODULE, a path to an installed playwright package.

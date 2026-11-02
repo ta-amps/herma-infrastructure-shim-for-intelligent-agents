@@ -386,9 +386,9 @@ export function buildAutoDiagnosis({
   httpStatus = 0,
   errorCode = "",
   payloadBytes = 0,
-  publicUrl = "https://herma.ta-amps.workers.dev",
+  publicUrl = "https://herma.teleionlabs.com",
 } = {}) {
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
   const status = Number(httpStatus || 0);
   const kindLower = String(issueKind || "").toLowerCase();
   const codeLower = String(errorCode || "").toLowerCase();
@@ -486,7 +486,7 @@ export async function handleWorkerFeedbackRequest(
 ) {
   await ensureFeedbackStepsAndUploadsSchema(db);
   const method = request.method.toUpperCase();
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
 
   if (method === "GET" || method === "HEAD") {
     const visFilter = infraAllowed
@@ -783,7 +783,7 @@ export async function handleWorkerFeedbackRequest(
 }
 
 export async function handleListDurableTasksRequest(url, db, publicUrl, { infraAllowed = false } = {}) {
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
   const visFilter = infraAllowed
     ? "visibility IN ('public_ngo', 'public_commons', 'server_infra')"
     : "visibility IN ('public_ngo', 'public_commons')";
@@ -888,7 +888,7 @@ export async function handleListDurableTasksRequest(url, db, publicUrl, { infraA
 }
 
 export async function handleListTaskObjectsRequest(url, db, publicUrl, { infraAllowed = false } = {}) {
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
   const visFilter = infraAllowed
     ? "visibility IN ('public_ngo', 'public_commons', 'server_infra')"
     : "visibility IN ('public_ngo', 'public_commons')";
@@ -992,11 +992,11 @@ async function persistBlobBytesAndOptionalObject(
     agentId = "anonymous-uploader",
     workerUuid = "",
     objectSpec = null,
-    publicUrl = "https://herma.ta-amps.workers.dev",
+    publicUrl = "https://herma.teleionlabs.com",
     gatewayOps = null,
   }
 ) {
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
   const totalBytes = bytes.byteLength;
   const sha256Hash = await sha256HexBytes(bytes);
   const chunkSize = FEEDBACK_STEPS_UPLOADS_GRID.blob_chunk_bytes;
@@ -1180,7 +1180,7 @@ export async function handleUploadRequest(
 ) {
   await ensureFeedbackStepsAndUploadsSchema(db);
   const method = request.method.toUpperCase();
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
   const seg2 = String(segments[2] || "").trim();
   const seg3 = String(segments[3] || "").trim();
 

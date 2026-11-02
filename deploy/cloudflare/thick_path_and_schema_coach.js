@@ -485,8 +485,8 @@ export async function ensureThickPathAndSchemaCoachSchema(db, { seedCallback = n
   }
 }
 
-export function buildCanonicalSuggestedSchemas(publicUrl = "https://herma.ta-amps.workers.dev") {
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+export function buildCanonicalSuggestedSchemas(publicUrl = "https://herma.teleionlabs.com") {
+  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
   return {
     ok: true,
     schema: THICK_PATH_SCHEMA_COACH_GRID.schema_coach_version,
@@ -1356,9 +1356,9 @@ export async function recordThickPathAndSchemaSubmission(
   };
 }
 
-export async function buildGridRobustnessSnapshot(db, publicUrl = "https://herma.ta-amps.workers.dev") {
+export async function buildGridRobustnessSnapshot(db, publicUrl = "https://herma.teleionlabs.com") {
   await ensureThickPathAndSchemaCoachSchema(db);
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
 
   let tierAggRows = [];
   let recentRows = [];
@@ -1650,7 +1650,7 @@ export function computeHybridEmbeddingSimhashRerank(querySpec = {}, candidates =
   return ranked;
 }
 
-export async function handleMetaEmbeddingsSpecRequest(request, url, db, publicUrl = "https://herma.ta-amps.workers.dev") {
+export async function handleMetaEmbeddingsSpecRequest(request, url, db, publicUrl = "https://herma.teleionlabs.com") {
   const method = request.method.toUpperCase();
   if (method !== "GET" && method !== "HEAD" && method !== "POST") {
     return {
@@ -1660,7 +1660,7 @@ export async function handleMetaEmbeddingsSpecRequest(request, url, db, publicUr
   }
 
   await ensureThickPathAndSchemaCoachSchema(db);
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
 
   let seededRow = null;
   try {

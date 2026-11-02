@@ -76,9 +76,15 @@ def header_html(active: str = "") -> str:
         for item in contract["nav"]
     )
     link = contract["header_link"]
+    byline = (
+        f'<span class="byline">{escape(contract["site"]["byline"])}</span>'
+        if contract["site"].get("byline")
+        else ""
+    )
     return (
         '<header class="site-header">\n<div class="wrap">\n'
-        f'<a class="wordmark" href="/">{WORDMARK_SVG}<span>{escape(contract["site"]["name"])}</span></a>\n'
+        f'<a class="wordmark" href="/">{WORDMARK_SVG}<span>{escape(contract["site"]["name"])}</span>'
+        f"{byline}</a>\n"
         f'<nav class="site-nav" aria-label="Main">\n<ul>{items}</ul>\n</nav>\n'
         f'<a class="header-link" href="{escape(link["href"])}">{escape(link["label"])}</a>\n'
         "</div>\n</header>"
@@ -102,6 +108,12 @@ def footer_html() -> str:
     )
 
 
+def canonical_url(path: str) -> str:
+    """The canonical address of a path on this site, as the design contract sets it: always https://herma.teleionlabs.com."""
+    clean = (path or "/").split("#")[0]
+    return f"{shell()['site']['origin']}{clean if clean.startswith('/') else '/' + clean}"
+
+
 def document_html(
     *,
     title: str,
@@ -109,9 +121,13 @@ def document_html(
     description: str = "",
     active: str = "",
     scripts: tuple[str, ...] = (),
+    canonical: str = "",
 ) -> str:
     """A whole page: head, banner, header, the page's own main content, footer, then its scripts."""
     contract = shell()
+    canonical_link = (
+        f'<link rel="canonical" href="{escape(canonical_url(canonical))}">\n' if canonical else ""
+    )
     preload = "\n".join(
         f'<link rel="preload" href="{escape(href)}" as="font" type="font/woff2" crossorigin>'
         for href in contract["assets"]["preload"]
@@ -125,7 +141,7 @@ def document_html(
 <title>{escape(title)} | {escape(contract["site"]["name"])}</title>
 <meta name="description" content="{escape(description)}">
 <meta name="color-scheme" content="only light">
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+{canonical_link}<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 {preload}
 <link rel="stylesheet" href="{escape(contract["assets"]["css"])}">
 </head>

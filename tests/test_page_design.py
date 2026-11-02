@@ -11,6 +11,7 @@ mechanics are tested on the made-up list in tests/fixtures; the real list is exe
 
 from __future__ import annotations
 
+import html
 import json
 import re
 import shutil
@@ -33,8 +34,8 @@ MADE_UP_LIST = REPO_ROOT / "tests/fixtures/made-up-banned-words.json"
 MADE_UP_NEUTRAL = REPO_ROOT / "tests/fixtures/made-up-neutral-names.json"
 AGENT_APPS = ("nano" + "muse", "muse" + " code")
 STAMPS = ("PLANNED", "Not yet", "Layout preview", "COMING SOON", "Not ready yet")
-NAV_LABELS = ["Overview", "Connect", "Starter kit", "Prompts", "Dashboard"]
-FOOTER_SPEC = json.loads((REPO_ROOT / "tests/fixtures/footer.v1.json").read_text(encoding="utf-8"))
+NAV_LABELS = ["Dashboard", "Get started", "Search", "Trust & safety"]
+FOOTER_SPEC = json.loads((REPO_ROOT / "tests/fixtures/footer.v2.json").read_text(encoding="utf-8"))
 
 
 def run_node(script: str, timeout: int = 120) -> str:
@@ -67,9 +68,9 @@ def worker_site() -> dict[str, Any]:
 def python_pages() -> dict[str, str]:
     return {
         "/": render_overview_page(
-            [], [], "https://herma.ta-amps.workers.dev", [], aggregate_counts=None
+            [], [], "https://herma.teleionlabs.com", [], aggregate_counts=None
         ),
-        "/connect": render_connect_page("https://herma.ta-amps.workers.dev"),
+        "/connect": render_connect_page("https://herma.teleionlabs.com"),
     }
 
 
@@ -161,20 +162,23 @@ def test_python_and_worker_shells_are_byte_identical() -> None:
 
 
 def test_footer_is_the_shared_standard_one_row_of_links_and_one_short_line() -> None:
-    """MUST-FOLLOW rule 13 and shared/footer.v1.json: the brand and one row of links, then one short line."""
+    """MUST-FOLLOW rule 13 and footer v2 (claude-design-components.v2.json): the brand and one row of links, then one short line."""
     footer = page_shell.footer_html()
     assert footer.count("<ul>") == 1 and footer.count("<nav") == 1, "never two rows of links"
     assert footer.count('class="footer-brand"') == 1 and "<span>Herma</span>" in footer
-    spec_links = [(link["label"], link["href"]) for link in FOOTER_SPEC["links"]]
-    mark = FOOTER_SPEC["external_mark"]
+    assert FOOTER_SPEC["schema"] == "ta-amps.footer/2"
     found = re.findall(r'<li><a href="([^"]+)">([^<]+)</a></li>', footer)
-    # Herma is its own site, so every link in the standard footer goes to another site and carries the external mark.
     assert [(label, href) for href, label in found] == [
-        (label + mark, href) for label, href in spec_links
+        (link["label"], link["href"]) for link in FOOTER_SPEC["links"]
     ]
-    assert all(not href.startswith("https://herma.") for _label, href in spec_links)
+    # A link to another host is absolute and carries the mark; a link on this host is a relative path with no mark.
+    for link in FOOTER_SPEC["links"]:
+        external = link["href"].startswith("https://")
+        assert external == link["external"] == link["label"].endswith(" \u2197"), link
+    assert [label for _href, label in found][-1] == "For agents" and found[-1][0] == "/llms.txt"
     lines = re.findall(r'<p class="footer-line">([^<]+)</p>', footer)
-    assert lines == [FOOTER_SPEC["line"]["default"]] and len(lines[0]) < 100, "one short line"
+    assert lines == [FOOTER_SPEC["line"]] and len(lines[0]) < 100, "one short line"
+    assert lines[0].endswith("We don\u2019t accept private information at this stage.")
     assert "github.com" not in footer
 
 
@@ -185,7 +189,7 @@ def test_header_has_the_banner_above_the_nav_and_marks_the_page() -> None:
         r'<li><a href="[^"]+"(?: aria-current="page")?>([^<]+)</a></li>',
         page_shell.header_html("dashboard"),
     )
-    assert nav_labels == NAV_LABELS
+    assert [html.unescape(label) for label in nav_labels] == NAV_LABELS
     assert page_shell.header_html("dashboard").count('aria-current="page"') == 1
     assert '<meta name="color-scheme" content="only light">' in document
 
@@ -200,24 +204,46 @@ def test_every_page_carries_the_shell_and_stays_light(
 ) -> None:
     pages = all_pages(worker_site, python_pages)
     assert len(pages) >= 14
-    for name, html in pages.items():
-        assert '<meta name="color-scheme" content="only light">' in html, name
-        assert "<ta-agent-banner" in html and '<header class="site-header">' in html, name
-        assert '<footer class="site-footer">' in html and "Report a problem ↗" in html, name
-        assert '<main id="main">' in html and 'href="#main"' in html, name
-        assert html.count("<h1") == 1, name
-        assert "prefers-color-scheme" not in html, name
-        assert not re.search(r"\sstyle=", html), (
+    for name, page in pages.items():
+        assert '<meta name="color-scheme" content="only light">' in page, name
+        assert "<ta-agent-banner" in page and '<header class="site-header">' in page, name
+        assert '<footer class="site-footer">' in page and ">For agents</a>" in page, name
+        assert '<main id="main">' in page and 'href="#main"' in page, name
+        assert page.count("<h1") == 1, name
+        assert "prefers-color-scheme" not in page, name
+        assert not re.search(r"\sstyle=", page), (
             f"{name}: no inline styles (the stylesheet carries them)"
         )
-        assert "<style" not in html, name
-        inline_scripts = re.findall(r"<script(?![^>]*\bsrc=)(?![^>]*application/json)[^>]*>", html)
+        assert "<style" not in page, name
+        inline_scripts = re.findall(r"<script(?![^>]*\bsrc=)(?![^>]*application/json)[^>]*>", page)
         assert not inline_scripts, f"{name}: no inline scripts"
-        for link in re.findall(r'(?:src|href)="(https?://[^"]+)"', html):
-            assert re.match(r"https://(agora|eranos|herma)\.ta-amps\.workers\.dev/", link), (
+        for link in re.findall(r'(?:src|href)="(https?://[^"]+)"', page):
+            assert re.match(
+                r"https://(agora\.eranosforgood\.org|eranosforgood\.org|teleionlabs\.com|herma\.teleionlabs\.com)/",
+                link,
+            ), (
                 name,
                 link,
             )
+
+
+def test_every_existing_page_names_the_canonical_host(
+    worker_site: dict[str, Any], python_pages: dict[str, str]
+) -> None:
+    """Design contract of Nov 2: whichever host a page is reached on, rel=canonical names herma.teleionlabs.com."""
+    pages = all_pages(worker_site, python_pages)
+    for name, page in pages.items():
+        route = name.split(" ", 1)[1]
+        links = re.findall(r'<link rel="canonical" href="([^"]+)">', page)
+        if route in ("/c/nothing_here", "/w/w_missing"):
+            assert links == [], f"{name}: a page that was not found has no canonical address"
+            continue
+        assert len(links) == 1 and links[0].startswith("https://herma.teleionlabs.com/"), (
+            name,
+            links,
+        )
+    contribution = pages["worker /c/verb_evl_d900e706b470"]
+    assert 'rel="canonical" href="https://herma.teleionlabs.com/c/' in contribution
 
 
 def test_every_page_uses_plain_words(
@@ -235,9 +261,9 @@ def test_every_page_uses_plain_words(
     )
     found = json.loads(result.stdout)
     assert {name: problems for name, problems in found.items() if problems} == {}
-    for name, html in pages.items():
-        text = visible_text(html)
-        assert "\u2014" not in html, f"{name}: no em dashes"
+    for name, page in pages.items():
+        text = visible_text(page)
+        assert "\u2014" not in page, f"{name}: no em dashes"
         for stamp in STAMPS:
             assert stamp not in text, name
         assert not re.search(r"\bIdea\b", text), name
@@ -253,8 +279,7 @@ def test_pages_name_the_model_and_link_the_record_instead_of_hashes(
     assert "Muse Spark 1.3 through the Meta API" in dashboard
     for route in ("/dashboard", "/prompts", "/starter"):
         assert (
-            'href="https://agora.ta-amps.workers.dev/models/">Models used &#8599;</a>'
-            in pages[route]
+            'href="https://agora.eranosforgood.org/models/">Models used &#8599;</a>' in pages[route]
         ), route
     assert "Models used ↗" in pages["/"], "the home's models section links it too"
     assert "Record &#8599;" in dashboard and "?format=json" in dashboard

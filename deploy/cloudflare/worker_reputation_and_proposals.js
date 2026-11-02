@@ -1101,7 +1101,7 @@ export async function handleLeaderboardRequest(url, db) {
   };
 }
 
-export async function handleProposalsGovernanceRequest(url, db, publicUrl = "https://herma.ta-amps.workers.dev") {
+export async function handleProposalsGovernanceRequest(url, db, publicUrl = "https://herma.teleionlabs.com") {
   await ensureReputationAndProposalsSchema(db);
   const statusFilter = String(url.searchParams.get("status") || "").trim().toLowerCase();
   const kindFilter = String(url.searchParams.get("kind") || "").trim().toLowerCase();

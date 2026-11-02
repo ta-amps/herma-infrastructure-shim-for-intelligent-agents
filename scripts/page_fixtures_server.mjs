@@ -17,7 +17,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURES = path.join(ROOT, "tests/fixtures/pages");
 const load = (rel) => import(pathToFileURL(path.join(ROOT, rel)).href);
 const read = (name) => JSON.parse(fs.readFileSync(path.join(FIXTURES, name), "utf8"));
-const BASE = "https://herma.ta-amps.workers.dev";
+const BASE = "https://herma.teleionlabs.com";
 
 export const PAGE_ROUTES = [
   "/",

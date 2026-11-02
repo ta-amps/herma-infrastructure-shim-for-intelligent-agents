@@ -48,7 +48,7 @@ LETTER_RUN = re.compile(r"[A-Za-z]+")
 WORKER_ROUTES = """
 const db = new SqliteD1();
 const env = { STORAGE_MODE: "cloud", HERMA_DB: db, BOOTSTRAP_SECRET: "boot-retired-names" };
-const base = "https://herma.ta-amps.workers.dev";
+const base = "https://herma.teleionlabs.com";
 const call = async (path, init = {}) => {
   const res = await worker.fetch(new Request(base + path, init), env);
   return [path, res.status, await res.text()];

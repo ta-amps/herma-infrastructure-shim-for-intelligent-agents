@@ -8,7 +8,7 @@ Everything in the `ta-amps` ecosystem reduces to two plain-language primitives o
 
 - **durable tasks (`tasks (things to do)` -- `verbs` on the wire)**: independently schedulable units of work (`enqueue -> claim -> heartbeat -> submit/park`) leased by an authorized worker from the durable task queue and guarded by a monotonic `fence` token so two workers never double-execute the same job.
 - **`task objects` (`nouns` on the wire)**: every reusable tool, `Feed`, dataset, statute card, LoRA adapter spec, provision shim, or SHA-256 receipt a task uses or creates, stored as compare-and-set records guarded by `expected_version`.
-- **Two public surfaces + two infrastructure layers**: **[Agora](https://agora.ta-amps.workers.dev/)** (the single public overview of architecture, setup, harness feeds, interactive explorer, and contribution) and **[Eranos](https://eranos.ta-amps.workers.dev/)** (our live public-good showcase marketplace) are the two public surfaces; **Tessera** (durable task queue & CAS storage engine) and **Herma** (inline context & capability shim) are supporting infrastructure. `111` seed packs bundle `1,837` reusable `task objects` and `587` `tasks (things to do)`.
+- **Two public surfaces + two infrastructure layers**: **[Agora](https://agora.eranosforgood.org/)** (the single public overview of architecture, setup, harness feeds, interactive explorer, and contribution) and **[Eranos](https://eranosforgood.org/)** (our live public-good showcase marketplace) are the two public surfaces; **Tessera** (durable task queue & CAS storage engine) and **Herma** (inline context & capability shim) are supporting infrastructure. `111` seed packs bundle `1,837` reusable `task objects` and `587` `tasks (things to do)`.
 
 ## Why Everyday AI Use Feels Frustratingly Dumb Without a Shim
 
@@ -37,7 +37,7 @@ Herma routes model requests to the Meta API at the standard tier only: point it 
 | **Muse Image 1.0** (`muse-image-1.0`) | Image generation and editing. | No. Herma shims text requests only; call the Meta API directly. |
 | **Muse Voice Transcribe 1.0** (`muse-voice-transcribe-1.0`) | Speech to text: turns audio into a transcript. | No. Herma shims text requests only; call the Meta API directly. |
 
-See [Models used ↗](https://agora.ta-amps.workers.dev/models/) for the full list.
+See [Models used ↗](https://agora.eranosforgood.org/models/) for the full list.
 
 Official inference partners are compute hosts, not models, so they are not in this table: **Baseten** (`inference.baseten.co`), **Fireworks AI** (`api.fireworks.ai`) and **Modal** sit downstream of Herma's shims. Live `HTTP 200` is verified on **Baseten** `meta-models/muse-spark-open`; the `partner-compute-cascade` and `partner-compute-telemetry-cards` packs separate `live_api` from `local_verified` receipts.
 
@@ -84,10 +84,10 @@ docker run --rm -p 7730:7730 herma-shim:local
 
 ## The `ta-amps` Ecosystem (`Track 2: Push the Frontier`)
 
-- **Agora** (`https://agora.ta-amps.workers.dev`), public surface: the single overview of architecture and setup, `/judges/`, `/status/`, harness research feeds, interactive explorer, use cases, connecting any agent, and contributing (`github.com/ta-amps/agora-public-overview-architecture-setup-and-contribution`)
-- **Eranos** (`https://eranos.ta-amps.workers.dev`), live public-good showcase surface: the two-sided marketplace where people donate spare AI capacity and dedicated workers build and review agent kits for nonprofits (`github.com/ta-amps/eranos-public-marketplace-for-public-good-token-burn`)
+- **Agora** (`https://agora.eranosforgood.org`), public surface: the single overview of architecture and setup, `/judges/`, `/status/`, harness research feeds, interactive explorer, use cases, connecting any agent, and contributing (`github.com/ta-amps/agora-public-overview-architecture-setup-and-contribution`)
+- **Eranos** (`https://eranosforgood.org`), live public-good showcase surface: the two-sided marketplace where people donate spare AI capacity and dedicated workers build and review agent kits for nonprofits (`github.com/ta-amps/eranos-public-marketplace-for-public-good-token-burn`)
 - **Tessera** (`https://tessera.ta-amps.workers.dev`), infrastructure: durable task queue (`verbs` -- `tasks (things to do)`) and compare-and-set `task objects` (`nouns`) storage (`github.com/ta-amps/tessera-infrastructure-work-and-storage-engine`)
-- **Herma** (`https://herma.ta-amps.workers.dev`), infrastructure: `< 2 ms` context-shimming AI middleware and capability firewall for configurable coding harnesses (`github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents`)
+- **Herma** (`https://herma.teleionlabs.com`), infrastructure: `< 2 ms` context-shimming AI middleware and capability firewall for configurable coding harnesses (`github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents`)
 - **Pack library** (`github.com/ta-amps/seed-packs-library-of-nouns-and-verbs`): `111` seed packs of `1,837` `task objects` (`nouns`) and `587` `tasks (things to do)` (`verbs`), including 7-profile stem-cell DAG compilation, inline-lease durable task queues, and made-up case-file exploitation-evidence checks
 - `https://home.ta-amps.workers.dev` redirects visitors to Agora and serves the agent brief as text at `/connect`.
 

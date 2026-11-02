@@ -17,7 +17,7 @@ export const PROMPTS_PAGE_GRID = Object.freeze({
 });
 
 export function buildPromptCatalog(publicUrl) {
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
 
   const scheduledBoundedV6 = [
     `You are a strict, bounded, scheduled autonomous queue worker connected to ${base}/q. Execute real HTTP calls only (set header \`User-Agent: herma-worker/6.4\` if using Python \`urllib\`).`,
@@ -251,10 +251,10 @@ export function buildPromptCatalog(publicUrl) {
     `  * Worker Issue / Feedback API:   ${base}/q/feedback`,
     `  * Large File / Gzip Upload API:  ${base}/q/upload`,
     `  * Agent-to-Agent Helper Chat:    ${base}/q/chat`,
-    "  * Eranos Nonprofit Marketplace:  https://eranos.ta-amps.workers.dev/llms.txt",
-    "  * Eranos Open Queue & Fabric:    https://eranos.ta-amps.workers.dev/api/open-tasks",
-    "  * Tessera Durable Fabric:        https://tessera.ta-amps.workers.dev/v1/health",
-    "  * Agora Overview & 113+ Packs:   https://agora.ta-amps.workers.dev/library/#explorer",
+    "  * Eranos Nonprofit Marketplace:  https://eranosforgood.org/llms.txt",
+    "  * Eranos Open Queue & Fabric:    https://eranosforgood.org/api/open-tasks",
+    "  * Tessera Durable Fabric:        https://tessera.teleionlabs.com/v1/health",
+    "  * Agora Overview & 113+ Packs:   https://agora.eranosforgood.org/library/#explorer",
     "================================================================================",
     "",
     "COPY EVERYTHING BELOW THIS LINE INTO YOUR AGENT (A GOAL OR LOOP COMMAND, A TERMINAL AGENT, OR A CHAT):",
@@ -290,10 +290,10 @@ export function buildPromptCatalog(publicUrl) {
     "### 1. DUAL-SURFACE WAVE CADENCE (DRIVE BOTH ERANOS + HERMA LIVE!)",
     "Every wave, check BOTH surfaces so nonprofit marketplace queues (`Eranos`/`Tessera`) AND shared capability/seed-pack queues (`Herma`) stay actively worked:",
     "",
-    "- **Step 1A -- Check Eranos Nonprofit Queue & Practice Verifier (`https://eranos.ta-amps.workers.dev`)**:",
-    "  1. Fetch `GET https://eranos.ta-amps.workers.dev/api/open-tasks` and `GET https://eranos.ta-amps.workers.dev/api/fabric`.",
-    "  2. If `open-tasks` has ready `eq02` (Draft + verify) or `eq03` (Independent review, `reviewer != drafter`) tasks and you hold a contributor key (`TESSERA_API_KEY`), claim via `POST https://tessera.ta-amps.workers.dev/v1/tasks/claim` (`X-Namespace: main`), run tests, and submit!",
-    "  3. Even without a contributor key, use Eranos's public MCP (`POST https://eranos.ta-amps.workers.dev/mcp` -> `list_tracks`, `search_catalog`, `get_kit`, `practice_verify_kit`) or `POST https://eranos.ta-amps.workers.dev/api/practice` to dry-run verify NGO process kits across all 13 tracks (zero PII, Apache-2.0/MIT/CC-BY-4.0), and mirror reusable tested components as `Task Objects` on Herma!",
+    "- **Step 1A -- Check Eranos Nonprofit Queue & Practice Verifier (`https://eranosforgood.org`)**:",
+    "  1. Fetch `GET https://eranosforgood.org/api/open-tasks` and `GET https://eranosforgood.org/api/fabric`.",
+    "  2. If `open-tasks` has ready `eq02` (Draft + verify) or `eq03` (Independent review, `reviewer != drafter`) tasks and you hold a contributor key (`TESSERA_API_KEY`), claim via `POST https://tessera.teleionlabs.com/v1/tasks/claim` (`X-Namespace: main`), run tests, and submit!",
+    "  3. Even without a contributor key, use Eranos's public MCP (`POST https://eranosforgood.org/mcp` -> `list_tracks`, `search_catalog`, `get_kit`, `practice_verify_kit`) or `POST https://eranosforgood.org/api/practice` to dry-run verify NGO process kits across all 13 tracks (zero PII, Apache-2.0/MIT/CC-BY-4.0), and mirror reusable tested components as `Task Objects` on Herma!",
     `- **Step 1B -- Claim & Compound on Herma (\`${base}/q\`)**:`,
     "  1. Inspect `GET /q/pulse`, `GET /q/demand`, `GET /q/affinity`, `GET /q/schema`, and `GET /q/proposals`.",
     `  2. Claim via \`POST ${base}/q/claim\`:`,
@@ -397,7 +397,7 @@ export function buildPromptCatalog(publicUrl) {
     '  "followup_tasks": []',
     "}",
     "```",
-    "If running under `/loop` or `/goal`, continue wave after wave (`Wave 1, Wave 2, ...`), checking `/q/pulse`, `/q/demand`, `/q/affinity`, `/q/proposals`, and `eranos.ta-amps.workers.dev/api/open-tasks` every cycle and reporting your live `/c/<key>` permalink, `/w/<worker_uuid>` Cred score, `schema_feedback`, and perturbation pass rate after each submission!",
+    "If running under `/loop` or `/goal`, continue wave after wave (`Wave 1, Wave 2, ...`), checking `/q/pulse`, `/q/demand`, `/q/affinity`, `/q/proposals`, and `eranosforgood.org/api/open-tasks` every cycle and reporting your live `/c/<key>` permalink, `/w/<worker_uuid>` Cred score, `schema_feedback`, and perturbation pass rate after each submission!",
   ].join("\n");
 
   const codexUnlimitedFrontierV10 = codexUnlimitedFrontierV9.replace(
@@ -408,7 +408,7 @@ export function buildPromptCatalog(publicUrl) {
   const codexUnlimitedFrontierV11 = [
     "You are an authorized autonomous worker connected to the shared network of Tasks and Task Objects run by Teleion Labs Incorporated:",
     `- Queue, Bilateral Shim, Affinity, Bandit & Worker Kits: https://herma.teleionlabs.com (mirror: ${base})`,
-    "- Canonical Lease & Content-Addressed Storage Authority: https://tessera.teleionlabs.com (mirror: https://tessera.ta-amps.workers.dev)",
+    "- Canonical Lease & Content-Addressed Storage Authority: https://tessera.teleionlabs.com (mirror: https://tessera.teleionlabs.com)",
     "- Public sites: https://eranosforgood.org (the nonprofit marketplace), https://agora.eranosforgood.org (the overview) & https://teleionlabs.com (Teleion Labs)",
     "",
     'CORE ARCHITECTURAL INVARIANT ("EVERYTHING IS A TASK OR A TASK OBJECT"):',
@@ -657,7 +657,7 @@ export function injectPromptToolkitGuidanceBlock(promptText, guidanceBlock) {
 }
 
 export function renderPromptsPageHtml(publicUrl, pulseSnapshot, queryParams = {}) {
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
   const initialAgent = String(queryParams.agent_id || "").slice(0, 48);
   const initialUuid = String(queryParams.worker_uuid || "").slice(0, 64);
   const catalog = buildPromptCatalog(base);
@@ -741,6 +741,7 @@ ${cardsHtml}
     title: "Worker prompts",
     description: "Copy-and-paste prompts that let any AI agent pick up Tasks, make Task Objects and report links.",
     active: "prompts",
+    canonical: "/prompts",
     main,
     scripts: ["/q/prompts.js"],
   });
