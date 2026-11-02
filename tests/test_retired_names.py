@@ -182,7 +182,12 @@ def test_seed_data_and_runtime_sources_name_no_retired_pack() -> None:
     paths = [
         *sorted((ROOT / "examples").rglob("*.json")),
         *sorted((ROOT / "herma").rglob("*.py")),
-        *sorted(p for p in (ROOT / "deploy" / "cloudflare").iterdir() if p.is_file()),
+        # The git-ignored word-list module holds the shared list itself (rule 16); it is not part of the repository.
+        *sorted(
+            p
+            for p in (ROOT / "deploy" / "cloudflare").iterdir()
+            if p.is_file() and not p.name.endswith(".generated.js")
+        ),
     ]
     sources = [(p.relative_to(ROOT).as_posix(), p.read_text(encoding="utf-8")) for p in paths]
     assert any(name == "deploy/cloudflare/d1-herma.sql" for name, _ in sources)
