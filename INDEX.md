@@ -31,7 +31,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) |  |
 
-## deploy/ (20)
+## deploy/ (31)
 
 | File | What it is |
 |---|---|
@@ -45,18 +45,24 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/conversation_data.json](deploy/cloudflare/conversation_data.json) | JSON object: categories, schemas, system_prompt |
 | [deploy/cloudflare/conversation_state.js](deploy/cloudflare/conversation_state.js) | Conversation coordination, not a work queue. |
 | [deploy/cloudflare/d1-herma.sql](deploy/cloudflare/d1-herma.sql) | Persistent Cloudflare D1 caller-isolated schema for Herma context-shimming AI middleware (ta-amps-herma). |
-| [deploy/cloudflare/dashboard_and_permalinks.js](deploy/cloudflare/dashboard_and_permalinks.js) | Interactive Worker Swarm Visualization Dashboard (/dashboard, /q/dashboard, /q/dashboard.js) |
+| [deploy/cloudflare/dashboard_and_permalinks.js](deploy/cloudflare/dashboard_and_permalinks.js) | The live dashboard (/dashboard, /q/dashboard), a contribution's page (/c/<id>) and a worker's page (/w/<id>), |
+| [deploy/cloudflare/demo_page.js](deploy/cloudflare/demo_page.js) | The interactive demo page for a Task Object (/q/demo/<key>) and the script it runs (/q/demo-runner.js): a step |
 | [deploy/cloudflare/entry.js](deploy/cloudflare/entry.js) |  |
 | [deploy/cloudflare/feedback_steps_and_uploads.js](deploy/cloudflare/feedback_steps_and_uploads.js) | Herma v6.9 + v6.10 Catch-All Proactive Worker Feedback, Auto-Diagnosis & Peer-Review Verb Spawner (/q/feedbac… |
 | [deploy/cloudflare/herma_engine.js](deploy/cloudflare/herma_engine.js) | Context-shimming 3-tier trigger engine, multi-caller isolation, governance lens, |
+| [deploy/cloudflare/on_demand_api_and_nodes.js](deploy/cloudflare/on_demand_api_and_nodes.js) | Universal On-Demand TaskObject API Runtime, Scoped Key Vault & Swappable Backend Engine Slots |
+| [deploy/cloudflare/page_shell.js](deploy/cloudflare/page_shell.js) | The one shell every Herma page shares: the document head, the thin agent banner, the header and the footer, p… |
 | [deploy/cloudflare/priority_work_gateway.js](deploy/cloudflare/priority_work_gateway.js) | Prioritized Multi-Tier Durable Task Queue, Partitioned Search Sidecar & Task-Object Gateway (/q/) |
-| [deploy/cloudflare/prompts_page.js](deploy/cloudflare/prompts_page.js) | Public Copy-Paste "Get Started Prompts" Hub (/prompts, /get-started, /q/start, /q/prompts.js) |
+| [deploy/cloudflare/prompts_page.js](deploy/cloudflare/prompts_page.js) | The worker prompts hub (/prompts, /get-started, /q/start, /q/prompts, /q/prompts.js): copy-and-paste prompts… |
 | [deploy/cloudflare/provider_diagnostics.js](deploy/cloudflare/provider_diagnostics.js) | Fixed provider-reported categories only. |
 | [deploy/cloudflare/provider_health.js](deploy/cloudflare/provider_health.js) | Deterministic shared availability inside the existing operator allowance coordinator. |
+| [deploy/cloudflare/release-policy.json](deploy/cloudflare/release-policy.json) | JSON object: schema, note, required_ancestors, live_when_recorded, rules |
 | [deploy/cloudflare/taxonomy_affinity_and_proactive_feedback.js](deploy/cloudflare/taxonomy_affinity_and_proactive_feedback.js) | Herma v6.10 Deterministic Taxonomy Auto-Describer, Preferred-Worker / Setup Affinity, |
 | [deploy/cloudflare/thick_path_and_schema_coach.js](deploy/cloudflare/thick_path_and_schema_coach.js) | Herma v6.8 Thick-Path Plateau Grid Telemetry, Proactive Open-World Schema Coach (/q/schema, /q/schema/validat… |
 | [deploy/cloudflare/worker.js](deploy/cloudflare/worker.js) |  |
 | [deploy/cloudflare/worker_entropy_catalog.js](deploy/cloudflare/worker_entropy_catalog.js) | Bilateral Worker Onboarding Personas, Calibration Questions, Single-Step Atomic Remix Operators, |
+| [deploy/cloudflare/worker_help_and_starter.js](deploy/cloudflare/worker_help_and_starter.js) | Bilateral Worker Help (/q/help), Agent-to-Agent Chat (/q/chat, /q/a2a), |
+| [deploy/cloudflare/worker_reputation_and_proposals.js](deploy/cloudflare/worker_reputation_and_proposals.js) | workerreputationandproposals.js |
 | [deploy/cloudflare/wrangler.jsonc](deploy/cloudflare/wrangler.jsonc) | Herma Cloud Worker: 24/7 context-shimming AI middleware on Cloudflare Workers + D1 (ta-amps-herma) |
 | [deploy/fly/Dockerfile](deploy/fly/Dockerfile) |  |
 | [deploy/fly/fly.toml](deploy/fly/fly.toml) |  |
@@ -98,7 +104,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [examples/provisions/README.md](examples/provisions/README.md) | Example Provisions & Atomic Task Object / Task Context |
 | [examples/provisions/context/CONTEXT-TESSERA-NOUNS-VERBS.json](examples/provisions/context/CONTEXT-TESSERA-NOUNS-VERBS.json) | JSON object: entries |
 
-## herma/ (30)
+## herma/ (37)
 
 | File | What it is |
 |---|---|
@@ -106,6 +112,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [herma/agent_access.py](herma/agent_access.py) | Bounded, stateless browser-agent transport; bearer authorization stays in each route. |
 | [herma/api/__init__.py](herma/api/__init__.py) | FastAPI HTTP service and read-only console pages for Herma. |
 | [herma/api/app.py](herma/api/app.py) | FastAPI application for Herma middleware (:7730). |
+| [herma/api/page_shell.py](herma/api/page_shell.py) | The one shell every Herma page shares: the document head, the thin agent banner, the header and the footer. |
 | [herma/api/pages.py](herma/api/pages.py) | Server-rendered HTML console, SVG brand chrome, interactive preview script, and discovery specs. |
 | [herma/cli.py](herma/cli.py) | Command-line interface for Herma: seed, keys, context, dry-run, 3-tier demo, and serve. |
 | [herma/conversation.py](herma/conversation.py) | Scoped dialogue producing typed proposals; execution stays in the caller's harness. |
@@ -120,12 +127,18 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [herma/memory.py](herma/memory.py) | Deterministic Anti-RAG top-of-mind entity extraction and candidate rule synthesis (0 LLM calls). |
 | [herma/model_catalog.json](herma/model_catalog.json) | Which Meta models do what |
 | [herma/model_catalog.py](herma/model_catalog.py) | The Meta model catalog: one data file that pages, discovery text and routing checks all read. |
+| [herma/page_shell.json](herma/page_shell.json) | JSON object: schema, note, site, assets, nav, header_link |
 | [herma/profiles.py](herma/profiles.py) | Adaptive CallerProfile shimming lenses, deterministic strategy ranking, and budget enforcement. |
 | [herma/provider_diagnostics.py](herma/provider_diagnostics.py) | Bounded provider-reported error categories, never raw messages or identifiers. |
 | [herma/provider_health.py](herma/provider_health.py) | Deterministic operator availability inside the existing provider allowance lifecycle. |
 | [herma/provider_plan.py](herma/provider_plan.py) | Explicit provider-plan nouns and per-caller operator grants; selection adds no work authority. |
 | [herma/proxy.py](herma/proxy.py) | Context-shimming interception, direct-response short-circuiting, and upstream LLM forwarding. |
 | [herma/schemas.py](herma/schemas.py) | Strict Pydantic schemas for provisions, context entries, triggers, memory, outcomes, and receipts. |
+| [herma/static/assets/agent-banner.js](herma/static/assets/agent-banner.js) |  |
+| [herma/static/assets/fonts/OFL-IBMPlexSans.txt](herma/static/assets/fonts/OFL-IBMPlexSans.txt) |  |
+| [herma/static/assets/fonts/OFL-JetBrainsMono.txt](herma/static/assets/fonts/OFL-JetBrainsMono.txt) |  |
+| [herma/static/assets/fonts/OFL-SpaceGrotesk.txt](herma/static/assets/fonts/OFL-SpaceGrotesk.txt) |  |
+| [herma/static/assets/herma-pages.css](herma/static/assets/herma-pages.css) |  |
 | [herma/store.py](herma/store.py) | SQLite WAL caller-isolated store, atomic CAS, governance lens, entity memory, and outcome telemetry. |
 | [herma/triggers/__init__.py](herma/triggers/__init__.py) | Three-tier trigger evaluation: keyword (~0 ms), semantic (~1-5 ms), and micromodel. |
 | [herma/triggers/engine.py](herma/triggers/engine.py) | Orchestrates Tier-1 (keyword), Tier-2 (semantic), and Tier-3 (micromodel) triggers. |
@@ -133,14 +146,19 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [herma/triggers/micromodel.py](herma/triggers/micromodel.py) | Tier-3 micromodel router trigger: fast tiny/cloud classifier with deterministic offline fallback. |
 | [herma/triggers/semantic.py](herma/triggers/semantic.py) | Tier-2 semantic similarity trigger (~1-5 ms): hybrid concept + subword cosine + optional embeddings. |
 
-## scripts/ (4)
+## scripts/ (9)
 
 | File | What it is |
 |---|---|
 | [scripts/build_conversation_data.py](scripts/build_conversation_data.py) | Export canonical category guidance and the prompt for the Worker, without model calls. |
 | [scripts/build_index.py](scripts/build_index.py) | Build this repo's indexes from its own files. |
+| [scripts/build_page_assets.py](scripts/build_page_assets.py) | Keep the shared page shell's asset versions equal to the files in herma/static/assets. |
 | [scripts/check_architecture.py](scripts/check_architecture.py) | Check that architecture.json still describes this repo truthfully. |
 | [scripts/check_public.py](scripts/check_public.py) | Fail if a file headed for a public repo holds a secret or a private name. |
+| [scripts/check_release.py](scripts/check_release.py) | Fail closed before a deploy of the Herma Worker, from any checkout of this repository. |
+| [scripts/light_check.mjs](scripts/light_check.mjs) | The light check (owner rule 13: light only, everywhere). |
+| [scripts/page_fixtures_server.mjs](scripts/page_fixtures_server.mjs) | Serves every public Herma page from small fixtures, with the real static assets, so a browser can check the l… |
+| [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release: what Herma serves must not name the retired model family, the banned word… |
 
 ## test/ (11)
 
@@ -158,11 +176,16 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/triggers.test.js](test/triggers.test.js) |  |
 | [test/worker_reputation_and_proposals.test.js](test/worker_reputation_and_proposals.test.js) |  |
 
-## tests/ (22)
+## tests/ (29)
 
 | File | What it is |
 |---|---|
 | [tests/conftest.py](tests/conftest.py) | Example operator grants for managed conversation tests; no provider is ever contacted. |
+| [tests/fixtures/pages/contribution_kit.json](tests/fixtures/pages/contribution_kit.json) | JSON object: ok, lookup_id, task, objects, child_verbs, evaluations |
+| [tests/fixtures/pages/dashboard.json](tests/fixtures/pages/dashboard.json) | JSON object: ok, schema, registered_workers, distinct_contributor_agents, total_evaluations, indexed_sidecar_docs |
+| [tests/fixtures/pages/demo_object.json](tests/fixtures/pages/demo_object.json) | JSON object: ok, schema, object_key, requested_key, version_num, version_count |
+| [tests/fixtures/pages/starter.json](tests/fixtures/pages/starter.json) | JSON object: ok, schema, quick_start_workflow, starter_frameworks, reusable_object_catalog, endpoints |
+| [tests/fixtures/pages/worker.json](tests/fixtures/pages/worker.json) | JSON object: ok, worker_uuid, worker, tasks, objects, reputation |
 | [tests/test_api_and_proxy.py](tests/test_api_and_proxy.py) | Tests for multi-protocol payload augmentation, deduplication, edge lockdown, and HTTP endpoints. |
 | [tests/test_builtin_starters.py](tests/test_builtin_starters.py) | Starters synced from Tessera fire for routed callers only when they carry fabricgovernance, and natural-langu… |
 | [tests/test_cli_demo.py](tests/test_cli_demo.py) | The CI demo verifies the supported client policy and its real provision pipeline. |
@@ -175,12 +198,14 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [tests/test_herma.py](tests/test_herma.py) | Tests for multi-caller isolation, CAS, governance lens, entity memory, insights, preview, and MCP parity. |
 | [tests/test_index_portability.py](tests/test_index_portability.py) | The index CLI produces the same bytes in differently named checkouts. |
 | [tests/test_model_policy.py](tests/test_model_policy.py) | Muse-first routing policy: Herma names Meta's latest Muse models and nothing from the retired family. |
+| [tests/test_page_design.py](tests/test_page_design.py) | Herma's public pages: light only, one shell, plain words (owner rules of Nov 1, 2026, including rule 13). |
 | [tests/test_provider_accounting.py](tests/test_provider_accounting.py) | Known skips do not spend allowance; nonfinal provider outcomes keep reservations. |
 | [tests/test_provider_contracts.py](tests/test_provider_contracts.py) | Provider selection, native generation and exception allowance stay explicit. |
 | [tests/test_provider_diagnostics.py](tests/test_provider_diagnostics.py) | Provider error evidence is bounded, private and never a raw response echo. |
 | [tests/test_provider_grants.py](tests/test_provider_grants.py) | Operator spending grants name exact callers, and one upstream model is one identity. |
 | [tests/test_provider_health.py](tests/test_provider_health.py) | Shared operator limits admit one funded, explicitly authorized recovery probe. |
 | [tests/test_provider_plan.py](tests/test_provider_plan.py) | Explicit private plans may advance providers without losing charged attempts. |
+| [tests/test_release_guard.py](tests/test_release_guard.py) | The deploy-time guard: wrangler refuses a deploy that breaks a release rule, from any checkout of this repo. |
 | [tests/test_retired_names.py](tests/test_retired_names.py) | Herma never serves or seeds a retired pack name (MUST-FOLLOW item 9, owner, October 29). |
 | [tests/test_runtime_parity.py](tests/test_runtime_parity.py) | Python and the Worker make identical spending, identity and parsing decisions. |
 | [tests/test_triggers.py](tests/test_triggers.py) | Tests for Tier-1 (keyword/regex/path/tool), Tier-2 (semantic), and Tier-3 (micromodel) triggers. |
