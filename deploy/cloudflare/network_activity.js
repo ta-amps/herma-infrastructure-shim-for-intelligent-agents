@@ -17,7 +17,7 @@
 // changed; every worker-written string goes through the shared word list (tidyText) on its way out (MUST-FOLLOW rule 16).
 
 import MODEL_CATALOG from "../../herma/model_catalog.json" with { type: "json" };
-import { mergeNetwork } from "./network_merge.js";
+import { mergeNetwork, modelName } from "./network_merge.js";
 import PLACES from "./network_places.json" with { type: "json" };
 import { tidyText } from "./page_shell.js";
 import { isTeamAgent, loadTeamAgents } from "./team_agents.js";
@@ -49,8 +49,37 @@ export const NETWORK_GRID = Object.freeze({
 const KIND_PARAMS = new Set(["all", "nonprofit", "shared", "check", "own"]);
 const CONTINENT_CODES = new Set(["AF", "AN", "AS", "EU", "NA", "OC", "SA"]);
 
-const MODEL_NAMES = Object.freeze(Object.fromEntries((MODEL_CATALOG.models || []).filter((m) => m.id && m.name).map((m) => [m.id, m.name])));
+// The family a volunteer may declare, with no version: we cannot know which version it ran, so the map names the family and marks it declared.
+const MODEL_ALIASES = Object.freeze({ "muse-spark": "Muse Spark" });
+const MODEL_NAMES = Object.freeze({ ...MODEL_ALIASES, ...Object.fromEntries((MODEL_CATALOG.models || []).filter((m) => m.id && m.name).map((m) => [m.id, m.name])) });
 const COUNTRY_NAMES = Object.freeze(Object.fromEntries(Object.values(PLACES.places).map((p) => [p.country, p.country_name])));
+
+/** What a volunteer declared as its model, cleaned for display: letters, digits, dots and hyphens, at most 40 characters ("" when nothing is left). */
+export function cleanDeclaredModel(raw) {
+  return String(raw ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9.]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[-.]+/, "")
+    .slice(0, 40)
+    .replace(/[-.]+$/, "");
+}
+
+/**
+ * The names the map may give a model: the catalog's (and the family alias), plus, for each id a volunteer declared that the catalog does not name, the cleaned id
+ * ("Model not declared" tells a reader less than what the worker said). A cleaned id the shared word list would change in any way (a banned word, a private name,
+ * a long hex string) is not shown. The map marks such a model "(declared)".
+ */
+export function modelNamesFor(rows, known = MODEL_NAMES) {
+  const names = Object.assign(Object.create(null), known);
+  for (const row of rows) {
+    if (!row.declared || !row.model || modelName(row.model, names)) continue;
+    const cleaned = cleanDeclaredModel(row.model);
+    if (cleaned.length < 2 || tidyText(cleaned, 40) !== cleaned) continue;
+    names[row.model] = cleaned;
+  }
+  return names;
+}
 
 /** The map's kind of a claimed Task: nonprofit, shared, check or own. */
 export function networkKind(task = {}) {
@@ -297,7 +326,7 @@ export async function buildNetworkBody({ db, env, kind = "all", replay = false, 
     own,
     tessera,
     places: PLACES.places,
-    modelNames: MODEL_NAMES,
+    modelNames: modelNamesFor(own),
     kind: wanted,
     replay,
     text: (value) => tidyText(value, 160),

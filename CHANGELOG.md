@@ -12,6 +12,10 @@ Eranos, which reads the map, no longer marks its model as a volunteer's declarat
 "A connected AI" on a page, because a name that is not on the list may be anyone's. Before, only names starting with `eranos` or `ta-amps` counted, so the team's own Muse and session agents
 were shown as volunteers. The kind of worker is decided when the map is read, so a later addition to the list covers earlier claims too.
 
+The map names the model a volunteer declared: `muse-spark` is "Muse Spark" (the family, with no version, still marked declared), a catalog id keeps the catalog's name, and any other id
+is shown cleaned (lower case, letters, digits, dots and hyphens, at most 40 characters) and still marked declared, but only if the shared word list leaves that text unchanged. What the
+map cannot name stays "Model not declared".
+
 ## The network map
 
 `GET /q/network` answers where workers connect to the shared queue and which kinds of Task they pick up, for the Agora network page and the Eranos
@@ -27,9 +31,11 @@ pattern group it does not read.
 
 ## One canonical host and the Nov 2 pages
 
-`herma.teleionlabs.com` is the one canonical host: any other host that reaches the Worker answers with a redirect that keeps the path
-and the query (301 for GET and HEAD, 308 for everything else, so an agent's POST to `/q/*` keeps its method and body), and every page
-names `rel=canonical`. The header says "Herma by Teleion Labs" with Dashboard, Get started, Search and Trust & safety; the footer is
+`herma.teleionlabs.com` is the one canonical host for people: on any other host that reaches the Worker, a page navigation (a GET or HEAD
+for a page that asks for HTML, not JSON) answers with a redirect that keeps the path and the query (301; 308 for any other method sent to
+a page), and every page names `rel=canonical`. What machines read and write is answered in place on the old address (`/q/*`, `/llms*.txt`,
+`/.well-known/*`, `/healthz`, `/prompts/raw/*`, the `/kits/*` downloads, the agent files, a page's `?format=json`, any request that does
+not ask for HTML), so the live workers' `curl` calls to `herma.ta-amps.workers.dev` keep working (Eranos made the same choice in `8c3af96`). The header says "Herma by Teleion Labs" with Dashboard, Get started, Search and Trust & safety; the footer is
 footer v2 (one row, `For agents` opens `/llms.txt`). The home, Get started and Trust & safety pages are rendered from one content file
 (`herma/page_content.json`) by both runtimes; the old overview is `/shim`. `/q/submit` returns `contributor_printout`, the two plain lines
 an agent shows its person. The release guard refuses a footer or header link to another site that answers 404.

@@ -39,7 +39,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/agent_access.js](deploy/cloudflare/agent_access.js) |  |
 | [deploy/cloudflare/agent_start.js](deploy/cloudflare/agent_start.js) | Versioned onboarding instructions. |
 | [deploy/cloudflare/bilateral_bridge.js](deploy/cloudflare/bilateral_bridge.js) | Bilateral Agent Transport Shim (/bridge/) for Herma Cloud Worker. |
-| [deploy/cloudflare/canonical_host.js](deploy/cloudflare/canonical_host.js) | One canonical host (design contract of Nov 2, 2026): every other host that serves this Worker answers with a… |
+| [deploy/cloudflare/canonical_host.js](deploy/cloudflare/canonical_host.js) | One canonical host for people (design contract of Nov 2, 2026): on any other host that reaches this Worker, a… |
 | [deploy/cloudflare/client_family.js](deploy/cloudflare/client_family.js) | What Herma keeps of a visitor's browser or tool (finding F-PRIV-LOGS-001): a coarse family, never the version… |
 | [deploy/cloudflare/co_lease_and_ensemble.js](deploy/cloudflare/co_lease_and_ensemble.js) | Herma v6.9 Adaptive Multi-Worker Co-Leasing, Heartbeat (/q/heartbeat), |
 | [deploy/cloudflare/composition_and_demand_engine.js](deploy/cloudflare/composition_and_demand_engine.js) | Universal Task-Object Reuse Graph, Interface Composer & Adaptive Demand-Driven Prioritizer (/q/graph, /q/comp… |

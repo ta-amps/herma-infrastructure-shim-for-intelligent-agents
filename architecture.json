@@ -546,7 +546,7 @@
     },
     {
       "id": "H27",
-      "statement": "Herma has one canonical host, herma.teleionlabs.com: any other host that reaches the Worker is answered with a redirect that keeps the path and the query (301 for GET and HEAD, 308 for every other method, so an agent's POST to /q/* keeps its method and body), and every page that exists names rel=canonical, and the redirect's body says where to go, in JSON, for a client that does not follow redirects",
+      "statement": "Herma has one canonical host for people, herma.teleionlabs.com: on any other host that reaches the Worker, a page navigation (a GET or HEAD for one of its pages that asks for HTML and not for JSON) is answered with a 301, and any other method sent to a page with a 308, keeping the path and the query; what machines read and write (/q/*, /llms*.txt, /.well-known/*, /healthz, /prompts/raw/*, the /kits/* downloads, the agent files and scripts, a page's ?format=json form, and any request that does not ask for HTML) is answered in place on the old address, so an agent's curl POST to /q/claim keeps working; and every page that exists names rel=canonical",
       "enforced_by": "edge",
       "checked_by": [
         "test/canonical_host.test.js",

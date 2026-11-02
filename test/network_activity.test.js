@@ -1,7 +1,7 @@
 import { env, exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import worker from "../deploy/cloudflare/worker.js";
-import { NETWORK_GRID, buildNetworkBody, networkKind, networkWorkerKind, parseShowOnMap, pruneClaimEdges, recordClaimEdge, resetNetworkCaches, setShowOnMap } from "../deploy/cloudflare/network_activity.js";
+import { NETWORK_GRID, buildNetworkBody, cleanDeclaredModel, modelNamesFor, networkKind, networkWorkerKind, parseShowOnMap, pruneClaimEdges, recordClaimEdge, resetNetworkCaches, setShowOnMap } from "../deploy/cloudflare/network_activity.js";
 
 // GET /q/network (design contract claude-design-network-map.v1.json): where workers connect and what they pick up.
 // Only request.cf.colo and request.cf.continent are kept per claim; a claim names a data center only when 2 or more workers of its kind
@@ -49,6 +49,31 @@ describe("the map's small rules", () => {
     expect(networkWorkerKind("eranos-worker-3")).toBe("dedicated");
     expect(networkWorkerKind("ta-amps.helper")).toBe("dedicated");
     expect(networkWorkerKind("someone-elses-agent")).toBe("volunteer");
+  });
+
+  it("cleans a declared model id to letters, digits, dots and hyphens, at most 40 characters", () => {
+    expect(cleanDeclaredModel("My_Custom Model.v2!!")).toBe("my-custom-model.v2");
+    expect(cleanDeclaredModel("  --Muse//Spark?? ")).toBe("muse-spark");
+    expect(cleanDeclaredModel("x".repeat(60))).toBe("x".repeat(40));
+    expect(cleanDeclaredModel("ab-".repeat(20)).length).toBeLessThanOrEqual(40);
+    for (const none of ["", "   ", "!!!", "___", null, undefined]) expect(cleanDeclaredModel(none)).toBe("");
+  });
+
+  it("gives a name to each model a volunteer declared and the catalog does not list, and to nothing the word list would change", () => {
+    const names = modelNamesFor([
+      { declared: true, model: "muse-spark-open" }, // not in the catalog: shown as declared
+      { declared: true, model: "muse-spark" }, // the family alias
+      { declared: true, model: "muse-spark-1.3" }, // the catalog's own
+      { declared: true, model: "a1b2c3d4e5f6a7b8c9d0" }, // a long hex string: the filter changes it, so it is not shown
+      { declared: false, model: "some-team-model" }, // not declared by a volunteer: not named here
+      { declared: true, model: "" },
+    ]);
+    expect(names["muse-spark-open"]).toBe("muse-spark-open");
+    expect(names["muse-spark"]).toBe("Muse Spark");
+    expect(names["muse-spark-1.3"]).toBe("Muse Spark 1.3");
+    expect(names["a1b2c3d4e5f6a7b8c9d0"]).toBeUndefined();
+    expect(names["some-team-model"]).toBeUndefined();
+    expect(Object.keys(names)).not.toContain("__proto__");
   });
 
   it("reads a clear yes as shown and any other value that is given as off", () => {
@@ -130,6 +155,24 @@ describe("GET /q/network", () => {
     expect(body.data_centres[0].last_claim_at).toBe(joinedAt);
     expect(body.recent_claims.map(label)).toEqual(["FRA", "(Europe)", "(Europe)"]);
     expect(body.replay.claims.map(label)).toEqual(["(Europe)", "FRA"]); // oldest first; the 20-hour-old claim is outside the hour
+  });
+
+  it("names the model a volunteer declared: the family without a version, the catalog's name, or the cleaned id, and never one the word list changes", async () => {
+    const declared = [["w_m1", "muse-spark"], ["w_m2", "muse-spark-1.3"], ["w_m3", "My_Custom Model.v2!!"], ["w_m4", "x".repeat(60)], ["w_m5", "a1b2c3d4e5f6a7b8c9"], ["w_m6", ""]];
+    for (const [index, [uuid, model]] of declared.entries()) {
+      await recordClaimEdge(db(), edge("FRA", "EU"), { task: await queueTask(`task_${uuid}`), workerUuid: uuid, agentId: `agent-${uuid}`, modelHint: model, nowIso: minutesAgo(30 - index) });
+    }
+    await recordClaimEdge(db(), edge("FRA", "EU"), { task: await queueTask("task_w_team"), workerUuid: "w_team", agentId: "ta-amps-model-test", modelHint: "muse-spark", nowIso: minutesAgo(2) });
+    const body = await (await call("/q/network?replay=1")).json();
+    const model = (uuid) => body.recent_claims.find((c) => c.title === `Plan for task_${uuid}`)?.model;
+    expect(model("w_m1")).toEqual({ name: "Muse Spark", declared: true });
+    expect(model("w_m2")).toEqual({ name: "Muse Spark 1.3", declared: true });
+    expect(model("w_m3")).toEqual({ name: "my-custom-model.v2", declared: true });
+    expect(model("w_m4")).toEqual({ name: "x".repeat(40), declared: true });
+    expect(model("w_m5")).toBeNull(); // changed by the word list: not shown
+    expect(model("w_m6")).toBeNull();
+    expect(model("w_team")).toEqual({ name: "Muse Spark", declared: false }); // a team agent's model is not a volunteer's declaration
+    expect(JSON.stringify(body)).not.toContain("a1b2c3d4e5f6a7b8c9");
   });
 
   it("keeps each claim for 30 days, then only a count per day and continent", async () => {
