@@ -24,6 +24,9 @@ import { inMemoryD1 } from "./memory_d1.mjs";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASE = "https://herma.ta-amps.workers.dev";
 const EM_DASH = String.fromCharCode(0x2014);
+// Owner, Nov 2: a hash or fingerprint is not shown anywhere on a page, code included. The list's own pattern covers prose; this covers all
+// visible text. (A run of hex digits that long is not a word.)
+const LONG_HEX = /(?<![0-9a-f])[0-9a-f]{12,}(?![0-9a-f])/i;
 
 let INPUTS;
 let RULES;
@@ -102,6 +105,7 @@ export function pageProblems(name, html) {
       problems.push(...matchProblems(name, text, [rule], "shows banned wording"));
     }
   }
+  if (LONG_HEX.test(visibleText(html))) problems.push(`${name}: shows a long hex string (a hash or fingerprint), in code or in prose`);
   if (html.includes(EM_DASH)) problems.push(`${name}: has an em dash`);
   return problems;
 }
