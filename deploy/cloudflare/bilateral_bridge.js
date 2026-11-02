@@ -14,6 +14,7 @@ export const BRIDGE_GRID_CONFIG = Object.freeze({
   agent_max_len: 40,
   turn_tag_max_len: 16,
   max_slug_chars: 1800,
+  max_b64_slug_chars: 10924,
   max_json_chars: 8192,
   max_summary_chars: 240,
   max_subtasks: 12,
@@ -29,6 +30,7 @@ export const BRIDGE_GRID_CONFIG = Object.freeze({
   subtasks_prefix_len: 9,
   hash_prefix_chars: 12,
   shingle_width: 3,
+  cjk_bigram_width: 2,
   demo_queues: Object.freeze(["demo.ping", "demo.echo", "demo.situate_sample"]),
   curriculum_prompts: Object.freeze([
     "Decompose 'Build a fault-tolerant durable task queue adapter with automatic health-probe failover and idempotent step replay' into 3 atomic subtasks, and propose 1 follow-up edge-case task.",
@@ -40,7 +42,7 @@ export const BRIDGE_GRID_CONFIG = Object.freeze({
 const SAFE_CHANNEL_RE = /^[A-Za-z0-9_-]+$/;
 const SAFE_AGENT_RE = /^[A-Za-z0-9._-]+$/;
 const SECRET_SCRUB_RE =
-  /\b(?:tsk_[A-Za-z0-9_-]{8,}|tan_[A-Za-z0-9_-]{8,}|hmk_[A-Za-z0-9_-]{8,}|sk-[A-Za-z0-9_-]{12,}|ghp_[A-Za-z0-9]{12,}|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g;
+  /\b(?:tsk_[A-Za-z0-9_-]{8,}|tan_[A-Za-z0-9_-]{8,}|hmk_[A-Za-z0-9_-]{8,}|hk_(?:wrk|ep|inf)_[A-Za-z0-9_-]{16,}|wt_[a-f0-9]{24,}|sk-[A-Za-z0-9_-]{12,}|ghp_[A-Za-z0-9]{12,}|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g;
 
 function expectedChallenge() {
   return String(BRIDGE_GRID_CONFIG.challenge_addend_a + BRIDGE_GRID_CONFIG.challenge_addend_b);
@@ -81,10 +83,25 @@ async function sha256HexLocal(input) {
 
 export async function computeTaskFingerprint(text) {
   const normalized = scrubSensitiveText(text)
+    .normalize("NFKC")
     .toLowerCase()
-    .replace(/[^a-z0-9\s_-]+/g, " ")
+    .replace(/[^\p{L}\p{M}\p{N}\s_-]+/gu, " ")
     .replace(/[-_]+/g, " ");
-  const tokens = normalized.split(/\s+/).filter(Boolean);
+  const baseTokens = normalized.split(/\s+/).filter(Boolean);
+  const cjkRunRe = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+/gu;
+  const tokens = [];
+  for (const tok of baseTokens) {
+    tokens.push(tok);
+    const cjkRuns = tok.match(cjkRunRe) || [];
+    for (const run of cjkRuns) {
+      const biW = BRIDGE_GRID_CONFIG.cjk_bigram_width;
+      if (run.length > biW) {
+        for (let i = 0; i + biW <= run.length; i += 1) {
+          tokens.push(run.slice(i, i + biW));
+        }
+      }
+    }
+  }
   const shingles = [];
   const width = BRIDGE_GRID_CONFIG.shingle_width;
   if (tokens.length < width) {
@@ -127,7 +144,10 @@ function fromBase64Url(b64url) {
 }
 
 export function parseSlugReply(rawSlug) {
-  const trimmed = String(rawSlug || "").slice(0, BRIDGE_GRID_CONFIG.max_slug_chars);
+  const rawStr = String(rawSlug || "");
+  const isB64Candidate = rawStr.startsWith("b64_") || rawStr.startsWith("b64%5F") || rawStr.startsWith("b64%5f");
+  const preCap = isB64Candidate ? BRIDGE_GRID_CONFIG.max_b64_slug_chars : BRIDGE_GRID_CONFIG.max_slug_chars;
+  const trimmed = rawStr.slice(0, preCap);
   let decoded = trimmed;
   try {
     decoded = decodeURIComponent(trimmed);
@@ -136,15 +156,20 @@ export function parseSlugReply(rawSlug) {
   }
   if (decoded.startsWith("b64_")) {
     try {
-      const unpacked = fromBase64Url(decoded.slice(BRIDGE_GRID_CONFIG.b64_prefix_len));
+      const unpacked = fromBase64Url(decoded.slice(BRIDGE_GRID_CONFIG.b64_prefix_len)).slice(
+        0,
+        BRIDGE_GRID_CONFIG.max_json_chars
+      );
       if (unpacked.trim().startsWith("{")) {
         const obj = JSON.parse(unpacked);
         return normalizeReplyObject(obj);
       }
-      decoded = unpacked;
+      decoded = unpacked.slice(0, BRIDGE_GRID_CONFIG.max_slug_chars);
     } catch {
-      // fall through to human-readable slug parsing
+      decoded = decoded.slice(0, BRIDGE_GRID_CONFIG.max_slug_chars);
     }
+  } else {
+    decoded = decoded.slice(0, BRIDGE_GRID_CONFIG.max_slug_chars);
   }
   const scrubbedDecoded = scrubSensitiveText(decoded);
   const sections = scrubbedDecoded
@@ -217,12 +242,26 @@ export function parseSlugReply(rawSlug) {
 
 function normalizeReplyObject(obj) {
   const safeObj = obj && typeof obj === "object" ? obj : {};
-  const subtasks = Array.isArray(safeObj.subtasks)
-    ? safeObj.subtasks.slice(0, BRIDGE_GRID_CONFIG.max_subtasks).map((x) => scrubSensitiveText(x))
-    : [];
-  const generated = Array.isArray(safeObj.generated_tasks)
-    ? safeObj.generated_tasks.slice(0, BRIDGE_GRID_CONFIG.max_generated_tasks).map((x) => scrubSensitiveText(x))
-    : [];
+  const rawSubtasks = Array.isArray(safeObj.subtasks)
+    ? safeObj.subtasks
+    : Array.isArray(safeObj.steps)
+      ? safeObj.steps
+      : [];
+  const subtasks = rawSubtasks
+    .slice(0, BRIDGE_GRID_CONFIG.max_subtasks)
+    .map((x) => scrubSensitiveText(typeof x === "object" && x ? x.title || x.prompt || JSON.stringify(x) : x));
+  const rawGen = Array.isArray(safeObj.generated_tasks)
+    ? safeObj.generated_tasks
+    : Array.isArray(safeObj.queued_verbs)
+      ? safeObj.queued_verbs
+      : Array.isArray(safeObj.followup_verbs)
+        ? safeObj.followup_verbs
+        : Array.isArray(safeObj.next_tasks)
+          ? safeObj.next_tasks
+          : [];
+  const generated = rawGen
+    .slice(0, BRIDGE_GRID_CONFIG.max_generated_tasks)
+    .map((x) => scrubSensitiveText(typeof x === "object" && x ? x.prompt || x.title || JSON.stringify(x) : x));
   const blocks = Array.isArray(safeObj.reusable_blocks)
     ? safeObj.reusable_blocks.slice(0, BRIDGE_GRID_CONFIG.max_subtasks).map((x) => scrubSensitiveText(x))
     : [];

@@ -1446,7 +1446,7 @@ async function proxyOrigin(request, env) {
 }
 
 const application = {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if ((env.STORAGE_MODE || "cloud") === "origin") {
       return proxyOrigin(request, env);
     }
@@ -1488,7 +1488,7 @@ const application = {
         if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
         return jsonResp(buildAgentCard(publicUrl));
       }
-      if (path === "/api/health" || path === "/v1/health" || path === "/healthz") {
+      if (path === "/health" || path === "/api/health" || path === "/v1/health" || path === "/healthz") {
         if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
         const [active, ctxEntries] = await Promise.all([
           listProvisionsForCaller(db, SYSTEM_BUILTIN_SCOPE, { includeBuiltin: true, enabledOnly: true }),
@@ -1529,11 +1529,19 @@ const application = {
         );
       }
       if (path === "/bridge" || path.startsWith("/bridge/")) {
-        return await handleBilateralBridge(request, env, db, publicUrl, { withSecurity });
+        return await handleBilateralBridge(request, env, db, publicUrl, { withSecurity, ctx });
       }
       if (
         path === "/q" ||
         path.startsWith("/q/") ||
+        path === "/starter" ||
+        path.startsWith("/starter/") ||
+        path === "/help" ||
+        path === "/feedback" ||
+        path.startsWith("/feedback/") ||
+        path === "/chat" ||
+        path.startsWith("/chat/") ||
+        path === "/status" ||
         path === "/prompts" ||
         path.startsWith("/prompts/") ||
         path === "/prompts.js" ||
@@ -1542,9 +1550,10 @@ const application = {
         path.startsWith("/dashboard/") ||
         path === "/dashboard.js" ||
         path.startsWith("/c/") ||
-        path.startsWith("/w/")
+        path.startsWith("/w/") ||
+        path.startsWith("/api/object/")
       ) {
-        return await handlePriorityWorkGateway(request, env, db, publicUrl, { withSecurity });
+        return await handlePriorityWorkGateway(request, env, db, publicUrl, { withSecurity, ctx });
       }
       if (path === "/api/preview") {
         if (method !== "POST") return methodNotAllowed(["POST"]);
@@ -2203,7 +2212,11 @@ const application = {
   },
 };
 
-const onboardingApplication = { fetch(request, env) { return agentFetch(request, env, (req, bindings) => application.fetch(req, bindings)); } };
+const onboardingApplication = {
+  fetch(request, env, ctx) {
+    return agentFetch(request, env, (req, bindings, execCtx) => application.fetch(req, bindings, execCtx), ctx);
+  },
+};
 
 export default {
   ...onboardingApplication,

@@ -39,17 +39,22 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/agent_access.js](deploy/cloudflare/agent_access.js) |  |
 | [deploy/cloudflare/agent_start.js](deploy/cloudflare/agent_start.js) | Versioned onboarding instructions. |
 | [deploy/cloudflare/bilateral_bridge.js](deploy/cloudflare/bilateral_bridge.js) | Bilateral Agent Transport Shim (/bridge/) for Herma Cloud Worker. |
+| [deploy/cloudflare/co_lease_and_ensemble.js](deploy/cloudflare/co_lease_and_ensemble.js) | Herma v6.9 Adaptive Multi-Worker Co-Leasing, Heartbeat (/q/heartbeat), |
+| [deploy/cloudflare/composition_and_demand_engine.js](deploy/cloudflare/composition_and_demand_engine.js) | Universal Task-Object Reuse Graph, Interface Composer & Adaptive Demand-Driven Prioritizer (/q/graph, /q/comp… |
 | [deploy/cloudflare/conversation.js](deploy/cloudflare/conversation.js) | Typed proposals only. |
 | [deploy/cloudflare/conversation_data.json](deploy/cloudflare/conversation_data.json) | JSON object: categories, schemas, system_prompt |
 | [deploy/cloudflare/conversation_state.js](deploy/cloudflare/conversation_state.js) | Conversation coordination, not a work queue. |
 | [deploy/cloudflare/d1-herma.sql](deploy/cloudflare/d1-herma.sql) | Persistent Cloudflare D1 caller-isolated schema for Herma context-shimming AI middleware (ta-amps-herma). |
 | [deploy/cloudflare/dashboard_and_permalinks.js](deploy/cloudflare/dashboard_and_permalinks.js) | Interactive Worker Swarm Visualization Dashboard (/dashboard, /q/dashboard, /q/dashboard.js) |
 | [deploy/cloudflare/entry.js](deploy/cloudflare/entry.js) |  |
+| [deploy/cloudflare/feedback_steps_and_uploads.js](deploy/cloudflare/feedback_steps_and_uploads.js) | Herma v6.9 + v6.10 Catch-All Proactive Worker Feedback, Auto-Diagnosis & Peer-Review Verb Spawner (/q/feedbac… |
 | [deploy/cloudflare/herma_engine.js](deploy/cloudflare/herma_engine.js) | Context-shimming 3-tier trigger engine, multi-caller isolation, governance lens, |
 | [deploy/cloudflare/priority_work_gateway.js](deploy/cloudflare/priority_work_gateway.js) | Prioritized Multi-Tier Durable Task Queue, Partitioned Search Sidecar & Task-Object Gateway (/q/) |
 | [deploy/cloudflare/prompts_page.js](deploy/cloudflare/prompts_page.js) | Public Copy-Paste "Get Started Prompts" Hub (/prompts, /get-started, /q/start, /q/prompts.js) |
 | [deploy/cloudflare/provider_diagnostics.js](deploy/cloudflare/provider_diagnostics.js) | Fixed provider-reported categories only. |
 | [deploy/cloudflare/provider_health.js](deploy/cloudflare/provider_health.js) | Deterministic shared availability inside the existing operator allowance coordinator. |
+| [deploy/cloudflare/taxonomy_affinity_and_proactive_feedback.js](deploy/cloudflare/taxonomy_affinity_and_proactive_feedback.js) | Herma v6.10 Deterministic Taxonomy Auto-Describer, Preferred-Worker / Setup Affinity, |
+| [deploy/cloudflare/thick_path_and_schema_coach.js](deploy/cloudflare/thick_path_and_schema_coach.js) | Herma v6.8 Thick-Path Plateau Grid Telemetry, Proactive Open-World Schema Coach (/q/schema, /q/schema/validat… |
 | [deploy/cloudflare/worker.js](deploy/cloudflare/worker.js) |  |
 | [deploy/cloudflare/worker_entropy_catalog.js](deploy/cloudflare/worker_entropy_catalog.js) | Bilateral Worker Onboarding Personas, Calibration Questions, Single-Step Atomic Remix Operators, |
 | [deploy/cloudflare/wrangler.jsonc](deploy/cloudflare/wrangler.jsonc) | Herma Cloud Worker: 24/7 context-shimming AI middleware on Cloudflare Workers + D1 (ta-amps-herma) |
@@ -137,17 +142,21 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/check_architecture.py](scripts/check_architecture.py) | Check that architecture.json still describes this repo truthfully. |
 | [scripts/check_public.py](scripts/check_public.py) | Fail if a file headed for a public repo holds a secret or a private name. |
 
-## test/ (7)
+## test/ (11)
 
 | File | What it is |
 |---|---|
 | [test/bilateral_bridge.test.js](test/bilateral_bridge.test.js) |  |
 | [test/conversation.test.js](test/conversation.test.js) |  |
+| [test/herma_v63_boundaries_and_chat.test.js](test/herma_v63_boundaries_and_chat.test.js) |  |
+| [test/on_demand_api_keys_and_nodes.test.js](test/on_demand_api_keys_and_nodes.test.js) |  |
 | [test/priority_work_gateway.test.js](test/priority_work_gateway.test.js) |  |
 | [test/provider_diagnostics.test.js](test/provider_diagnostics.test.js) |  |
 | [test/provider_grants.test.js](test/provider_grants.test.js) |  |
 | [test/provider_health.test.js](test/provider_health.test.js) |  |
+| [test/thick_path_and_schema_coach.test.js](test/thick_path_and_schema_coach.test.js) |  |
 | [test/triggers.test.js](test/triggers.test.js) |  |
+| [test/worker_reputation_and_proposals.test.js](test/worker_reputation_and_proposals.test.js) |  |
 
 ## tests/ (22)
 

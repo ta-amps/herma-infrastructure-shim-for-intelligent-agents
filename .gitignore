@@ -13,6 +13,7 @@ __pycache__/
 *.sqlite-shm
 .env
 .env.*
+!.env.example
 .dev.vars
 dist/
 build/

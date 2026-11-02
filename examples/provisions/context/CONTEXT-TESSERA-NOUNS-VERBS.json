@@ -63,10 +63,10 @@
       "entry_id": "detail:herma.lora_vs_shim",
       "kind": "detail",
       "title": "Prompt Shimming vs LoRAs as Parametric Memory Rule",
-      "summary": "Routes volatile or caller-scoped facts through zero-weight Herma context shims, stabilized post-cutoff Task Object schemas into Muse Glimmer LoRA adapters, and novel multi-step synthesis to frontier Muse Wonder 1.0 or Muse Spark 1.3.",
+      "summary": "Routes volatile or caller-scoped facts through zero-weight Herma context shims, stabilized post-cutoff Task Object schemas into Muse Glimmer 30B LoRA adapters, and novel multi-step synthesis to frontier Muse Wonder 1.0 or Muse Spark 1.3.",
       "schema_or_body": {
         "herma_context_shim": "0 weight updates; volatile facts, live URIs, caller guardrails",
-        "lora_parametric_memory": "LoRA on Muse Glimmer (4-bit QLoRA, fine-tuned by ta-amps); stable post-cutoff Task Object schemas with zero per-turn HarnessTax",
+        "lora_parametric_memory": "LoRA on Muse Glimmer 30B (4-bit QLoRA, fine-tuned by ta-amps); stable post-cutoff Task Object schemas with zero per-turn HarnessTax",
         "frontier_passthrough": "Muse Wonder 1.0 / Muse Spark 1.3 through the Meta API in Standard mode (-contributor refused)"
       },
       "source_uri": "urn:ta-amps:spec:lora-memory-routing-v1",

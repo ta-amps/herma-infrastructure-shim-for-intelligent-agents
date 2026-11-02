@@ -1,7 +1,7 @@
 {
   "prov_id": "PROV-LORA-MEMORY-ROUTING",
   "title": "Prompt Shimming vs LoRAs as Parametric Memory vs Frontier Routing",
-  "summary": "Shims the engineering decision rule separating zero-weight Herma context shimming, Muse Glimmer LoRA adapters as parametric memory, and frontier Muse passthrough.",
+  "summary": "Shims the engineering decision rule separating zero-weight Herma context shimming, Muse Glimmer 30B PEFT LoRAs as parametric memory, and frontier Muse passthrough.",
   "priority": 270,
   "enabled": true,
   "action": "shim_context",
@@ -12,7 +12,7 @@
   "inject_position": "system_prefix",
   "dedupe_mode": "once_per_conversation",
   "max_chars": 2600,
-  "inject_text": "Apply the 3-regime memory & routing rule: (1) Use a Herma Context Shim (0 weight updates) for volatile, newly minted, or caller-scoped facts, live URIs, and turn-level guardrails. (2) Promote recurring, stabilized post-cutoff Task Object schemas and refusal contracts into LoRA adapters as parametric memory (Muse Glimmer 4-bit QLoRA, fine-tuned by ta-amps: 93.3% to 99.3% exact tool-call match on a fixed 150-task evaluation; the adapter is not yet admitted) to eliminate repeated per-turn HarnessTax tokens, gated by pre-registered held-out promotion checks. (3) Route open-ended synthesis and independent review Tasks to frontier `Muse Wonder 1.0` (hard multi-step work) or fast `Muse Spark 1.3` through the Meta API in Standard mode (`-contributor` tiers remain strictly refused).",
+  "inject_text": "Apply the 3-regime memory & routing rule: (1) Use a Herma Context Shim (0 weight updates) for volatile, newly minted, or caller-scoped facts, live URIs, and turn-level guardrails. (2) Promote recurring, stabilized post-cutoff Task Object schemas and refusal contracts into LoRA adapters as parametric memory (Muse Glimmer 30B 4-bit QLoRA, fine-tuned by ta-amps: 93.3% to 99.3% exact tool-call match on a fixed 150-task evaluation; the adapter is not yet admitted) to eliminate repeated per-turn HarnessTax tokens, gated by pre-registered held-out promotion checks. (3) Route open-ended synthesis and independent review Tasks to frontier `Muse Wonder 1.0` (hard multi-step work) or fast `Muse Spark 1.3` through the Meta API in Standard mode (`-contributor` tiers remain strictly refused).",
   "uris": [
     {
       "uri": "urn:ta-amps:spec:lora-memory-routing-v1",
@@ -57,7 +57,7 @@
     "semantic": {
       "exemplars": [
         "decide when to inject facts in a prompt context shim versus baking stable post-cutoff schemas into a PEFT LoRA adapter",
-        "use Muse Glimmer QLoRA adapters as parametric memory instead of paying repeated prompt token overhead"
+        "use Muse Glimmer 30B QLoRA adapters as parametric memory instead of paying repeated prompt token overhead"
       ],
       "concepts": [
         "lora",
