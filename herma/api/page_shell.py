@@ -86,15 +86,18 @@ def header_html(active: str = "") -> str:
 
 
 def footer_html() -> str:
-    footer = shell()["footer"]
+    contract = shell()
+    footer = contract["footer"]
     links = "".join(
         f'<li><a href="{escape(link["href"])}">{escape(link["label"])}</a></li>'
         for link in footer["links"]
     )
     return (
         '<footer class="site-footer">\n<div class="wrap">\n'
-        f'<nav aria-label="Site information">\n<ul>{links}</ul>\n</nav>\n'
-        f'<p class="footer-line">{escape(footer["note"])}</p>\n'
+        f'<div class="footer-row"><a class="footer-brand" href="/">{WORDMARK_SVG}'
+        f"<span>{escape(contract['site']['name'])}</span></a>\n"
+        f'<nav aria-label="Site information">\n<ul>{links}</ul>\n</nav></div>\n'
+        f'<p class="footer-line">{escape(footer["line"])}</p>\n'
         "</div>\n</footer>"
     )
 

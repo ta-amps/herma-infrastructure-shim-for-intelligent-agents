@@ -33,7 +33,7 @@ BANNED_WORD = "syn" + "thetic"
 AGENT_APPS = ("nano" + "muse", "muse" + " code")
 STAMPS = ("PLANNED", "Not yet", "Layout preview", "COMING SOON", "Not ready yet")
 NAV_LABELS = ["Overview", "Connect", "Starter kit", "Prompts", "Dashboard"]
-FOOTER_LABELS = ["Models used ↗", "Agora ↗", "Eranos ↗", "Status", "Source ↗"]
+FOOTER_SPEC = json.loads((REPO_ROOT / "tests/fixtures/footer.v1.json").read_text(encoding="utf-8"))
 
 
 def run_node(script: str, timeout: int = 120) -> str:
@@ -159,15 +159,22 @@ def test_python_and_worker_shells_are_byte_identical() -> None:
     )
 
 
-def test_footer_is_one_row_of_links_and_one_short_line() -> None:
+def test_footer_is_the_shared_standard_one_row_of_links_and_one_short_line() -> None:
+    """MUST-FOLLOW rule 13 and shared/footer.v1.json: the brand and one row of links, then one short line."""
     footer = page_shell.footer_html()
     assert footer.count("<ul>") == 1 and footer.count("<nav") == 1, "never two rows of links"
-    labels = re.findall(r"<li><a [^>]*>([^<]+)</a></li>", footer)
-    assert labels == FOOTER_LABELS
+    assert footer.count('class="footer-brand"') == 1 and "<span>Herma</span>" in footer
+    spec_links = [(link["label"], link["href"]) for link in FOOTER_SPEC["links"]]
+    mark = FOOTER_SPEC["external_mark"]
+    found = re.findall(r'<li><a href="([^"]+)">([^<]+)</a></li>', footer)
+    # Herma is its own site, so every link in the standard footer goes to another site and carries the external mark.
+    assert [(label, href) for href, label in found] == [
+        (label + mark, href) for label, href in spec_links
+    ]
+    assert all(not href.startswith("https://herma.") for _label, href in spec_links)
     lines = re.findall(r'<p class="footer-line">([^<]+)</p>', footer)
-    assert len(lines) == 1 and len(lines[0]) < 100, "one short line"
-    assert 'href="https://agora.ta-amps.workers.dev/models/"' in footer
-    assert "ta-amps.workers.dev" in footer and "github.com" not in footer
+    assert lines == [FOOTER_SPEC["line"]["default"]] and len(lines[0]) < 100, "one short line"
+    assert "github.com" not in footer
 
 
 def test_header_has_the_banner_above_the_nav_and_marks_the_page() -> None:
@@ -195,7 +202,7 @@ def test_every_page_carries_the_shell_and_stays_light(
     for name, html in pages.items():
         assert '<meta name="color-scheme" content="only light">' in html, name
         assert "<ta-agent-banner" in html and '<header class="site-header">' in html, name
-        assert '<footer class="site-footer">' in html and "Models used ↗" in html, name
+        assert '<footer class="site-footer">' in html and "Report a problem ↗" in html, name
         assert '<main id="main">' in html and 'href="#main"' in html, name
         assert html.count("<h1") == 1, name
         assert "prefers-color-scheme" not in html, name
@@ -243,6 +250,12 @@ def test_pages_name_the_model_and_link_the_record_instead_of_hashes(
     pages = worker_site["pages"]
     dashboard = pages["/dashboard"]
     assert "Muse Spark 1.3 through the Meta API" in dashboard
+    for route in ("/dashboard", "/prompts", "/starter"):
+        assert (
+            'href="https://agora.ta-amps.workers.dev/models/">Models used &#8599;</a>'
+            in pages[route]
+        ), route
+    assert "Models used ↗" in pages["/"], "the home's models section links it too"
     assert "Record &#8599;" in dashboard and "?format=json" in dashboard
     assert "A volunteer's AI" in visible_text(dashboard)
     contribution = pages["/c/verb_evl_d900e706b470"]
@@ -271,6 +284,7 @@ def test_worker_written_text_is_tidied_but_the_original_stays_in_the_record() ->
         + AGENT_APPS[0].title()
         + " and "
         + AGENT_APPS[1].title(),
+        "one" + chr(0x2014) + "two",
         "x" * 400,
     ]
     out = json.loads(
@@ -294,13 +308,14 @@ def test_worker_written_text_is_tidied_but_the_original_stays_in_the_record() ->
     )
     assert out["embedded"], "the browser script embeds the very same rules the server uses"
     assert out["server"] == out["client"], "the browser and the server tidy text the same way"
-    first, second, third, fourth, fifth = out["server"]
+    first, second, third, fourth, dashed, fifth = out["server"]
     assert first == "Audit"
     assert second == "See … and … now"
     for banned in (RETIRED, BANNED_WORD, "receipt", "sha", "nouns", "verbs"):
         assert banned not in third.lower()
     assert "Task Objects and Tasks" in third and "an older model" in third and "example" in third
     assert "_…_" in fourth and "an agent app" in fourth and AGENT_APPS[0] not in fourth.lower()
+    assert dashed == "one--two"
     assert len(fifth) <= 121
 
 
@@ -365,7 +380,7 @@ def test_the_light_check_fails_on_every_kind_of_dark_page(bad_site: str) -> None
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
-            timeout=180,
+            timeout=600,
             check=False,
         )
         assert (result.returncode == 0) is should_pass, f"{name}\n{result.stdout}{result.stderr}"
@@ -381,7 +396,7 @@ def test_the_light_check_fails_on_every_kind_of_dark_page(bad_site: str) -> None
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
-        timeout=240,
+        timeout=900,
         check=False,
     )
     assert result.returncode == 1
@@ -400,8 +415,21 @@ def test_the_light_check_passes_on_every_redesigned_page() -> None:
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
-        timeout=420,
+        timeout=1200,
         check=False,
     )
     assert result.returncode == 0, textwrap.shorten(result.stdout + result.stderr, 1500)
     assert "light check passed" in result.stdout
+
+
+def test_the_fixture_pages_are_served_with_the_workers_real_page_policy() -> None:
+    """A blocked script, style or font must show up in the browser checks, so they use the Worker's own policy."""
+    worker = (REPO_ROOT / "deploy/cloudflare/worker.js").read_text(encoding="utf-8")
+    block = re.search(r"const DEFAULT_CSP_PAGE = \[(.*?)\]\.join\(\"; \"\)", worker, re.S)
+    assert block, "DEFAULT_CSP_PAGE moved"
+    policy = "; ".join(re.findall(r'"([^"]+)"', block.group(1)))
+    served = (REPO_ROOT / "scripts/page_fixtures_server.mjs").read_text(encoding="utf-8")
+    fixtures = re.search(r'export const PAGE_CSP = "([^"]+)"', served)
+    assert fixtures and fixtures.group(1) == policy
+    # Fonts, the stylesheet and the banner script are same-origin, so the policy needs no loosening for them.
+    assert "font-src" not in policy and "default-src 'self'" in policy

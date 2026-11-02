@@ -2,7 +2,7 @@
 // deterministic Anti-RAG entity memory, direct-response formatter, and HTML console
 // for Herma Cloud on Cloudflare Workers + D1.
 import MODEL_CATALOG from "../../herma/model_catalog.json" with { type: "json" };
-import { documentHtml, FAVICON_SVG, PAGE_SHELL } from "./page_shell.js";
+import { documentHtml, FAVICON_SVG, PAGE_SHELL, tidyText } from "./page_shell.js";
 import { operatorPolicy, providerForHost } from "./provider_health.js";
 
 export const HERMA_VERSION = "0.1.0";
@@ -2180,14 +2180,14 @@ export function renderOverviewHtml(
       const tiers = ["keyword", "semantic", "micromodel"].filter((k) => p.triggers?.[k]);
       const action = p.action || "shim_context";
       const refsNote = (p.context_refs || []).length ? ` · ${p.context_refs.length} ref(s)` : "";
-      return `<tr><td><code>${esc(p.prov_id)}</code><span class="cell-sub">version ${esc(sp.version)}</span></td><td>${esc(p.title)}<span class="cell-sub"><code>${esc(action)}</code>${esc(refsNote)}</span></td><td><code>${esc(tiers.join(", "))}</code><span class="cell-sub">match ${esc(p.triggers?.mode || "any")}</span></td><td>${(p.uris || []).length} URI(s)<span class="cell-sub">priority ${p.priority}</span></td><td><code>${esc(sp.source_store)}</code></td></tr>`;
+      return `<tr><td><code>${esc(p.prov_id)}</code><span class="cell-sub">version ${esc(sp.version)}</span></td><td>${esc(tidyText(p.title, 160))}<span class="cell-sub"><code>${esc(action)}</code>${esc(refsNote)}</span></td><td><code>${esc(tiers.join(", "))}</code><span class="cell-sub">match ${esc(p.triggers?.mode || "any")}</span></td><td>${(p.uris || []).length} URI(s)<span class="cell-sub">priority ${p.priority}</span></td><td><code>${esc(sp.source_store)}</code></td></tr>`;
     })
     .join("");
   const cRows = (contextEntries || [])
     .slice(0, 25)
     .map(
       (e) =>
-        `<tr><td><code>${esc(e.entry_id)}</code></td><td>${esc(kindLabel(e.kind))}</td><td>${esc(e.title)}</td><td>${esc(e.summary)}</td><td>${e.source_uri ? `<code>${esc(e.source_uri)}</code>` : "none"}</td></tr>`
+        `<tr><td><code>${esc(e.entry_id)}</code></td><td>${esc(kindLabel(e.kind))}</td><td>${esc(tidyText(e.title, 160))}</td><td>${esc(tidyText(e.summary, 420))}</td><td>${e.source_uri ? `<code>${esc(e.source_uri)}</code>` : "none"}</td></tr>`
     )
     .join("");
 

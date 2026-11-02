@@ -114,6 +114,8 @@ code, kbd, samp, pre, .mono { font-family: var(--font-mono); font-size: var(--fs
 code { background: var(--sunken); border-radius: var(--radius-xs); padding: 1px 5px; overflow-wrap: anywhere; }
 small { font-size: var(--fs-small); }
 img, svg, video { max-width: 100%; }
+/* A class that sets display must not beat the hidden attribute (the prompt filter and the search results rely on it). */
+[hidden] { display: none !important; }
 table { border-collapse: collapse; }
 hr { border: 0; border-top: 1px solid var(--line); margin: var(--step-6) 0; }
 
@@ -175,12 +177,16 @@ ta-agent-banner[data-ready] .agent-fallback { display: none; }
   .site-nav ul { gap: 2px; padding-bottom: var(--step-2); }
 }
 
-/* Footer: one row of links and one short line, the same on every surface */
-.site-footer { border-top: 1px solid var(--line); background: var(--bg); padding: var(--step-5) 0 var(--step-6); color: var(--text-2); font-size: var(--fs-small); line-height: var(--lh-small); }
+/* Footer (the shared standard, MUST-FOLLOW rule 13): the brand and one row of links, then one short line; paper tint, ink text */
+.site-footer { border-top: 1px solid var(--line); background: var(--sunken); padding: var(--step-5) 0 var(--step-6); color: var(--text); font-size: var(--fs-small); line-height: var(--lh-small); }
 .site-footer .wrap { display: grid; gap: var(--step-2); }
+.footer-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--step-1) var(--step-5); }
+.footer-brand { display: inline-flex; align-items: center; gap: 10px; min-height: 40px; color: var(--text); text-decoration: none; font-family: var(--font-display); font-weight: 700; font-size: 1.125rem; }
+.footer-brand:hover { color: var(--text); text-decoration: none; }
+.footer-brand svg { width: 24px; height: 24px; flex: none; }
 .site-footer ul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--step-1) var(--step-5); }
-.site-footer a { display: inline-flex; align-items: center; min-height: 32px; }
-.footer-line { color: var(--text-3); }
+.site-footer nav a { display: inline-flex; align-items: center; min-height: 32px; }
+.footer-line { color: var(--text-2); }
 
 /* Page head and sections */
 .page-head { padding-block: var(--step-7) var(--step-5); }

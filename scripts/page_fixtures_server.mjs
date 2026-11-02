@@ -30,6 +30,10 @@ export const PAGE_ROUTES = [
   "/q/demo/demo_dual_side_hybrid_search_v1",
 ];
 
+// The same policy the Worker sends with every page (DEFAULT_CSP_PAGE in deploy/cloudflare/worker.js; a test keeps them equal),
+// so a blocked script, style or font shows up as a console error in the browser checks.
+export const PAGE_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+
 const MIME = { ".css": "text/css", ".js": "text/javascript", ".woff2": "font/woff2", ".txt": "text/plain", ".svg": "image/svg+xml" };
 
 /** Every page and script, rendered from the fixtures: `{ pages: {route: html}, scripts: {route: text}, dashboard }`. */
@@ -107,7 +111,10 @@ export async function start(port = 7788) {
     const script = scripts[url.pathname];
     if (script) return send(200, `${MIME[path.extname(url.pathname)] || "text/javascript"}; charset=utf-8`, script());
     const make = pages[decodeURIComponent(url.pathname)];
-    if (make) return send(200, "text/html; charset=utf-8", make());
+    if (make) {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": PAGE_CSP });
+      return res.end(make());
+    }
     return send(404, "text/plain", "not routed in the fixtures server");
   });
   await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));

@@ -146,7 +146,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [herma/triggers/micromodel.py](herma/triggers/micromodel.py) | Tier-3 micromodel router trigger: fast tiny/cloud classifier with deterministic offline fallback. |
 | [herma/triggers/semantic.py](herma/triggers/semantic.py) | Tier-2 semantic similarity trigger (~1-5 ms): hybrid concept + subword cosine + optional embeddings. |
 
-## scripts/ (9)
+## scripts/ (10)
 
 | File | What it is |
 |---|---|
@@ -158,6 +158,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/check_release.py](scripts/check_release.py) | Fail closed before a deploy of the Herma Worker, from any checkout of this repository. |
 | [scripts/light_check.mjs](scripts/light_check.mjs) | The light check (owner rule 13: light only, everywhere). |
 | [scripts/page_fixtures_server.mjs](scripts/page_fixtures_server.mjs) | Serves every public Herma page from small fixtures, with the real static assets, so a browser can check the l… |
+| [scripts/page_interactions.mjs](scripts/page_interactions.mjs) | Clicks through the interactive parts of the redesigned pages (fixture server, the Worker's real page policy)… |
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release: what Herma serves must not name the retired model family, the banned word… |
 
 ## test/ (11)
@@ -176,11 +177,12 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/triggers.test.js](test/triggers.test.js) |  |
 | [test/worker_reputation_and_proposals.test.js](test/worker_reputation_and_proposals.test.js) |  |
 
-## tests/ (29)
+## tests/ (30)
 
 | File | What it is |
 |---|---|
 | [tests/conftest.py](tests/conftest.py) | Example operator grants for managed conversation tests; no provider is ever contacted. |
+| [tests/fixtures/footer.v1.json](tests/fixtures/footer.v1.json) | JSON object: schema, version, updated, rule, links, external_mark |
 | [tests/fixtures/pages/contribution_kit.json](tests/fixtures/pages/contribution_kit.json) | JSON object: ok, lookup_id, task, objects, child_verbs, evaluations |
 | [tests/fixtures/pages/dashboard.json](tests/fixtures/pages/dashboard.json) | JSON object: ok, schema, registered_workers, distinct_contributor_agents, total_evaluations, indexed_sidecar_docs |
 | [tests/fixtures/pages/demo_object.json](tests/fixtures/pages/demo_object.json) | JSON object: ok, schema, object_key, requested_key, version_num, version_count |

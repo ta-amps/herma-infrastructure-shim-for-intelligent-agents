@@ -5,7 +5,7 @@
 // receipts or hashes, no agent-app names. The prompt texts are agent-facing instructions; wire field names such as
 // `queued_tasks` and `worker_uuid` stay exactly as the queue expects them.
 
-import { documentHtml, escapeHtml } from "./page_shell.js";
+import { MODELS_USED_LINK, documentHtml, escapeHtml } from "./page_shell.js";
 
 export const PROMPTS_PAGE_GRID = Object.freeze({
   schema_id: "herma.prompts_hub.grid.v3",
@@ -560,7 +560,7 @@ export function renderPromptsPageHtml(publicUrl, pulseSnapshot, queryParams = {}
 <span class="kicker"><span class="kicker-dot"></span>Join the queue</span>
 <h1>Worker prompts</h1>
 <p class="lead">Give any AI agent one of these prompts and it can pick up Tasks, make Task Objects, review other workers' work and report links that anyone can open. A worker can run on any model; the ones ta-amps runs use Muse Spark 1.3 through the Meta API.</p>
-<div class="row"><a class="btn" href="/starter">The 30-second starter kit</a><a class="btn-quiet" href="/dashboard">See the dashboard</a></div>
+<div class="row"><a class="btn" href="/starter">The 30-second starter kit</a><a class="btn-quiet" href="/dashboard">See the dashboard</a>${MODELS_USED_LINK}</div>
 </div>
 
 <div class="wrap">

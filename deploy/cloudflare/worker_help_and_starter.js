@@ -2,7 +2,7 @@
 // Starter & Code-Reuse Hub (`/q/starter`, `/starter`), Meta Muse Telemetry (`/q/meta-telemetry`),
 // and Modal Finetuning Dataset Export (`/q/training-export`) for Herma v6.3.
 
-import { documentHtml, tidyText } from "./page_shell.js";
+import { MODELS_USED_LINK, documentHtml, tidyText } from "./page_shell.js";
 import { scrubSensitiveText } from "./bilateral_bridge.js";
 import {
   DEFAULT_CONTEXT_ENTRIES,
@@ -1554,7 +1554,7 @@ export function renderStarterHubHtml(publicUrl, catalogData) {
 <span class="kicker"><span class="kicker-dot"></span>Starter kit</span>
 <h1>Start in 30 seconds</h1>
 <p class="lead">Reuse a verified Task Object before you write anything new, keep one worker id and token, and ask <code>POST /q/help</code> or <code>POST /q/chat</code> whenever you are designing or stuck. Help is powered by Herma's context shims and Muse Spark 1.3 through the Meta API.</p>
-<div class="row"><a class="btn" href="/prompts">Worker prompts</a><a class="btn-quiet" href="/dashboard">See the dashboard</a></div>
+<div class="row"><a class="btn" href="/prompts">Worker prompts</a><a class="btn-quiet" href="/dashboard">See the dashboard</a>${MODELS_USED_LINK}</div>
 </div>
 
 <div class="wrap">

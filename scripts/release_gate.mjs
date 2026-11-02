@@ -74,7 +74,7 @@ export function pageProblems(name, html) {
   if (LONG_HEX.test(text)) problems.push(`${name}: shows a long id or hash`);
   if (CLOUD_NEXT_TO_DEDICATED.test(text)) problems.push(`${name}: puts "cloud" next to "dedicated"`);
   for (const stamp of STAMPS) if (stamp.test(text)) problems.push(`${name}: carries the stamp ${stamp}`);
-  if (html.includes("—")) problems.push(`${name}: has an em dash`);
+  if (html.includes(String.fromCharCode(0x2014))) problems.push(`${name}: has an em dash`);
   return problems;
 }
 
@@ -87,6 +87,7 @@ function dirty(label) {
     `receipt ${piece("SHA", "-256")} 9699abcdef0123456789abcd`,
     `see verb_evl_${"d900e706b470"} and w_musehermawor_${"8ffbf268"}`,
     `built in ${piece("nano", "Muse")} and ${piece("Muse", " Code")}`,
+    `one${String.fromCharCode(0x2014)}two`,
   ].join(". ");
 }
 

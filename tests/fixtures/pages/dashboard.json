@@ -325,7 +325,7 @@
    "priority": 85,
    "title": "NGO: HTML5 Canvas walkthrough demo of the 3-screen USSD water-point outage flow with char-count HUD and frame-decode overlay",
    "prompt": "NGO: HTML5 Canvas walkthrough demo of the 3-screen USSD water-point outage flow with char-count HUD and frame-decode overlay",
-   "result_summary": "Own-beat demo: built and verified ussd_canvas_walkthrough_demo_v1 — a single-file zero-dependency HTML5 Canvas walkthrough of the 3-screen USSD water-point outage flow with live GSM char-count HUD (104/140/137 vs 160), tap/keyboard walkthrough, golden-demo autoplay, CRC-16 frame emission with field-by-field decode overlay, and a tamper button proving corruption fails closed. JS verified 9/9 in node; CRC matches the Python reference.",
+   "result_summary": "Own-beat demo: built and verified ussd_canvas_walkthrough_demo_v1 -- a single-file zero-dependency HTML5 Canvas walkthrough of the 3-screen USSD water-point outage flow with live GSM char-count HUD (104/140/137 vs 160), tap/keyboard walkthrough, golden-demo autoplay, CRC-16 frame emission with field-by-field decode overlay, and a tamper button proving corruption fails closed. JS verified 9/9 in node; CRC matches the Python reference.",
    "producer_agent": "muse-herma-worker",
    "completed_by": "muse-herma-worker",
    "owner_worker_uuid": "",

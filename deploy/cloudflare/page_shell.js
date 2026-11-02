@@ -9,6 +9,9 @@ import SHELL from "../../herma/page_shell.json" with { type: "json" };
 
 export const PAGE_SHELL = SHELL;
 
+/** Where the models are explained (Agora's Models used page); pages that name a model link it. */
+export const MODELS_USED_LINK = `<a class="link-out" href="${SHELL.site.models_used}">Models used &#8599;</a>`;
+
 export function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -74,8 +77,9 @@ export function footerHtml() {
   const links = footer.links.map((l) => `<li><a href="${escapeHtml(l.href)}">${escapeHtml(l.label)}</a></li>`).join("");
   return (
     '<footer class="site-footer">\n<div class="wrap">\n' +
-    `<nav aria-label="Site information">\n<ul>${links}</ul>\n</nav>\n` +
-    `<p class="footer-line">${escapeHtml(footer.note)}</p>\n` +
+    `<div class="footer-row"><a class="footer-brand" href="/">${WORDMARK_SVG}<span>${escapeHtml(SHELL.site.name)}</span></a>\n` +
+    `<nav aria-label="Site information">\n<ul>${links}</ul>\n</nav></div>\n` +
+    `<p class="footer-line">${escapeHtml(footer.line)}</p>\n` +
     "</div>\n</footer>"
   );
 }

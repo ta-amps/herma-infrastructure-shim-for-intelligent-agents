@@ -123,7 +123,9 @@ def test_wrangler_runs_the_guard_and_the_light_check_before_every_deploy() -> No
     assert command.index("check_release.py") < command.index("light-check"), "the guard runs first"
     assert "git rev-parse --show-toplevel" in command, "it works from any directory of any checkout"
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
-    assert re.search(r"^check:.*\bgate\b.*\blight-check\b", makefile, re.M), "make check runs both"
+    assert re.search(r"^check:.*\bgate\b.*\blight-check\b.*\bpage-check\b", makefile, re.M), (
+        "make check runs all three"
+    )
 
 
 def test_the_asset_versions_and_the_gate_pass_on_this_tree() -> None:
@@ -155,7 +157,7 @@ def test_the_gate_fails_on_every_kind_of_dirty_page_and_passes_a_clean_one() -> 
         "receipt": "<main><h1>x</h1><p>The receipt and the SHA-256.</p></main>",
         "hash": "<main><h1>x</h1><p>Seen as 9699abcdef0123456789.</p></main>",
         "stamp": "<main><h1>x</h1><p>COMING SOON</p></main>",
-        "dash": "<main><h1>x</h1><p>one — two</p></main>",
+        "dash": f"<main><h1>x</h1><p>one {chr(0x2014)} two</p></main>",
         "cloud": "<main><h1>x</h1><p>A dedicated cloud worker.</p></main>",
     }
     clean = {
