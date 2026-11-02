@@ -596,6 +596,15 @@
       "checked_by": [
         "tests/test_canonical_addresses.py"
       ]
+    },
+    {
+      "id": "H33",
+      "statement": "The agents the team runs are one operator-written noun, the private Task Object herma_team_agents (the submission path refuses a private object to a public caller, and the reader takes only private rows); a listed agent is dedicated on the network map and \"Dedicated worker (run by ta-amps)\" on a page, every other agent is a volunteer on the wire and \"A connected AI\" on a page, the list itself is not published, and a stranger cannot add itself",
+      "enforced_by": "edge",
+      "checked_by": [
+        "test/team_agents.test.js",
+        "tests/test_page_design.py::test_every_page_uses_plain_words"
+      ]
     }
   ],
   "import_rules": [

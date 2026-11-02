@@ -20,6 +20,7 @@ import MODEL_CATALOG from "../../herma/model_catalog.json" with { type: "json" }
 import { mergeNetwork } from "./network_merge.js";
 import PLACES from "./network_places.json" with { type: "json" };
 import { tidyText } from "./page_shell.js";
+import { isTeamAgent, loadTeamAgents } from "./team_agents.js";
 
 /** What every agent is told about the network map (the agent brief, /help and the join response). */
 export const NETWORK_MAP_NOTICE =
@@ -47,7 +48,6 @@ export const NETWORK_GRID = Object.freeze({
 
 const KIND_PARAMS = new Set(["all", "nonprofit", "shared", "check", "own"]);
 const CONTINENT_CODES = new Set(["AF", "AN", "AS", "EU", "NA", "OC", "SA"]);
-const DEDICATED_AGENT = /^(eranos|ta-amps)[-_. ]/i;
 
 const MODEL_NAMES = Object.freeze(Object.fromEntries((MODEL_CATALOG.models || []).filter((m) => m.id && m.name).map((m) => [m.id, m.name])));
 const COUNTRY_NAMES = Object.freeze(Object.fromEntries(Object.values(PLACES.places).map((p) => [p.country, p.country_name])));
@@ -63,8 +63,11 @@ export function networkKind(task = {}) {
   return "shared";
 }
 
-/** A dedicated worker is one that ta-amps or Eranos runs; every other worker is a volunteer's AI (the page never claims more than it knows). */
-export const networkWorkerKind = (agentId) => (DEDICATED_AGENT.test(String(agentId || "")) ? "dedicated" : "volunteer");
+/**
+ * A dedicated worker is one that ta-amps or Eranos runs: a name from the old rule, or an agent on the operator's list of team-run agents
+ * (team_agents.js). Every other worker is a connected AI, which the wire calls "volunteer" (the page never claims more than it knows).
+ */
+export const networkWorkerKind = (agentId, team) => (isTeamAgent(agentId, team) ? "dedicated" : "volunteer");
 
 const colo3 = (value) => (typeof value === "string" && /^[A-Z]{3}$/.test(value) ? value : "");
 const continent2 = (value) => (typeof value === "string" && CONTINENT_CODES.has(value) ? value : "");
@@ -134,7 +137,7 @@ export async function recordClaimEdge(db, request, { task, workerUuid, agentId, 
     if (!db || !task?.task_id || !workerUuid) return false;
     await ensureNetworkSchema(db);
     const cf = request?.cf || {};
-    const workerKind = networkWorkerKind(agentId);
+    const workerKind = networkWorkerKind(agentId, await loadTeamAgents(db));
     // A worker that left the map keeps no data center and no continent from then on, as Tessera does: its row says only that a claim happened.
     const hidden = "COALESCE((SELECT show_on_map FROM herma_worker_registry WHERE worker_uuid = ?4), 1) = 0";
     await db
@@ -208,11 +211,12 @@ const PUBLIC_VISIBILITY = new Set(["public_ngo", "public_commons"]);
 /** Herma's own claims in the last 24 hours as the merge reads them (one object per claim). */
 export async function readOwnClaims(db, nowMs) {
   await ensureNetworkSchema(db);
+  const team = await loadTeamAgents(db, nowMs);
   const since = new Date(nowMs - 24 * 3600 * 1000).toISOString();
   const { results } = await db
     .prepare(
       `SELECT e.claimed_at AS at, e.kind AS class, e.worker_uuid AS worker, e.worker_kind, e.colo, e.continent, e.model, e.persona,
-              e.task_id, COALESCE(r.show_on_map, 1) AS show_on_map, COALESCE(r.is_diagnostic_probe, 0) AS probe,
+              e.task_id, r.agent_id AS agent_id, r.persona_label AS persona_label, COALESCE(r.show_on_map, 1) AS show_on_map, COALESCE(r.is_diagnostic_probe, 0) AS probe,
               q.title AS title, q.locale_country AS place_facet, q.visibility AS visibility, q.tier AS tier
          FROM herma_claim_edge e
          LEFT JOIN herma_worker_registry r ON r.worker_uuid = e.worker_uuid
@@ -227,17 +231,20 @@ export async function readOwnClaims(db, nowMs) {
     .filter((r) => !Number(r.probe))
     .map((r) => {
       const open = PUBLIC_VISIBILITY.has(String(r.visibility || "")) && String(r.tier || "") !== "infra_private";
+      // The kind of worker is decided now, from the agent and the operator's list, not when the claim was recorded: a team agent added to the list
+      // later is dedicated for its earlier claims too. (A row whose worker is no longer in the registry keeps the kind it was recorded with.)
+      const workerKind = r.agent_id ? networkWorkerKind(r.agent_id, team) : r.worker_kind;
       return {
         at: r.at,
         class: r.class,
         worker: r.worker,
-        worker_kind: r.worker_kind,
+        worker_kind: workerKind,
         colo: r.colo || null,
         continent: r.continent || null,
         show_on_map: Number(r.show_on_map) !== 0 && open, // not public work: the totals only
         model: r.model || null,
-        declared: r.worker_kind === "volunteer" && Boolean(r.model),
-        persona: r.persona || null,
+        declared: workerKind === "volunteer" && Boolean(r.model),
+        persona: workerKind === "dedicated" ? r.persona || r.persona_label || null : null,
         title: open ? r.title || null : null,
         place: open ? COUNTRY_NAMES[String(r.place_facet || "").toUpperCase()] || null : null,
         object_key: open ? r.task_id : null,

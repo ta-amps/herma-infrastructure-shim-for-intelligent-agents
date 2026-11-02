@@ -8,6 +8,7 @@
 import SHELL from "../../herma/page_shell.json" with { type: "json" };
 import BANNED from "./banned_words.generated.js";
 import { sha256Hex } from "./sha256_sync.js";
+import { emptyTeam, isTeamAgent, matchesBaseline } from "./team_agents.js";
 
 export const PAGE_SHELL = SHELL;
 
@@ -246,12 +247,24 @@ export function nextTurnLabel(iterationCount, cycle = 3) {
   return slot === 0 ? "A nonprofit Task" : slot === 1 ? "A review" : "A Task of its own";
 }
 
-/** "A volunteer's AI", or "Dedicated worker N (run by ta-amps)" for a worker ta-amps itself runs. */
-export function workerLabel(agentId) {
+// The agents the team runs, as the Worker last read them (deploy/cloudflare/team_agents.js; the gateway sets it before it renders a page). Without a
+// list only the old rule applies. A render is synchronous, so a page sees one list from start to end.
+let currentTeam = emptyTeam();
+
+/** The list of team-run agents the labels below use. */
+export function useTeamAgents(team) {
+  currentTeam = team || emptyTeam();
+}
+
+/**
+ * "Dedicated worker N (run by ta-amps)" for an agent ta-amps itself runs (a name from the old rule carries its number; a name only the list gives does not,
+ * because a number found inside it would mean nothing), and "A connected AI" for every other agent: a name that is not on the list may be anyone's, so the
+ * page does not say more than it knows.
+ */
+export function workerLabel(agentId, team = currentTeam) {
   const id = String(agentId ?? "");
-  if (/^(?:eranos|ta-amps)[-_.\s]/i.test(id)) {
-    const digits = /(\d+)/.exec(id)?.[1];
-    return `Dedicated worker ${digits ? Number(digits) : 1} (run by ta-amps)`;
-  }
-  return "A volunteer's AI";
+  if (!isTeamAgent(id, team)) return "A connected AI";
+  if (!matchesBaseline(id)) return "Dedicated worker (run by ta-amps)";
+  const digits = /(\d+)/.exec(id)?.[1];
+  return `Dedicated worker ${digits ? Number(digits) : 1} (run by ta-amps)`;
 }

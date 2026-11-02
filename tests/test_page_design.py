@@ -339,7 +339,9 @@ def test_pages_name_the_model_and_link_the_record_instead_of_hashes(
         ), route
     assert "Models used ↗" in pages["/shim"], "the shim page's models section links it too"
     assert "Record &#8599;" in dashboard and "?format=json" in dashboard
-    assert "A volunteer's AI" in visible_text(dashboard)
+    assert (
+        "A connected AI" in visible_text(dashboard)
+    )  # an agent that is not on the operator's list may be anyone's, so it is not called a volunteer
     contribution = pages["/c/verb_evl_d900e706b470"]
     assert (
         "Record &#8599;" in contribution and "/c/verb_evl_d900e706b470?format=json" in contribution

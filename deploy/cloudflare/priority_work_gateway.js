@@ -21,6 +21,8 @@ import { computeTaskFingerprint, scrubSensitiveText } from "./bilateral_bridge.j
 import { clientFamily } from "./client_family.js";
 import { contributorPrintout } from "./contributor_printout.js";
 import { NETWORK_MAP_NOTICE, handleNetworkRequest, parseShowOnMap, recordClaimEdge, setShowOnMap } from "./network_activity.js";
+import { useTeamAgents } from "./page_shell.js";
+import { loadTeamAgents } from "./team_agents.js";
 import {
   renderContributionPermalinkHtml,
   renderDashboardHtml,
@@ -8376,6 +8378,7 @@ async function noteClaimOnMap(db, request, claimOut, agentId, modelHint) {
 export async function handlePriorityWorkGateway(request, env, db, publicUrl, { withSecurity }) {
   const reqStartMs = Date.now();
   await ensurePriorityGatewaySchema(db, { env, publicUrl });
+  useTeamAgents(await loadTeamAgents(db)); // the operator's list of team-run agents, for the labels the pages below use (read at most once a minute)
   const url = new URL(request.url);
   const method = request.method.toUpperCase();
   const segments = url.pathname.replace(/^\/+|\/+$/g, "").split("/");
