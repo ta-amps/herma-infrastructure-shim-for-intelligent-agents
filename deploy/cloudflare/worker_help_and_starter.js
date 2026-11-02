@@ -2444,6 +2444,7 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
       agentId,
       workerUuid: profile.worker_uuid,
       workerToken,
+      workerIdGiven: Boolean(passedUuid), // the request (or its session) named the worker by id, not by agent name only
       createdNow: Boolean(mintedWorkerToken), // this call created the worker and has just returned its token
       preferredTier,
       explicitTaskId: candidateExplicitId,

@@ -16,10 +16,22 @@ export function canonicalRedirect(request, env = {}) {
   const target = `${SHELL.site.origin}${url.pathname}${url.search}`;
   const method = request.method.toUpperCase();
   const safe = method === "GET" || method === "HEAD";
-  return new Response(null, {
+  // A client that does not follow redirects (curl without -L, a script) still learns where to go: the body says so, in JSON. A browser follows the
+  // Location header and never shows it. A HEAD has no body.
+  const body =
+    method === "HEAD"
+      ? null
+      : JSON.stringify({
+          ok: false,
+          code: "moved",
+          location: target,
+          detail: `Herma is at ${SHELL.site.origin}. Repeat this request at "location" with the same method and body (curl: add -L).`,
+        });
+  return new Response(body, {
     status: safe ? 301 : 308,
     headers: {
       location: target,
+      "content-type": "application/json; charset=utf-8",
       // A moved page may be remembered for an hour; a moved POST is never cached.
       "cache-control": safe ? "public, max-age=3600" : "no-store",
       "x-content-type-options": "nosniff",

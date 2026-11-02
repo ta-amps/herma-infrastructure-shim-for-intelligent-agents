@@ -5087,12 +5087,14 @@ function formatLeasedTaskEnvelope(
   };
 }
 
-// A worker that has a token is claimed as only by a caller that presents it. Without this, anyone who knows an agent name or a worker id (the
-// dashboard and the worker page show both) could claim as that worker and put its work, its cred and its place on the network map in its name.
-// Workers that never had a token (joined by a GET, or by a claim) are as they were, and so are callers with infrastructure authority. Returns the
-// refusal to send, or null.
-async function workerTokenRefusal({ target, workerToken = "", infraAllowed = false, tokenVerified = false, createdNow = false }) {
-  if (infraAllowed || tokenVerified || createdNow) return null;
+// A claim that names a worker by its agent name only (no worker id, no token) is not taken as that worker when the worker has a token. Without this,
+// anyone who knows an agent name (the dashboard and the worker page show it) could claim as that worker and put its work, its cred and its place on the
+// network map in its name. A claim with the worker id is still accepted without the token: that is the documented flow (join with POST /q/onboard, then
+// claim with the id), the id is the worker's handle, and the token is for what the id alone cannot be trusted with. Workers that never had a token (joined by
+// a GET or a claim), bare shared handles, callers with infrastructure authority and a worker made in the same call are as they were. A caller that presents
+// the right token is accepted with or without the id. Returns the refusal to send, or null.
+async function workerTokenRefusal({ target, workerToken = "", workerIdGiven = false, infraAllowed = false, tokenVerified = false, createdNow = false }) {
+  if (infraAllowed || tokenVerified || createdNow || workerIdGiven) return null;
   const stored = String(target?.worker_token_sha256 || "").trim();
   if (!stored) return null;
   const presented = String(workerToken || "").trim();
@@ -5101,7 +5103,7 @@ async function workerTokenRefusal({ target, workerToken = "", infraAllowed = fal
     forbidden: true,
     code: "worker_token_required",
     detail:
-      "This worker has a token. Send it as worker_token (or the X-Herma-Worker-Token header) to claim as this worker, or start a new worker with POST /q/onboard {\"agent_id\": \"<a new name>\"} (or add \"mint_new\": true to keep the name).",
+      "This agent name belongs to a worker that has a token. Send its worker_uuid (and worker_token) to claim as that worker, or start a new worker with POST /q/onboard {\"agent_id\": \"<a new name>\"}.",
   };
 }
 
@@ -5189,14 +5191,12 @@ async function claimNextAuthorizedTask(
     GENERIC_EPHEMERAL_AGENTS.has(cleanAgent);
   const isBareSharedHandle = (!explicitWorkerUuid || isLegacySharedDefaultUuid) && GENERIC_EPHEMERAL_AGENTS.has(cleanAgent);
 
-  // A worker that has a token is claimed as only by a caller that presents it (see workerTokenRefusal). A bare shared handle always gets a fresh worker.
-  if (!isBareSharedHandle && !tokenChecked) {
-    const target = explicitWorkerUuid
-      ? authCheck.existing
-      : await db
-          .prepare("SELECT worker_uuid, worker_token_sha256 FROM herma_worker_registry WHERE agent_id = ? ORDER BY iteration_count DESC, updated_at DESC LIMIT 1")
-          .bind(cleanAgent)
-          .first();
+  // A claim by agent name only is not taken as a worker that has a token (see workerTokenRefusal). A bare shared handle always gets a fresh worker.
+  if (!isBareSharedHandle && !tokenChecked && !explicitWorkerUuid) {
+    const target = await db
+      .prepare("SELECT worker_uuid, worker_token_sha256 FROM herma_worker_registry WHERE agent_id = ? ORDER BY iteration_count DESC, updated_at DESC LIMIT 1")
+      .bind(cleanAgent)
+      .first();
     const refusal = await workerTokenRefusal({ target, workerToken, infraAllowed, tokenVerified: authCheck.tokenVerified });
     if (refusal) return refusal;
   }
@@ -8633,9 +8633,9 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         modelHint,
         userAgent: ua || userAgent,
       }),
-    claimTaskForChat: async ({ agentId, workerUuid, workerToken = "", createdNow = false, preferredTier, explicitTaskId, keywordHint, userAgent: ua }) => {
+    claimTaskForChat: async ({ agentId, workerUuid, workerToken = "", workerIdGiven = false, createdNow = false, preferredTier, explicitTaskId, keywordHint, userAgent: ua }) => {
       const chatTarget = await db.prepare("SELECT worker_uuid, worker_token_sha256 FROM herma_worker_registry WHERE worker_uuid = ?").bind(String(workerUuid || "")).first();
-      const chatRefusal = await workerTokenRefusal({ target: chatTarget, workerToken, infraAllowed, createdNow });
+      const chatRefusal = await workerTokenRefusal({ target: chatTarget, workerToken, workerIdGiven, infraAllowed, createdNow });
       if (chatRefusal) return chatRefusal;
       if (explicitTaskId) {
         const cleanTid = String(explicitTaskId).trim();

@@ -546,7 +546,7 @@
     },
     {
       "id": "H27",
-      "statement": "Herma has one canonical host, herma.teleionlabs.com: any other host that reaches the Worker is answered with a redirect that keeps the path and the query (301 for GET and HEAD, 308 for every other method, so an agent's POST to /q/* keeps its method and body), and every page that exists names rel=canonical",
+      "statement": "Herma has one canonical host, herma.teleionlabs.com: any other host that reaches the Worker is answered with a redirect that keeps the path and the query (301 for GET and HEAD, 308 for every other method, so an agent's POST to /q/* keeps its method and body), and every page that exists names rel=canonical, and the redirect's body says where to go, in JSON, for a client that does not follow redirects",
       "enforced_by": "edge",
       "checked_by": [
         "test/canonical_host.test.js",
@@ -573,10 +573,11 @@
     },
     {
       "id": "H30",
-      "statement": "A worker that has a token is claimed as only by a caller that presents it, by the claim route and in chat; workers that never had a token, bare shared handles, callers with infrastructure authority and a worker made in the same call are unchanged, and a refusal says how to start a new worker",
+      "statement": "A claim that names an existing worker by its agent name only (no worker id, no token) is not taken as that worker when the worker has a token, by the claim route and in chat; a claim with the worker id (the documented flow), a worker without a token, a bare shared handle, an infrastructure caller and a worker made in the same call are unchanged, and a refusal says how to start a new worker",
       "enforced_by": "edge",
       "checked_by": [
-        "test/claim_token.test.js"
+        "test/claim_token.test.js",
+        "test/priority_work_gateway.test.js"
       ]
     },
     {

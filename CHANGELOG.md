@@ -4,8 +4,7 @@
 
 The banner is the shared light script (`1a9e2245...`, the one Agora serves), and the stylesheet gives it the page's paper colour. Every address of Eranos that Herma gives out is
 `https://eranosforgood.org`; a test keeps the old one out (it stays only in the list of origins that may read `/q/network`). `GET /q/leaderboard` takes `?limit=` (1 to 100): the
-ranking and the limit are decided in SQL by the same sum the score uses, only the workers returned are scored in detail, and the standings are kept for 30 seconds. A worker that has a
-token is claimed as only by a caller that presents it (by the claim route and in chat); the live fleet and every other worker without a token are unchanged. The network map treats a Task
+ranking and the limit are decided in SQL by the same sum the score uses, only the workers returned are scored in detail, and the standings are kept for 30 seconds. A claim that names a worker by its agent name only (no worker id and no token) is not taken as that worker when the worker has a token (the claim route and chat); a claim with the worker id, the documented flow, is accepted as before, and the live fleet and every other worker without a token are unchanged. The canonical redirect's body now says where to go, in JSON, for a client that does not follow redirects (curl without -L). The network map treats a Task
 whose tier is `infra_private` as private even when its visibility says public.
 
 ## The network map

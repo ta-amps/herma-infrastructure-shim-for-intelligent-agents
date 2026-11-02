@@ -323,7 +323,9 @@ describe("joining and claiming", () => {
     const refused = await (await call("/q/onboard", json({ agent_id: "map-test-owner-1", show_on_map: true }))).json();
     expect(refused.worker_profile.show_on_map_note).toContain("Not applied");
     expect(refused.worker_profile.show_on_map).toBeUndefined(); // a refusal does not tell a stranger what the choice in force is
-    const asked = await (await call("/q/claim", json({ agent_id: "map-test-owner-1", show_on_map: false }))).json();
+    const byName = await call("/q/claim", json({ agent_id: "map-test-owner-1", show_on_map: false }));
+    expect(byName.status).toBe(403); // by agent name only, a worker that has a token is not taken as that worker (test/claim_token.test.js)
+    const asked = await (await call("/q/claim", json({ agent_id: "map-test-owner-1", worker_uuid: uuid, show_on_map: false }))).json(); // with the id the claim is accepted, the choice is not
     expect(asked.bilateral_guidance.worker_profile.show_on_map).toBeUndefined();
     expect(asked.bilateral_guidance.worker_profile.show_on_map_note).toContain("Not applied");
     await call("/q/onboard", json({ agent_id: "map-test-owner-1", worker_uuid: uuid, show_on_map: "yes" }));

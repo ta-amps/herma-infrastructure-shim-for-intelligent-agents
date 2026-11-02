@@ -27,6 +27,17 @@ describe("canonicalRedirect", () => {
     }
   });
 
+  it("says where to go in its body, for a client that does not follow redirects", async () => {
+    const post = canonicalRedirect(request("https://herma.ta-amps.workers.dev/q/claim?x=1", { method: "POST" }), on);
+    expect(post.headers.get("content-type")).toContain("application/json");
+    expect(await post.json()).toMatchObject({ ok: false, code: "moved", location: "https://herma.teleionlabs.com/q/claim?x=1" });
+    const get = canonicalRedirect(request("https://herma.ta-amps.workers.dev/q/pulse"), on);
+    expect((await get.json()).location).toBe("https://herma.teleionlabs.com/q/pulse");
+    const head = canonicalRedirect(request("https://herma.ta-amps.workers.dev/q/pulse", { method: "HEAD" }), on);
+    expect(head.body).toBeNull(); // a HEAD has no body
+    expect(head.headers.get("location")).toBe("https://herma.teleionlabs.com/q/pulse");
+  });
+
   it("never turns a path into another site (no open redirect)", () => {
     for (const path of ["//example.com/x", "///example.com", "/\\example.com", "/%2F%2Fexample.com"]) {
       const res = canonicalRedirect(request(`https://herma.ta-amps.workers.dev${path}`), on);
