@@ -1797,7 +1797,7 @@ def test_public_preview_svg_brand_chrome_discovery_and_stateless_mcp_parity(
     home_html = client.get("/", headers=edge_hdr).text
     connect_html = client.get("/connect", headers=edge_hdr).text
     for page_html in (home_html, connect_html):
-        assert '<svg class="brand-mark"' in page_html
+        assert '<a class="wordmark" href="/">' in page_html
         assert '<header class="site-header">' in page_html
         assert "<nav" in page_html
         assert '<footer class="site-footer">' in page_html
@@ -1929,7 +1929,7 @@ console.log(JSON.stringify({
   robOk: rob.status === 200,
   llmsOk: llms.status === 200 && llmsFull.status === 200,
   cardName: card.name,
-  hasSvgHeader: homeHtml.includes('class="brand-mark"') && homeHtml.includes('class="table-wrap"'),
+  hasSvgHeader: homeHtml.includes('class="wordmark"') && homeHtml.includes('class="table-wrap"'),
   prevPersisted: prev.persisted,
   prevMatches: prev.matches.length,
   riskReasons: riskMatch ? riskMatch.reasons : null,

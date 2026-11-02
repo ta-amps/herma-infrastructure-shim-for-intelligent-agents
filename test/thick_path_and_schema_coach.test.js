@@ -730,7 +730,7 @@ describe("Herma v6.8 + v6.9 Thick-Path Plateau Grid, Schema Coach, Meta FAIR Emb
   });
 
   it("enforces Herma v6.10 zero-missing taxonomy auto-describer, model_hint canonicalization, /q/affinity Ricardian + setup pairing, and catch-all /q/feedback + proactive_observations peer-review verb loop", async () => {
-    // 1. Onboard workers with drifted model_hint values ("Codex", "ollama-cloud/muse-spark-open") and verify canonicalization
+    // 1. Onboard workers with drifted model_hint values ("Codex", "cloud-host/muse-spark-open") and verify canonicalization
     const [onbCodexRes, onbMuseRes] = await Promise.all([
       callGateway("/q/onboard", {
         method: "POST",
@@ -750,7 +750,7 @@ describe("Herma v6.8 + v6.9 Thick-Path Plateau Grid, Schema Coach, Meta FAIR Emb
           agent_id: "muse-peer-reviewer-02",
           mint_new: true,
           harness_tier: "tier_2_structured_json",
-          model_hint: "ollama-cloud/muse-spark-open",
+          model_hint: "cloud-host/muse-spark-open",
           capabilities: ["http", "json", "rubric_eval"],
         }),
       }),

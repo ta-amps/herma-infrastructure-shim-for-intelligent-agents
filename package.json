@@ -7,9 +7,12 @@
     "check": "node --check deploy/cloudflare/bilateral_bridge.js && node --check deploy/cloudflare/conversation.js && node --check deploy/cloudflare/conversation_state.js && vitest run",
     "build": "wrangler deploy --dry-run --config deploy/cloudflare/wrangler.jsonc"
   },
-  "dependencies": {"@cfworker/json-schema": "4.1.1"},
+  "dependencies": {
+    "@cfworker/json-schema": "4.1.1"
+  },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.9",
+    "playwright": "1.64.1",
     "vitest": "4.1.12",
     "wrangler": "4.154.0"
   }

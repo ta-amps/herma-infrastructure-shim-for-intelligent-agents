@@ -5,6 +5,14 @@
 {
   "name": "herma",
   "main": "entry.js",
+  // The release guard: wrangler runs this before it uploads anything, from any checkout of this repository, and a failure
+  // stops the deploy. It needs a clean committed tree that contains the commit that is live now, current page assets, a
+  // passing banned-word gate (scripts/release_gate.mjs) and a passing light check (make light-check, MUST-FOLLOW rule 13).
+  // Whoever deploys re-reads Cloudflare first and updates deploy/cloudflare/release-policy.json in the same commit.
+  "build": {
+    "cwd": ".",
+    "command": "cd \"$(git rev-parse --show-toplevel)\" && python3 scripts/check_release.py --check && make light-check"
+  },
   "compatibility_date": "2026-10-01",
   "workers_dev": true,
   "durable_objects": {

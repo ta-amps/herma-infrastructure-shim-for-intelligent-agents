@@ -104,6 +104,7 @@ GATEWAY_PATHS = [
     "/prompts",
     "/prompts.js",
     "/get-started",
+    "/starter",
     "/dashboard",
     "/dashboard.js",
     "/q",
@@ -315,7 +316,7 @@ def test_models_section_and_text_are_identical_in_both_runtimes(
     assert section in worker_pages["/"]
     assert models_text() in worker_pages["/llms-full.txt"]
     for page in (python_pages["/"], worker_pages["/"]):
-        assert "<h2>Which Meta Models Do What</h2>" in page
+        assert '<h2 id="models-h">Which Meta Models Do What</h2>' in page
         assert 'href="https://agora.ta-amps.workers.dev/models/">Models used ↗</a>' in page
     for app in AGENT_APP_NAMES:
         assert app not in section, "the models section names models only"
@@ -448,7 +449,8 @@ def test_live_gateway_routes_keep_working_and_name_the_muse_default() -> None:
     for path in GATEWAY_PATHS:
         assert served[f"GATEWAY STATUS {path}"] == "200", path
         assert served[f"GATEWAY {path}"], path
-    assert "Muse via the Meta API" in served["GATEWAY /prompts"]
-    assert "meta/muse-spark-1.3" in served["GATEWAY /prompts/raw/cli_swarm_100"]
+    assert "Muse Spark 1.3 through the Meta API" in served["GATEWAY /prompts"]
+    assert "Muse Spark 1.3 through the Meta API" in served["GATEWAY /prompts/raw/cli_swarm_100"]
+    assert "your-agent-command" in served["GATEWAY /prompts/raw/cli_swarm_100"]
     for path in ("/q/pulse", "/q/trust", "/q/search?q=muse"):
         json.loads(served[f"GATEWAY {path}"])

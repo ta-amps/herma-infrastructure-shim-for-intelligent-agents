@@ -51,10 +51,14 @@ def main() -> int:
     wanted = expected_urls()
     if current != wanted:
         if args.check:
-            problems.append(f"herma/page_shell.json asset versions are stale: {current} should be {wanted}")
+            problems.append(
+                f"herma/page_shell.json asset versions are stale: {current} should be {wanted}"
+            )
         else:
             shell["assets"].update(wanted)
-            SHELL.write_text(json.dumps(shell, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            SHELL.write_text(
+                json.dumps(shell, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+            )
             print(f"updated {SHELL.relative_to(ROOT)}: {wanted}")
     if problems:
         print("\n".join(problems), file=sys.stderr)

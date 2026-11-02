@@ -242,7 +242,7 @@ def test_all_builtin_starters_and_natural_language_queries_match_across_python_a
     assert py_lora["responded_directly"] is False and wk_lora["responded_directly"] is False
     assert "detail:herma.lora_vs_shim" in py_lora["shimmed_context_refs"]
     assert py_lora["shimmed_context_refs"] == wk_lora["shimmed_refs"]
-    assert "Muse Glimmer 4-bit QLoRA" in wk_lora["system_text"]
+    assert "Muse Glimmer 30B 4-bit QLoRA" in wk_lora["system_text"]
     assert "Muse Wonder 1.0" in wk_lora["system_text"]
 
     # Artifact sanity checks (reproducible training/eval/Dockerfile present & valid JSON)
