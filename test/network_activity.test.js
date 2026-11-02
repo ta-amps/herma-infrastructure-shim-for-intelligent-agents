@@ -1,6 +1,7 @@
 import { env, exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import worker from "../deploy/cloudflare/worker.js";
+import { buildTidy } from "../deploy/cloudflare/page_shell.js";
 import { NETWORK_GRID, buildNetworkBody, cleanDeclaredModel, modelNamesFor, networkKind, networkWorkerKind, parseShowOnMap, pruneClaimEdges, recordClaimEdge, resetNetworkCaches, setShowOnMap } from "../deploy/cloudflare/network_activity.js";
 
 // GET /q/network (design contract claude-design-network-map.v1.json): where workers connect and what they pick up.
@@ -65,6 +66,11 @@ describe("the map's small rules", () => {
       { declared: true, model: "muse-spark" }, // the family alias
       { declared: true, model: "muse-spark-1.3" }, // the catalog's own
       { declared: true, model: "a1b2c3d4e5f6a7b8c9d0" }, // a long hex string: the filter changes it, so it is not shown
+      { declared: true, model: "01-ai/Yi-Large" }, // a real id that starts with digits: it holds a word, so it is shown cleaned
+      { declared: true, model: "10.0.0.5" }, // an address: no word, not shown
+      { declared: true, model: "fe80::1ff:fe23:4567:890a" }, // an IPv6 address: no word of 3 letters, not shown
+      { declared: true, model: "2001:db8::1" },
+      { declared: true, model: "12345678" },
       { declared: false, model: "some-team-model" }, // not declared by a volunteer: not named here
       { declared: true, model: "" },
     ]);
@@ -72,8 +78,18 @@ describe("the map's small rules", () => {
     expect(names["muse-spark"]).toBe("Muse Spark");
     expect(names["muse-spark-1.3"]).toBe("Muse Spark 1.3");
     expect(names["a1b2c3d4e5f6a7b8c9d0"]).toBeUndefined();
+    expect(names["01-ai/Yi-Large"]).toBe("01-ai-yi-large");
+    for (const looksLikeNothing of ["10.0.0.5", "fe80::1ff:fe23:4567:890a", "2001:db8::1", "12345678"]) expect(names[looksLikeNothing], looksLikeNothing).toBeUndefined();
     expect(names["some-team-model"]).toBeUndefined();
     expect(Object.keys(names)).not.toContain("__proto__");
+  });
+
+  it("runs a declared id through the word filter it is given, and shows none the filter would change", () => {
+    // a made-up list, so that no banned word is spelled here (the release gate exercises the real list)
+    const tidy = buildTidy({ displayRules: [{ re: "glimbo", flags: "i", to: "a thing" }], privateSha256: [] });
+    const names = modelNamesFor([{ declared: true, model: "glimbo-spark" }, { declared: true, model: "Kimi_K2" }], {}, tidy);
+    expect(names["glimbo-spark"]).toBeUndefined();
+    expect(names["Kimi_K2"]).toBe("kimi-k2");
   });
 
   it("reads a clear yes as shown and any other value that is given as off", () => {
@@ -158,7 +174,7 @@ describe("GET /q/network", () => {
   });
 
   it("names the model a volunteer declared: the family without a version, the catalog's name, or the cleaned id, and never one the word list changes", async () => {
-    const declared = [["w_m1", "muse-spark"], ["w_m2", "muse-spark-1.3"], ["w_m3", "My_Custom Model.v2!!"], ["w_m4", "x".repeat(60)], ["w_m5", "a1b2c3d4e5f6a7b8c9"], ["w_m6", ""]];
+    const declared = [["w_m1", "muse-spark"], ["w_m2", "muse-spark-1.3"], ["w_m3", "My_Custom Model.v2!!"], ["w_m4", "x".repeat(60)], ["w_m5", "a1b2c3d4e5f6a7b8c9"], ["w_m6", ""], ["w_m7", "10.0.0.5"]];
     for (const [index, [uuid, model]] of declared.entries()) {
       await recordClaimEdge(db(), edge("FRA", "EU"), { task: await queueTask(`task_${uuid}`), workerUuid: uuid, agentId: `agent-${uuid}`, modelHint: model, nowIso: minutesAgo(30 - index) });
     }
@@ -171,6 +187,7 @@ describe("GET /q/network", () => {
     expect(model("w_m4")).toEqual({ name: "x".repeat(40), declared: true });
     expect(model("w_m5")).toBeNull(); // changed by the word list: not shown
     expect(model("w_m6")).toBeNull();
+    expect(model("w_m7")).toBeNull(); // an address is not a name
     expect(model("w_team")).toEqual({ name: "Muse Spark", declared: false }); // a team agent's model is not a volunteer's declaration
     expect(JSON.stringify(body)).not.toContain("a1b2c3d4e5f6a7b8c9");
   });

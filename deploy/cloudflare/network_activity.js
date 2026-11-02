@@ -67,15 +67,16 @@ export function cleanDeclaredModel(raw) {
 
 /**
  * The names the map may give a model: the catalog's (and the family alias), plus, for each id a volunteer declared that the catalog does not name, the cleaned id
- * ("Model not declared" tells a reader less than what the worker said). A cleaned id the shared word list would change in any way (a banned word, a private name,
- * a long hex string) is not shown. The map marks such a model "(declared)".
+ * ("Model not declared" tells a reader less than what the worker said). A declared id is free text from the worker and the map is public, so it is shown only if
+ * it reads as a name (it holds a word of at least 3 letters, so a number or an address-like string such as 10.0.0.5 or fe80::1ff:fe23 never is) and the shared word
+ * list would not change it in any way (a banned word, a private name, a long hex string). The map marks such a model "(declared)".
  */
-export function modelNamesFor(rows, known = MODEL_NAMES) {
+export function modelNamesFor(rows, known = MODEL_NAMES, tidy = tidyText) {
   const names = Object.assign(Object.create(null), known);
   for (const row of rows) {
     if (!row.declared || !row.model || modelName(row.model, names)) continue;
     const cleaned = cleanDeclaredModel(row.model);
-    if (cleaned.length < 2 || tidyText(cleaned, 40) !== cleaned) continue;
+    if (!/[a-z]{3}/.test(cleaned) || tidy(cleaned, 40) !== cleaned) continue;
     names[row.model] = cleaned;
   }
   return names;

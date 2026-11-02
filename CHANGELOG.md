@@ -13,8 +13,8 @@ Eranos, which reads the map, no longer marks its model as a volunteer's declarat
 were shown as volunteers. The kind of worker is decided when the map is read, so a later addition to the list covers earlier claims too.
 
 The map names the model a volunteer declared: `muse-spark` is "Muse Spark" (the family, with no version, still marked declared), a catalog id keeps the catalog's name, and any other id
-is shown cleaned (lower case, letters, digits, dots and hyphens, at most 40 characters) and still marked declared, but only if the shared word list leaves that text unchanged. What the
-map cannot name stays "Model not declared".
+is shown cleaned (lower case, letters, digits, dots and hyphens, at most 40 characters) and still marked declared, but only if it holds a word of at least 3 letters (so a number or an
+address-like string is never shown) and the shared word list leaves that text unchanged. What the map cannot name stays "Model not declared".
 
 ## The network map
 
