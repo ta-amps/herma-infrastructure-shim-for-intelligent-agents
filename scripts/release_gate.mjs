@@ -228,7 +228,7 @@ function publicRoutes() {
     "/", "/connect", "/connect.json", "/healthz", "/llms.txt", "/llms-full.txt", "/.well-known/agent-card.json", "/api/conversation-schema",
     "/preview.js", "/robots.txt", "/favicon.svg", "/agent-start.json", "/agent-start.css", "/agent-start.js", "/starter", "/starter?format=json",
     "/prompts", "/prompts?format=json", "/get-started", "/dashboard", "/dashboard?format=json", "/dashboard.js", "/prompts.js", "/help", "/chat", "/status", "/health",
-    "/dashboard?q=shelter&fragment=results", "/dashboard?q=shelter", "/dashboard?fragment=results",
+    "/dashboard?q=shelter&fragment=results", "/dashboard?q=shelter", "/dashboard?fragment=results", "/shim", "/trust",
     "/q/network", "/q/network?replay=1", "/q/network?kind=nonprofit",
     "/feedback", "/q", "/c/nothing_here", "/w/w_nothing_here", "/q/demo/nothing_here",
     "/kits", "/kits?format=json", "/kits.js", "/kits/package.json", "/kits/mcp-manifest.json", "/kits/SKILL.md", "/kits/bootstrap.sh",

@@ -69,12 +69,19 @@ async function open(route) {
   check((await page.locator("#btn-play").textContent()) === "Pause", "Play starts it again");
   check(errors.length === 0, `demo has no console errors ${errors.join(" | ")}`);
 }
-{ // home inspector
+{ // the home: one line, two ways in, today's numbers, and the banner above the header
   const { page, errors } = await open("/");
+  check((await page.locator("h1").innerText()) === "Herma", "the home heading is Herma");
+  check((await page.locator(".facts .fact").count()) === 5, "the home shows the five totals");
+  check(await page.getByRole("link", { name: "Try the shim" }).isVisible(), "the home links the shim page");
+  check(errors.length === 0, `the home has no console errors ${errors.join(" | ")}`);
+}
+{ // the shim page (the old overview): the inspector
+  const { page, errors } = await open("/shim");
   await page.click('[data-herma-preset="tasks"]');
   await page.waitForFunction(() => /refused|Checked|network/.test(document.getElementById("herma-preview-status").textContent), null, { timeout: 8000 });
   check(true, "the preview button answers (the fixture server has no preview API, so it reports that)");
-  check(errors.length === 0, `home has no console errors ${errors.join(" | ")}`);
+  check(errors.length === 0, `the shim page has no console errors ${errors.join(" | ")}`);
 }
 { // the banner's own panel opens
   const { page, errors } = await open("/connect");

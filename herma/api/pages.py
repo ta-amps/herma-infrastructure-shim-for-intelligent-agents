@@ -418,7 +418,7 @@ def render_overview_page(
             "into requests to Meta's Muse models."
         ),
         active="overview",
-        canonical="/",
+        canonical="/shim",
         main=main,
         scripts=("/preview.js",),
     )

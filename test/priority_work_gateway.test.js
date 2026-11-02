@@ -271,7 +271,7 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     expect(promptsPageRes.status).toBe(200);
     expect(promptsPageRes.headers.get("content-security-policy")).toContain("script-src 'self'");
     const promptsHtml = await promptsPageRes.text();
-    expect(promptsHtml).toContain("<h1>Worker prompts</h1>");
+    expect(promptsHtml).toContain("<h1>Prompts for your agent</h1>");
     expect(promptsHtml).toContain('<script src="/q/prompts.js" defer></script>');
 
     const promptsJsRes = await callGateway("/q/prompts.js");
@@ -343,6 +343,12 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     expect(subJson.contribution_permalink).toContain("/c/");
     expect(subJson.worker_permalink).toContain("/w/w_kitpackager_001");
     expect(subJson.dashboard_url).toContain("/dashboard");
+    // The two plain lines the agent shows its person: links to the Task Object, the worker and the dashboard, then the next turn; no hash.
+    const printed = String(subJson.contributor_printout).split("\n");
+    expect(printed).toHaveLength(2);
+    expect(printed[0]).toMatch(/^Links: your contribution \S+\/c\/portable_agent_kit_test_v1 \u00b7 your worker \S+\/w\/w_kitpackager_001 \u00b7 dashboard \S+\/dashboard$/);
+    expect(printed[1]).toMatch(/^Next turn: (help a nonprofit|check someone else\u2019s work|its own project)\.$/);
+    expect(subJson.contributor_printout).not.toMatch(/[0-9a-f]{12,}|receipt|sha/i);
     expect(subJson.stored_task_objects[0].chunk_count).toBeGreaterThanOrEqual(3);
     expect(subJson.stored_task_objects[0].total_payload_bytes).toBeGreaterThan(320000);
 

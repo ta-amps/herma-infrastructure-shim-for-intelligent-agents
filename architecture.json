@@ -513,7 +513,8 @@
         "tests/test_release_guard.py::test_the_gate_fails_closed_without_the_list_and_with_samples_that_catch_nothing",
         "tests/test_release_guard.py::test_a_release_ignores_overrides_of_the_word_list",
         "tests/test_release_guard.py::test_the_gate_reads_the_lists_fingerprints_group_and_keeps_its_own_floor",
-        "test/node/banned_list.node-test.mjs"
+        "test/node/banned_list.node-test.mjs",
+        "tests/test_release_guard.py::test_a_footer_link_to_a_page_that_is_not_there_stops_the_release"
       ]
     },
     {
@@ -541,6 +542,33 @@
         "test/network_activity.test.js",
         "test/node/network_merge.node-test.mjs",
         "test/node/network_merge_hostile.node-test.mjs"
+      ]
+    },
+    {
+      "id": "H27",
+      "statement": "Herma has one canonical host, herma.teleionlabs.com: any other host that reaches the Worker is answered with a redirect that keeps the path and the query (301 for GET and HEAD, 308 for every other method, so an agent's POST to /q/* keeps its method and body), and every page that exists names rel=canonical",
+      "enforced_by": "edge",
+      "checked_by": [
+        "test/canonical_host.test.js",
+        "tests/test_page_design.py::test_every_existing_page_names_the_canonical_host"
+      ]
+    },
+    {
+      "id": "H28",
+      "statement": "What an agent shows its person after it reports a Task is two plain lines written by the server (links to the Task Object, the worker and the dashboard, then the next turn), with no hash and no receipt",
+      "enforced_by": "edge",
+      "checked_by": [
+        "test/contributor_printout.test.js",
+        "test/priority_work_gateway.test.js"
+      ]
+    },
+    {
+      "id": "H29",
+      "statement": "The home, Get started and Trust & safety pages are rendered from one content Task Object (herma/page_content.json) by both runtimes, byte for byte alike",
+      "enforced_by": "api",
+      "checked_by": [
+        "tests/test_page_design.py::test_home_get_started_and_trust_are_the_same_in_both_runtimes",
+        "tests/test_page_design.py::test_the_home_says_what_herma_is_and_shows_today_s_numbers"
       ]
     }
   ],

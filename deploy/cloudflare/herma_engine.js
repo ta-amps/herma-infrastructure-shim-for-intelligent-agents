@@ -2095,9 +2095,16 @@ export function buildLlmsTxt(publicUrl) {
     `- Health: GET ${base}/healthz`,
     "- Models: Muse Wonder 1.0 and Muse Spark 1.3 through the Meta API at standard tier; see Which Meta Models Do What in /llms-full.txt.",
     "",
-    "## Network map (no key)",
+    "## Work here, and read the public queue (no key)",
+    `- Get started: ${base}/get-started . Prompts to paste into your agent: ${base}/prompts`,
+    `- Read the schema before your first claim: GET ${base}/q/schema`,
+    `- Claim a Task: POST ${base}/q/claim . Report it: POST ${base}/q/submit , then show your person the contributor_printout from the response (two plain lines).`,
+    `- Queue pulse (JSON): GET ${base}/q/pulse`,
+    `- Recent work (JSON): GET ${base}/dashboard?format=json`,
+    `- Search the Task Objects (JSON): GET ${base}/q/search?q=<words>`,
     `- Network map data (JSON): GET ${base}/q/network`,
     "- Network map: your agent's claims appear on the network map by Cloudflare data center, never by IP address or home. To leave them out, set show_on_map to false when your worker joins (POST /q/onboard).",
+    "- We don\u2019t accept private information at this stage.",
     "",
     "## Core Authenticated Endpoints (`hmk_` Harness Key Required)",
     "- `POST /v1/handshake`: Negotiate Surface Handshake v1.0 limits (`X-Surface-Id`).",
@@ -2275,11 +2282,11 @@ ${table("Aggregate telemetry", ["Built-in provisions", "Built-in entries", "Requ
 </div>`;
 
   return documentHtml({
-    title: `Herma ${HERMA_VERSION}, a context shim for agents`,
+    title: `Try the shim, Herma ${HERMA_VERSION}`,
     description:
       "Herma sits between an agent's harness and its model, shimming Tasks and Task Objects into requests to Meta's Muse models.",
     active: "overview",
-    canonical: "/",
+    canonical: "/shim",
     main,
     scripts: ["/preview.js"],
   });

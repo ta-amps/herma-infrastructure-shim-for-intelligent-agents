@@ -27,6 +27,7 @@ from herma.api.pages import (
     render_connect_page,
     render_overview_page,
 )
+from herma.api.site_pages import render_get_started_page, render_home_page, render_trust_page
 from herma.conversation import ConversationEngine
 from herma.conversation_contracts import ConversationTurn
 from herma.conversation_schema import strict_json
@@ -360,6 +361,18 @@ def create_app() -> FastAPI:
         return build_agent_card(_public_url(req))
 
     @application.get("/", response_class=HTMLResponse)
+    def home_page() -> HTMLResponse:
+        return HTMLResponse(render_home_page())
+
+    @application.get("/get-started", response_class=HTMLResponse)
+    def get_started_page() -> HTMLResponse:
+        return HTMLResponse(render_get_started_page())
+
+    @application.get("/trust", response_class=HTMLResponse)
+    def trust_page() -> HTMLResponse:
+        return HTMLResponse(render_trust_page())
+
+    @application.get("/shim", response_class=HTMLResponse)
     @application.get("/console", response_class=HTMLResponse)
     def overview_page(req: Request) -> HTMLResponse:
         store = get_store()

@@ -27,6 +27,7 @@ import pytest
 
 from herma.api import page_shell
 from herma.api.pages import render_connect_page, render_overview_page
+from herma.api.site_pages import render_get_started_page, render_home_page, render_trust_page
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CSS_PATH = REPO_ROOT / "herma/static/assets/herma-pages.css"
@@ -67,10 +68,13 @@ def worker_site() -> dict[str, Any]:
 @pytest.fixture(scope="module")
 def python_pages() -> dict[str, str]:
     return {
-        "/": render_overview_page(
+        "/": render_home_page(),
+        "/shim": render_overview_page(
             [], [], "https://herma.teleionlabs.com", [], aggregate_counts=None
         ),
         "/connect": render_connect_page("https://herma.teleionlabs.com"),
+        "/get-started": render_get_started_page(),
+        "/trust": render_trust_page(),
     }
 
 
@@ -227,6 +231,58 @@ def test_every_page_carries_the_shell_and_stays_light(
             )
 
 
+def test_home_get_started_and_trust_are_the_same_in_both_runtimes() -> None:
+    """The words are one content Task Object (herma/page_content.json); both renderers must produce the same page from it."""
+    worker = json.loads(
+        run_node(
+            """
+            import { renderGetStartedHtml, renderHomeHtml, renderTrustHtml } from "./deploy/cloudflare/site_pages.js";
+            console.log(JSON.stringify({ home: renderHomeHtml(null), start: renderGetStartedHtml(), trust: renderTrustHtml() }));
+            """
+        )
+    )
+    assert worker["home"] == render_home_page()
+    assert worker["start"] == render_get_started_page()
+    assert worker["trust"] == render_trust_page()
+
+
+def test_the_home_says_what_herma_is_and_shows_today_s_numbers(worker_site: dict[str, Any]) -> None:
+    """Design contract: one line, two ways in, the five dashboard totals as plain numbers, no version in the heading."""
+    home = worker_site["pages"]["/"]
+    text = visible_text(home)
+    assert home.count("<h1>Herma</h1>") == 1
+    assert (
+        "The shim between any agent and its model. It brings the right Task Objects as context, or answers directly."
+        in text
+    )
+    assert "For people" in text and "For agents" in text
+    for label in ("Workers", "Nonprofit Tasks", "Shared Tasks", "Task Objects", "Checks"):
+        assert label in text, label
+    assert (
+        "285" in text
+        and "12 waiting" in text
+        and "31 agent names" in text
+        and "624 searchable entries" in text
+    )
+    assert not re.search(r"\bv?\d+\.\d+\.\d+\b", re.search(r"<h1>.*?</h1>", home, re.S).group(0))  # type: ignore[union-attr]
+    assert "Try the shim" in text and 'href="/shim"' in home
+
+
+def test_get_started_names_the_canonical_instructions_and_the_map_choice(
+    worker_site: dict[str, Any],
+) -> None:
+    page = worker_site["pages"]["/get-started"]
+    text = visible_text(page)
+    assert page.count("Step ") == 3 and "https://herma.teleionlabs.com/llms.txt" in text
+    assert "show_on_map" in text and "never by IP address or home" in text
+    assert "We don\u2019t accept private information at this stage." in text
+    assert 'href="https://eranosforgood.org/help"' in page and 'href="/prompts"' in page
+    trust = visible_text(worker_site["pages"]["/trust"])
+    assert (
+        "The worker that makes something never checks it" in trust and "Report a problem" in trust
+    )
+
+
 def test_every_existing_page_names_the_canonical_host(
     worker_site: dict[str, Any], python_pages: dict[str, str]
 ) -> None:
@@ -281,7 +337,7 @@ def test_pages_name_the_model_and_link_the_record_instead_of_hashes(
         assert (
             'href="https://agora.eranosforgood.org/models/">Models used &#8599;</a>' in pages[route]
         ), route
-    assert "Models used ↗" in pages["/"], "the home's models section links it too"
+    assert "Models used ↗" in pages["/shim"], "the shim page's models section links it too"
     assert "Record &#8599;" in dashboard and "?format=json" in dashboard
     assert "A volunteer's AI" in visible_text(dashboard)
     contribution = pages["/c/verb_evl_d900e706b470"]
@@ -294,7 +350,8 @@ def test_pages_name_the_model_and_link_the_record_instead_of_hashes(
     assert "Muse Spark 1.3 through the Meta API" in starter
     prompts = visible_text(pages["/prompts"])
     assert "We don't accept private information at this stage." in prompts
-    assert "Links: your contribution" in prompts and "never print hashes" in prompts
+    assert "Links: your contribution" in prompts and "Next turn:" in prompts
+    assert "Never print a hash or a receipt" in prompts
 
 
 def test_worker_written_text_is_filtered_by_the_list_and_the_original_stays_in_the_record() -> None:

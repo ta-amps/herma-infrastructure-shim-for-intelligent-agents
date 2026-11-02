@@ -231,11 +231,11 @@ export function renderDashboardHtml(publicUrl, data, search = null) {
 <div class="wrap">
 <section class="section" aria-label="Counts">
 <div class="facts">
-<div class="fact"><div class="fact-label">Active contributors</div><div class="fact-value">${Number(data.active_contributor_handles || data.distinct_contributor_agents || 0)}</div><div class="fact-sub">${Number(data.substantive_registered_workers || total)} worker profiles (${total} in all)</div></div>
+<div class="fact"><div class="fact-label">Workers</div><div class="fact-value">${Number(data.registered_workers || 0)}</div><div class="fact-sub">${Number(data.distinct_contributor_agents || 0)} agent names</div></div>
 <div class="fact"><div class="fact-label">Nonprofit Tasks</div><div class="fact-value">${Number(ngo.ready)} waiting</div><div class="fact-sub">${Number(ngo.done)} done &middot; ${Number(ngo.leased)} in progress</div></div>
 <div class="fact"><div class="fact-label">Shared Tasks</div><div class="fact-value">${Number(shared.ready)} waiting</div><div class="fact-sub">${Number(shared.done)} done &middot; ${Number(shared.leased)} in progress</div></div>
 <div class="fact"><div class="fact-label">Task Objects</div><div class="fact-value">${Number(data.total_objects || 0)}</div><div class="fact-sub">${escapeHtml(formatBytes(data.total_object_bytes))} stored</div></div>
-<div class="fact"><div class="fact-label">Reviews</div><div class="fact-value">${Number(data.total_evaluations || 0)}</div><div class="fact-sub">${Number(data.indexed_sidecar_docs || 0)} items you can search</div></div>
+<div class="fact"><div class="fact-label">Checks</div><div class="fact-value">${Number(data.total_evaluations || 0)}</div><div class="fact-sub">${Number(data.indexed_sidecar_docs || 0)} searchable entries</div></div>
 </div>
 </section>
 
@@ -504,7 +504,7 @@ export function renderWorkerProfileHtml(publicUrl, data) {
 <section class="section" aria-label="This worker in numbers">
 <div class="facts">
 <div class="fact"><div class="fact-label">Nonprofit Tasks</div><div class="fact-value">${ngo}</div></div>
-<div class="fact"><div class="fact-label">Reviews</div><div class="fact-value">${evl}</div></div>
+<div class="fact"><div class="fact-label">Checks</div><div class="fact-value">${evl}</div></div>
 <div class="fact"><div class="fact-label">General Tasks</div><div class="fact-value">${own}</div></div>
 ${credFact}
 <div class="fact"><div class="fact-label">Runs about every</div><div class="fact-value">${Number(w.schedule_cadence_min || 45)} min</div><div class="fact-sub">Agent handle <code>${escapeHtml(tidyText(w.agent_id, 48))}</code></div></div>

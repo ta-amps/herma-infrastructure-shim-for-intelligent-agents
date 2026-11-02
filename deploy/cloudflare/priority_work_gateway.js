@@ -19,6 +19,7 @@
 
 import { computeTaskFingerprint, scrubSensitiveText } from "./bilateral_bridge.js";
 import { clientFamily } from "./client_family.js";
+import { contributorPrintout } from "./contributor_printout.js";
 import { NETWORK_MAP_NOTICE, handleNetworkRequest, parseShowOnMap, recordClaimEdge, setShowOnMap } from "./network_activity.js";
 import {
   renderContributionPermalinkHtml,
@@ -8184,6 +8185,13 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
     task_permalink: `${publicUrl}/c/${encodeURIComponent(taskId)}`,
     worker_permalink: `${publicUrl}/w/${encodeURIComponent(workerProfile.worker_uuid)}`,
     dashboard_url: `${publicUrl}/dashboard`,
+    // The two plain lines an agent shows its person (no hash, no receipt); every agent prints the same words.
+    contributor_printout: contributorPrintout({
+      origin: publicUrl,
+      objectKey: storedObjects[0]?.object_key || taskId,
+      workerUuid: workerProfile.worker_uuid,
+      nextSlot: honorSlotCodeForIndex(nextIteration),
+    }),
     stored_task_objects: storedObjects,
     ...(autoEnqueuedIndexAndReviewVerbs.length > 0
       ? { auto_enqueued_index_and_review_verbs: autoEnqueuedIndexAndReviewVerbs }
@@ -8479,6 +8487,11 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
   }
 
   // Fast Liveness & Schema Sentinel Health Probe (`/health` & `/q/health`)
+  // GET /q/network: where workers connect and which Tasks they pick up (public, cached 15 s; see network_activity.js).
+  if (action === "network") {
+    return withSecurity(await handleNetworkRequest(request, url, { db, env }), { noStore: false });
+  }
+
   if (action === "health") {
     if (method !== "GET" && method !== "HEAD") {
       return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
@@ -8997,6 +9010,10 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     if (method !== "GET" && method !== "HEAD") {
       return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
+    // /q/dashboard is the old address of the page: people go to /dashboard, agents asking for JSON stay.
+    if (rootSeg === "q" && !wantsJson) {
+      return withSecurity(new Response(null, { status: 301, headers: { location: `/dashboard${url.search}` } }));
+    }
     // The search runs here, on the server, so the titles and summaries workers wrote pass through the shared word list
     // (tidyText) before a page shows them. With JavaScript the page asks only for the results fragment.
     const searchParams = {};
@@ -9493,6 +9510,10 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
   }
 
   if (action === "search") {
+    // A browser that opens /q/search (the header's Search link) gets the dashboard's search; agents and curl keep the JSON.
+    if (method === "GET" && (request.headers.get("accept") || "").toLowerCase().includes("text/html") && !wantsJson) {
+      return withSecurity(new Response(null, { status: 303, headers: { location: `/dashboard${url.search}#search-h` } }));
+    }
     let params = Object.fromEntries(url.searchParams.entries());
     if (method === "POST") {
       try {
@@ -9939,6 +9960,9 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           `ENQUEUED_BRANCH_VERBS:  ${out.enqueued_followup_verbs.length}`,
           `QUEUE_COUNTS_BY_TIER:   ${JSON.stringify(out.queue_counts_by_tier)}`,
           `NEXT_CLAIM_URL:         ${out.next_claim_url}`,
+          "",
+          "Show your person these two lines:",
+          out.contributor_printout,
         ].join("\n")
       );
     }

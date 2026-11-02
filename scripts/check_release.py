@@ -11,6 +11,9 @@ that breaks a rule stops here instead of going live. The rules, in order:
    MUST-FOLLOW rule 16), not from the made-up test list, and is current.
 5. The banned-word gate (scripts/release_gate.mjs) passes that list on every served page, public JSON and text file, and on pages
    rendered from worker-written text that breaks every rule on purpose.
+6. Every link in the footer and the header's side link goes to a page that exists: a link to another site that answers 404 (the
+   Teleion Labs status, privacy and terms pages, Agora's Models used and Network) stops the release, so Herma never goes live
+   pointing at a page that is not there yet. A link that cannot be reached cannot be verified and also stops it.
 
 `make light-check` (rule 13, both colour schemes, no dark panel) runs right after this script in the build command.
 This gate cannot stop another checkout or a credential holder from skipping the release process; the operator still
@@ -25,6 +28,9 @@ import os
 import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -104,6 +110,41 @@ def check_gate(root: Path) -> list[str]:
     ] or ["the banned-word gate failed"]
 
 
+def footer_link_targets(root: Path) -> list[tuple[str, str]]:
+    """The links to other sites that every page shows: the footer's and the header's side link (labels with their addresses)."""
+    shell = json.loads((root / "herma/page_shell.json").read_text(encoding="utf-8"))
+    links = [(link["label"], link["href"]) for link in shell["footer"]["links"]]
+    links.append((shell["header_link"]["label"], shell["header_link"]["href"]))
+    return [(label, href) for label, href in links if href.startswith("https://")]
+
+
+def fetch_status(url: str, timeout: float = 20.0) -> int:
+    """The final HTTP status of a GET after redirects; a connection failure raises."""
+    if not url.startswith("https://"):
+        raise ValueError(f"only https links are checked: {url}")
+    request = urllib.request.Request(  # noqa: S310 (https only, checked above)
+        url, headers={"user-agent": "herma-release-guard/1.0", "accept": "text/html,*/*"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+            return int(response.status)
+    except urllib.error.HTTPError as error:
+        return int(error.code)
+
+
+def check_footer_links(root: Path, fetch: Callable[[str], int] = fetch_status) -> list[str]:
+    problems: list[str] = []
+    for label, href in footer_link_targets(root):
+        try:
+            status = fetch(href)
+        except Exception as error:  # an unreachable link cannot be verified, so it fails closed
+            problems.append(f"{label} {href}: could not be checked ({type(error).__name__})")
+            continue
+        if status >= 400:
+            problems.append(f"{label} {href}: answers {status}")
+    return problems
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -122,6 +163,7 @@ def main() -> int:
         ("page asset versions", lambda: check_assets(ROOT)),
         ("shared banned-word list", lambda: check_word_list(ROOT)),
         ("banned-word gate", lambda: check_gate(ROOT)),
+        ("footer links", lambda: check_footer_links(ROOT)),
     ):
         problems = check()
         if problems:

@@ -83,6 +83,9 @@ SKIP_SUFFIXES = {
 
 GET_PATHS = [
     "/",
+    "/shim",
+    "/get-started",
+    "/trust",
     "/connect",
     "/connect.json",
     "/healthz",
@@ -309,10 +312,10 @@ def test_models_section_and_text_are_identical_in_both_runtimes(
     python_pages = python_surface(tmp_path, monkeypatch)
     worker_pages = worker_surface()
     section = render_models_section()
-    assert section in python_pages["/"]
-    assert section in worker_pages["/"]
+    assert section in python_pages["/shim"]
+    assert section in worker_pages["/shim"]
     assert models_text() in worker_pages["/llms-full.txt"]
-    for page in (python_pages["/"], worker_pages["/"]):
+    for page in (python_pages["/shim"], worker_pages["/shim"]):
         assert '<h2 id="models-h">Which Meta Models Do What</h2>' in page
         assert 'href="https://agora.eranosforgood.org/models/">Models used ↗</a>' in page
     for app in AGENT_APP_NAMES:

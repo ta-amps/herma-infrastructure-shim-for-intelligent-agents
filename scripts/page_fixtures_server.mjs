@@ -21,10 +21,12 @@ const BASE = "https://herma.teleionlabs.com";
 
 export const PAGE_ROUTES = [
   "/",
+  "/shim",
   "/connect",
   "/starter",
   "/prompts",
   "/get-started",
+  "/trust",
   "/dashboard",
   "/c/portable_autonomous_worker_agent_kit_v1",
   "/c/verb_evl_d900e706b470",
@@ -48,6 +50,7 @@ export async function renderSite() {
   const demo = await load("deploy/cloudflare/demo_page.js");
   const help = await load("deploy/cloudflare/worker_help_and_starter.js");
   const kits = await load("deploy/cloudflare/worker_kits_and_mutation_grid.js");
+  const site = await load("deploy/cloudflare/site_pages.js");
   const kitBundle = await kits.buildWorkerKitArtifacts(BASE);
   const kitsDoc = { kits: kitBundle.catalogItems, recommended_pitch: kits.HERMA_PROMPT_KIT_MUTATION_GRID.pitch_templates.recommended_infra_leverage };
   const engine = await load("deploy/cloudflare/herma_engine.js");
@@ -69,11 +72,13 @@ export async function renderSite() {
   };
 
   const pages = {
-    "/": () => engine.renderOverviewHtml([], [], BASE, [], null),
+    "/": () => site.renderHomeHtml(read("home_totals.json")),
+    "/shim": () => engine.renderOverviewHtml([], [], BASE, [], null),
     "/connect": () => engine.renderConnectHtml(BASE),
     "/starter": () => help.renderStarterHubHtml(BASE, read("starter.json")),
     "/prompts": () => prompts.renderPromptsPageHtml(BASE, pulse, {}),
-    "/get-started": () => prompts.renderPromptsPageHtml(BASE, pulse, {}),
+    "/get-started": () => site.renderGetStartedHtml(),
+    "/trust": () => site.renderTrustHtml(),
     "/dashboard": () => dash.renderDashboardHtml(BASE, dashboard),
     "/c/portable_autonomous_worker_agent_kit_v1": () => dash.renderContributionPermalinkHtml(BASE, kit),
     "/c/verb_evl_d900e706b470": () => dash.renderContributionPermalinkHtml(BASE, taskContribution),

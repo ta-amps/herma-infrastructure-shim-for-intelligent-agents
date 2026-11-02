@@ -63,7 +63,7 @@ const db = new SqliteD1();
 const env = { STORAGE_MODE: "cloud", HERMA_DB: db, BOOTSTRAP_SECRET: "boot-parity" };
 const base = "https://herma.teleionlabs.com";
 await worker.fetch(new Request(base + "/healthz"), env);
-const homeHtml = await (await worker.fetch(new Request(base + "/"), env)).text();
+const homeHtml = await (await worker.fetch(new Request(base + "/shim"), env)).text();
 
 const preview = async (prompt) => {
   const resp = await worker.fetch(new Request(base + "/api/preview", {
@@ -176,7 +176,7 @@ def test_all_builtin_starters_and_natural_language_queries_match_across_python_a
     app = create_app()
     client = TestClient(app)
 
-    home_html = client.get("/").text
+    home_html = client.get("/shim").text
     assert "Which Meta Models Do What" in home_html
     assert "Muse Glimmer 30B, fine-tuned by ta-amps" in home_html
     assert "Muse Wonder 1.0" in home_html and "Muse Spark 1.3" in home_html

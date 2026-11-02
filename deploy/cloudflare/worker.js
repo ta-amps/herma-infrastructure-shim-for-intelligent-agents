@@ -1,5 +1,7 @@
 import { agentStartAsset } from "./agent_start.js";
 import { canonicalRedirect } from "./canonical_host.js";
+import { readHomeTotals } from "./home_totals.js";
+import { renderGetStartedHtml, renderHomeHtml, renderTrustHtml } from "./site_pages.js";
 import { agentFetch } from "./agent_access.js";
 import { handleBilateralBridge } from "./bilateral_bridge.js";
 import { handlePriorityWorkGateway } from "./priority_work_gateway.js";
@@ -1509,7 +1511,25 @@ const application = {
           configurable_harnesses_only: true,
         });
       }
-      if (path === "/" || path === "/console") {
+      if (path === "/") {
+        if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
+        return withSecurity(
+          new Response(renderHomeHtml(await readHomeTotals(db)), {
+            status: 200,
+            headers: { "content-type": "text/html; charset=utf-8" },
+          })
+        );
+      }
+      if (path === "/get-started" || path === "/trust") {
+        if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
+        return withSecurity(
+          new Response(path === "/trust" ? renderTrustHtml() : renderGetStartedHtml(), {
+            status: 200,
+            headers: { "content-type": "text/html; charset=utf-8" },
+          })
+        );
+      }
+      if (path === "/shim" || path === "/console") {
         if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
         const [provs, ctxEntries, counts] = await Promise.all([
           listProvisionsForCaller(db, SYSTEM_BUILTIN_SCOPE, { includeBuiltin: true, enabledOnly: false }),

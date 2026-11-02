@@ -304,3 +304,21 @@ def test_the_worker_keeps_no_persisted_traces_and_no_invocation_logs() -> None:
         re.S,
     )
     assert re.search(r'"redact_query_string"\s*:\s*true', observability)
+
+
+def test_a_footer_link_to_a_page_that_is_not_there_stops_the_release() -> None:
+    """Herma never goes live pointing at a page that answers 404; a link that cannot be reached cannot be verified either."""
+    targets = check_release.footer_link_targets(REPO_ROOT)
+    assert len(targets) >= 8 and all(href.startswith("https://") for _label, href in targets)
+    assert ("Models used \u2197", "https://agora.eranosforgood.org/models/") in targets
+    assert ("Privacy \u2197", "https://teleionlabs.com/privacy") in targets
+    assert check_release.check_footer_links(REPO_ROOT, fetch=lambda url: 200) == []
+    broken = check_release.check_footer_links(
+        REPO_ROOT, fetch=lambda url: 404 if url.endswith("/privacy") else 200
+    )
+    assert len(broken) == 1 and "/privacy" in broken[0] and "404" in broken[0]
+
+    def unreachable(url: str) -> int:
+        raise OSError("no route to host")
+
+    assert len(check_release.check_footer_links(REPO_ROOT, fetch=unreachable)) == len(targets)

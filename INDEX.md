@@ -31,7 +31,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) |  |
 
-## deploy/ (37)
+## deploy/ (41)
 
 | File | What it is |
 |---|---|
@@ -39,9 +39,11 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/agent_access.js](deploy/cloudflare/agent_access.js) |  |
 | [deploy/cloudflare/agent_start.js](deploy/cloudflare/agent_start.js) | Versioned onboarding instructions. |
 | [deploy/cloudflare/bilateral_bridge.js](deploy/cloudflare/bilateral_bridge.js) | Bilateral Agent Transport Shim (/bridge/) for Herma Cloud Worker. |
+| [deploy/cloudflare/canonical_host.js](deploy/cloudflare/canonical_host.js) | One canonical host (design contract of Nov 2, 2026): every other host that serves this Worker answers with a… |
 | [deploy/cloudflare/client_family.js](deploy/cloudflare/client_family.js) | What Herma keeps of a visitor's browser or tool (finding F-PRIV-LOGS-001): a coarse family, never the version… |
 | [deploy/cloudflare/co_lease_and_ensemble.js](deploy/cloudflare/co_lease_and_ensemble.js) | Herma v6.9 Adaptive Multi-Worker Co-Leasing, Heartbeat (/q/heartbeat), |
 | [deploy/cloudflare/composition_and_demand_engine.js](deploy/cloudflare/composition_and_demand_engine.js) | Universal Task-Object Reuse Graph, Interface Composer & Adaptive Demand-Driven Prioritizer (/q/graph, /q/comp… |
+| [deploy/cloudflare/contributor_printout.js](deploy/cloudflare/contributor_printout.js) | What a contributor's agent shows its person after it reports a Task (design contract of Nov 2, 2026): two pla… |
 | [deploy/cloudflare/conversation.js](deploy/cloudflare/conversation.js) | Typed proposals only. |
 | [deploy/cloudflare/conversation_data.json](deploy/cloudflare/conversation_data.json) | JSON object: categories, schemas, system_prompt |
 | [deploy/cloudflare/conversation_state.js](deploy/cloudflare/conversation_state.js) | Conversation coordination, not a work queue. |
@@ -51,6 +53,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/entry.js](deploy/cloudflare/entry.js) |  |
 | [deploy/cloudflare/feedback_steps_and_uploads.js](deploy/cloudflare/feedback_steps_and_uploads.js) | Herma v6.9 + v6.10 Catch-All Proactive Worker Feedback, Auto-Diagnosis & Peer-Review Verb Spawner (/q/feedbac… |
 | [deploy/cloudflare/herma_engine.js](deploy/cloudflare/herma_engine.js) | Context-shimming 3-tier trigger engine, multi-caller isolation, governance lens, |
+| [deploy/cloudflare/home_totals.js](deploy/cloudflare/home_totals.js) | The five plain numbers on the home page ("Today"), read from the same tables as the dashboard and with the sa… |
 | [deploy/cloudflare/network_activity.js](deploy/cloudflare/network_activity.js) | The network map's data (design contract claude-design-network-map.v1.json, owner request of Nov 1): where wor… |
 | [deploy/cloudflare/network_merge.js](deploy/cloudflare/network_merge.js) | Copied from notes/claude-work-2026-11-01/activity-map/herma-network/networkmerge.mjs (the map builder's pure… |
 | [deploy/cloudflare/network_places.json](deploy/cloudflare/network_places.json) | JSON object: about, sources, places |
@@ -62,6 +65,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/provider_health.js](deploy/cloudflare/provider_health.js) | Deterministic shared availability inside the existing operator allowance coordinator. |
 | [deploy/cloudflare/release-policy.json](deploy/cloudflare/release-policy.json) | JSON object: schema, note, required_ancestors, live_when_recorded, rules |
 | [deploy/cloudflare/sha256_sync.js](deploy/cloudflare/sha256_sync.js) | A small synchronous SHA-256 for the Worker's display filter. |
+| [deploy/cloudflare/site_pages.js](deploy/cloudflare/site_pages.js) | The pages that are not the dashboard or a record: the home, Get started and Trust & safety (design contract |
 | [deploy/cloudflare/taxonomy_affinity_and_proactive_feedback.js](deploy/cloudflare/taxonomy_affinity_and_proactive_feedback.js) | Herma v6.10 Deterministic Taxonomy Auto-Describer, Preferred-Worker / Setup Affinity, |
 | [deploy/cloudflare/thick_path_and_schema_coach.js](deploy/cloudflare/thick_path_and_schema_coach.js) | Herma v6.8 Thick-Path Plateau Grid Telemetry, Proactive Open-World Schema Coach (/q/schema, /q/schema/validat… |
 | [deploy/cloudflare/worker.js](deploy/cloudflare/worker.js) |  |
@@ -73,13 +77,15 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/fly/Dockerfile](deploy/fly/Dockerfile) |  |
 | [deploy/fly/fly.toml](deploy/fly/fly.toml) |  |
 
-## docs/ (12)
+## docs/ (14)
 
 | File | What it is |
 |---|---|
 | [docs/WORKER-FIRST-EXECUTION.md](docs/WORKER-FIRST-EXECUTION.md) | Worker-first execution and private work |
 | [docs/access-modes.md](docs/access-modes.md) | External agent access |
 | [docs/agent-troubleshooting.md](docs/agent-troubleshooting.md) | Bilateral agent communication |
+| [docs/architecture.md](docs/architecture.md) | Architecture |
+| [docs/architecture.md](docs/architecture.md) | Architecture |
 | [docs/architecture.md](docs/architecture.md) | Architecture |
 | [docs/conversations.md](docs/conversations.md) | Typed work conversations |
 | [docs/design-and-evidence.md](docs/design-and-evidence.md) | Design decisions and measured limits |
@@ -110,7 +116,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [examples/provisions/README.md](examples/provisions/README.md) | Example Provisions & Atomic Task Object / Task Context |
 | [examples/provisions/context/CONTEXT-TESSERA-NOUNS-VERBS.json](examples/provisions/context/CONTEXT-TESSERA-NOUNS-VERBS.json) | JSON object: entries |
 
-## herma/ (37)
+## herma/ (39)
 
 | File | What it is |
 |---|---|
@@ -120,6 +126,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [herma/api/app.py](herma/api/app.py) | FastAPI application for Herma middleware (:7730). |
 | [herma/api/page_shell.py](herma/api/page_shell.py) | The one shell every Herma page shares: the document head, the thin agent banner, the header and the footer. |
 | [herma/api/pages.py](herma/api/pages.py) | Server-rendered HTML console, SVG brand chrome, interactive preview script, and discovery specs. |
+| [herma/api/site_pages.py](herma/api/site_pages.py) | The pages that are not the dashboard or a record: the home, Get started and Trust & safety. |
 | [herma/cli.py](herma/cli.py) | Command-line interface for Herma: seed, keys, context, dry-run, 3-tier demo, and serve. |
 | [herma/conversation.py](herma/conversation.py) | Scoped dialogue producing typed proposals; execution stays in the caller's harness. |
 | [herma/conversation_contracts.py](herma/conversation_contracts.py) | Typed, caller-configured work contracts and validated conversational proposals. |
@@ -133,6 +140,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [herma/memory.py](herma/memory.py) | Deterministic Anti-RAG top-of-mind entity extraction and candidate rule synthesis (0 LLM calls). |
 | [herma/model_catalog.json](herma/model_catalog.json) | Which Meta models do what |
 | [herma/model_catalog.py](herma/model_catalog.py) | The Meta model catalog: one data file that pages, discovery text and routing checks all read. |
+| [herma/page_content.json](herma/page_content.json) | JSON object: schema, note, home, get_started, trust |
 | [herma/page_shell.json](herma/page_shell.json) | JSON object: schema, note, site, assets, nav, header_link |
 | [herma/profiles.py](herma/profiles.py) | Adaptive CallerProfile shimming lenses, deterministic strategy ranking, and budget enforcement. |
 | [herma/provider_diagnostics.py](herma/provider_diagnostics.py) | Bounded provider-reported error categories, never raw messages or identifiers. |
@@ -169,12 +177,14 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/page_interactions.mjs](scripts/page_interactions.mjs) | Clicks through the interactive parts of the redesigned pages (fixture server, the Worker's real page policy)… |
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
 
-## test/ (20)
+## test/ (22)
 
 | File | What it is |
 |---|---|
 | [test/banned_words_filter.test.js](test/banned_words_filter.test.js) |  |
 | [test/bilateral_bridge.test.js](test/bilateral_bridge.test.js) |  |
+| [test/canonical_host.test.js](test/canonical_host.test.js) |  |
+| [test/contributor_printout.test.js](test/contributor_printout.test.js) |  |
 | [test/conversation.test.js](test/conversation.test.js) |  |
 | [test/herma_v63_boundaries_and_chat.test.js](test/herma_v63_boundaries_and_chat.test.js) |  |
 | [test/network_activity.test.js](test/network_activity.test.js) |  |
@@ -194,18 +204,19 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/worker_kits_and_mutation_grid.test.js](test/worker_kits_and_mutation_grid.test.js) |  |
 | [test/worker_reputation_and_proposals.test.js](test/worker_reputation_and_proposals.test.js) |  |
 
-## tests/ (34)
+## tests/ (35)
 
 | File | What it is |
 |---|---|
 | [tests/banned_support.py](tests/banned_support.py) | The ONE shared banned-word list, read from outside this repository for tests (MUST-FOLLOW rule 16). |
 | [tests/conftest.py](tests/conftest.py) | Example operator grants for managed conversation tests; no provider is ever contacted. |
-| [tests/fixtures/footer.v1.json](tests/fixtures/footer.v1.json) | JSON object: schema, version, updated, rule, links, external_mark |
+| [tests/fixtures/footer.v2.json](tests/fixtures/footer.v2.json) | JSON object: copy_of, schema, rule, external_rule, privacy_line, links |
 | [tests/fixtures/made-up-banned-words.json](tests/fixtures/made-up-banned-words.json) | JSON object: kind, id, version, updated, purpose, case_insensitive |
 | [tests/fixtures/made-up-neutral-names.json](tests/fixtures/made-up-neutral-names.json) | JSON object: note, rules, samples |
 | [tests/fixtures/pages/contribution_kit.json](tests/fixtures/pages/contribution_kit.json) | JSON object: ok, lookup_id, task, objects, child_verbs, evaluations |
 | [tests/fixtures/pages/dashboard.json](tests/fixtures/pages/dashboard.json) | JSON object: ok, schema, registered_workers, distinct_contributor_agents, total_evaluations, indexed_sidecar_docs |
 | [tests/fixtures/pages/demo_object.json](tests/fixtures/pages/demo_object.json) | JSON object: ok, schema, object_key, requested_key, version_num, version_count |
+| [tests/fixtures/pages/home_totals.json](tests/fixtures/pages/home_totals.json) | JSON object: workers, agent_names, nonprofit, shared, task_objects, task_object_bytes |
 | [tests/fixtures/pages/starter.json](tests/fixtures/pages/starter.json) | JSON object: ok, schema, quick_start_workflow, starter_frameworks, reusable_object_catalog, endpoints |
 | [tests/fixtures/pages/worker.json](tests/fixtures/pages/worker.json) | JSON object: ok, worker_uuid, worker, tasks, objects, reputation |
 | [tests/test_api_and_proxy.py](tests/test_api_and_proxy.py) | Tests for multi-protocol payload augmentation, deduplication, edge lockdown, and HTTP endpoints. |
