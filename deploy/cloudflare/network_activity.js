@@ -200,8 +200,9 @@ export async function pruneClaimEdges(db, nowIso = new Date().toISOString()) {
   ]);
 }
 
-// Work a public page may name: the same visibilities the public queue and the dashboard show. Anything else (server_infra, a Task that is
-// gone, a value nobody knows) counts in the totals only and lends the map no title, place or link.
+// Work a public page may name: the same visibilities the public queue and the dashboard show, and never the private tier (the gateway tests
+// both, so the map does too). Anything else (server_infra, infra_private, a Task that is gone, a value nobody knows) counts in the totals only
+// and lends the map no title, place or link.
 const PUBLIC_VISIBILITY = new Set(["public_ngo", "public_commons"]);
 
 /** Herma's own claims in the last 24 hours as the merge reads them (one object per claim). */
@@ -212,7 +213,7 @@ export async function readOwnClaims(db, nowMs) {
     .prepare(
       `SELECT e.claimed_at AS at, e.kind AS class, e.worker_uuid AS worker, e.worker_kind, e.colo, e.continent, e.model, e.persona,
               e.task_id, COALESCE(r.show_on_map, 1) AS show_on_map, COALESCE(r.is_diagnostic_probe, 0) AS probe,
-              q.title AS title, q.locale_country AS place_facet, q.visibility AS visibility
+              q.title AS title, q.locale_country AS place_facet, q.visibility AS visibility, q.tier AS tier
          FROM herma_claim_edge e
          LEFT JOIN herma_worker_registry r ON r.worker_uuid = e.worker_uuid
          LEFT JOIN herma_durable_queue q ON q.task_id = e.task_id
@@ -225,7 +226,7 @@ export async function readOwnClaims(db, nowMs) {
   return (results || [])
     .filter((r) => !Number(r.probe))
     .map((r) => {
-      const open = PUBLIC_VISIBILITY.has(String(r.visibility || ""));
+      const open = PUBLIC_VISIBILITY.has(String(r.visibility || "")) && String(r.tier || "") !== "infra_private";
       return {
         at: r.at,
         class: r.class,

@@ -5087,6 +5087,24 @@ function formatLeasedTaskEnvelope(
   };
 }
 
+// A worker that has a token is claimed as only by a caller that presents it. Without this, anyone who knows an agent name or a worker id (the
+// dashboard and the worker page show both) could claim as that worker and put its work, its cred and its place on the network map in its name.
+// Workers that never had a token (joined by a GET, or by a claim) are as they were, and so are callers with infrastructure authority. Returns the
+// refusal to send, or null.
+async function workerTokenRefusal({ target, workerToken = "", infraAllowed = false, tokenVerified = false, createdNow = false }) {
+  if (infraAllowed || tokenVerified || createdNow) return null;
+  const stored = String(target?.worker_token_sha256 || "").trim();
+  if (!stored) return null;
+  const presented = String(workerToken || "").trim();
+  if (presented && (await sha256HexGateway(presented)) === stored) return null;
+  return {
+    forbidden: true,
+    code: "worker_token_required",
+    detail:
+      "This worker has a token. Send it as worker_token (or the X-Herma-Worker-Token header) to claim as this worker, or start a new worker with POST /q/onboard {\"agent_id\": \"<a new name>\"} (or add \"mint_new\": true to keep the name).",
+  };
+}
+
 async function claimNextAuthorizedTask(
   db,
   agentId,
@@ -5113,6 +5131,7 @@ async function claimNextAuthorizedTask(
     allowCoLease = null,
     workerSetup = null,
     showOnMap = undefined,
+    tokenChecked = false, // the chat claim has applied the token rule itself (it knows when this call made the worker)
   } = {}
 ) {
   if (requestedTier === "infra_private" && !infraAllowed) {
@@ -5169,6 +5188,18 @@ async function claimNextAuthorizedTask(
     explicitWorkerUuid === `w_agent_${cleanAgent}`.slice(0, QUEUE_GATEWAY_GRID.worker_uuid_max_len) &&
     GENERIC_EPHEMERAL_AGENTS.has(cleanAgent);
   const isBareSharedHandle = (!explicitWorkerUuid || isLegacySharedDefaultUuid) && GENERIC_EPHEMERAL_AGENTS.has(cleanAgent);
+
+  // A worker that has a token is claimed as only by a caller that presents it (see workerTokenRefusal). A bare shared handle always gets a fresh worker.
+  if (!isBareSharedHandle && !tokenChecked) {
+    const target = explicitWorkerUuid
+      ? authCheck.existing
+      : await db
+          .prepare("SELECT worker_uuid, worker_token_sha256 FROM herma_worker_registry WHERE agent_id = ? ORDER BY iteration_count DESC, updated_at DESC LIMIT 1")
+          .bind(cleanAgent)
+          .first();
+    const refusal = await workerTokenRefusal({ target, workerToken, infraAllowed, tokenVerified: authCheck.tokenVerified });
+    if (refusal) return refusal;
+  }
 
   await reapExpiredLeases(db);
   await ensureCadenceAggregateReviewVerbs(db, publicUrl, {
@@ -8602,7 +8633,10 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         modelHint,
         userAgent: ua || userAgent,
       }),
-    claimTaskForChat: async ({ agentId, workerUuid, preferredTier, explicitTaskId, keywordHint, userAgent: ua }) => {
+    claimTaskForChat: async ({ agentId, workerUuid, workerToken = "", createdNow = false, preferredTier, explicitTaskId, keywordHint, userAgent: ua }) => {
+      const chatTarget = await db.prepare("SELECT worker_uuid, worker_token_sha256 FROM herma_worker_registry WHERE worker_uuid = ?").bind(String(workerUuid || "")).first();
+      const chatRefusal = await workerTokenRefusal({ target: chatTarget, workerToken, infraAllowed, createdNow });
+      if (chatRefusal) return chatRefusal;
       if (explicitTaskId) {
         const cleanTid = String(explicitTaskId).trim();
         const target = await db.prepare("SELECT * FROM herma_durable_queue WHERE task_id = ?").bind(cleanTid).first();
@@ -8686,6 +8720,8 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       }
       return claimNextAuthorizedTask(db, agentId, infraAllowed, preferredTier || null, null, {
         workerUuid,
+        workerToken,
+        tokenChecked: true,
         slot: preferredTier === "ngo_priority" ? "ngo" : "any",
         userAgent: ua || userAgent,
       });

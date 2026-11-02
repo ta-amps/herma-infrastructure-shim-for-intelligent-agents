@@ -2443,6 +2443,8 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
     const claimOut = await gatewayOps.claimTaskForChat({
       agentId,
       workerUuid: profile.worker_uuid,
+      workerToken,
+      createdNow: Boolean(mintedWorkerToken), // this call created the worker and has just returned its token
       preferredTier,
       explicitTaskId: candidateExplicitId,
       keywordHint,
@@ -2451,7 +2453,11 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
     if (claimOut.forbidden) {
       return {
         status: HELP_STARTER_GRID.http_forbidden,
-        body: { ok: false, code: "forbidden_tier", detail: "Requested tier requires server infrastructure authorization." },
+        body: {
+          ok: false,
+          code: claimOut.code || "forbidden_tier",
+          detail: claimOut.detail || "Requested tier requires server infrastructure authorization.",
+        },
       };
     }
     if (!claimOut.task) {

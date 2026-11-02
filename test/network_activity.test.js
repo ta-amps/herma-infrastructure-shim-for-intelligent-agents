@@ -172,7 +172,9 @@ describe("GET /q/network", () => {
   it("never lends the public map a private Task's title or link, or the title of a Task the queue no longer holds: those claims count in the totals only", async () => {
     const open = await queueTask("map_public_task_1", { title: "A public plan for the pantry" });
     const secret = await queueTask("map_private_task_1", { tier: "infra_private", visibility: "server_infra", title: "Private plan nobody outside may read" });
-    for (const [uuid, claimed, minutes] of [["w_p1", secret, 8], ["w_p2", open, 6], ["w_p3", open, 4], ["w_p4", task("map_task_that_is_gone_1"), 2]]) {
+    // A row whose visibility says public but whose tier is private (the gateway tests both): the map treats it as private too.
+    const mixed = await queueTask("map_mixed_task_1", { tier: "infra_private", visibility: "public_commons", title: "Mixed-up plan that is private by its tier" });
+    for (const [uuid, claimed, minutes] of [["w_p1", secret, 9], ["w_p5", mixed, 7], ["w_p2", open, 6], ["w_p3", open, 4], ["w_p4", task("map_task_that_is_gone_1"), 2]]) {
       await recordClaimEdge(db(), edge("FRA", "EU"), { task: claimed, workerUuid: uuid, agentId: `agent-${uuid}`, nowIso: minutesAgo(minutes) });
     }
     resetNetworkCaches();
@@ -180,8 +182,10 @@ describe("GET /q/network", () => {
     const body = JSON.parse(text);
     expect(text).not.toContain("Private plan");
     expect(text).not.toContain("map_private_task_1");
+    expect(text).not.toContain("Mixed-up plan");
+    expect(text).not.toContain("map_mixed_task_1");
     expect(text).not.toContain("map_task_that_is_gone_1");
-    expect(body.totals).toMatchObject({ workers: 4, claims: 4 }); // all four are counted
+    expect(body.totals).toMatchObject({ workers: 5, claims: 5 }); // all five are counted
     expect(body.recent_claims.map((c) => c.title)).toEqual(["A public plan for the pantry", "A public plan for the pantry"]);
     expect(body.recent_claims.map((c) => c.object_key)).toEqual(["map_public_task_1", "map_public_task_1"]);
     expect(body.data_centres.map((d) => [d.code, d.workers, d.claims])).toEqual([["FRA", 2, 1]]); // only the public pair is placed; the private claim is nowhere
