@@ -482,17 +482,18 @@
     },
     {
       "id": "H22",
-      "statement": "Every public Herma page is light only (color-scheme only light in its meta tag and on :root, no dark-scheme media query, no opaque dark panel under either colour scheme), carries the one thin agent banner, the header and the one-row footer from a single shell (herma/page_shell.json) that the Python and Worker renderers produce byte for byte alike, and shows worker-written text only after the display-time word rules (tidyText), never altering a stored record",
+      "statement": "Every public Herma page is light only (color-scheme only light in its meta tag and on :root, no dark-scheme media query, no opaque dark panel under either colour scheme), carries the one thin agent banner, the header and the standard footer (the shared ta-amps.footer/1 spec: the brand and one row of links, then one short line) from a single shell (herma/page_shell.json) that the Python and Worker renderers produce byte for byte alike, and shows worker-written text only after the display-time word rules (tidyText), never altering a stored record",
       "enforced_by": "api",
       "checked_by": [
         "tests/test_page_design.py::test_python_and_worker_shells_are_byte_identical",
-        "tests/test_page_design.py::test_footer_is_one_row_of_links_and_one_short_line",
+        "tests/test_page_design.py::test_footer_is_the_shared_standard_one_row_of_links_and_one_short_line",
         "tests/test_page_design.py::test_stylesheet_is_light_only_and_text_is_never_small",
         "tests/test_page_design.py::test_every_page_carries_the_shell_and_stays_light",
         "tests/test_page_design.py::test_every_page_uses_plain_words",
         "tests/test_page_design.py::test_worker_written_text_is_tidied_but_the_original_stays_in_the_record",
         "tests/test_page_design.py::test_the_light_check_fails_on_every_kind_of_dark_page",
-        "tests/test_page_design.py::test_the_light_check_passes_on_every_redesigned_page"
+        "tests/test_page_design.py::test_the_light_check_passes_on_every_redesigned_page",
+        "tests/test_page_design.py::test_the_fixture_pages_are_served_with_the_workers_real_page_policy"
       ]
     },
     {
