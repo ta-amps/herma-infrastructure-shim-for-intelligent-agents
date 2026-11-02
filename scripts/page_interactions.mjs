@@ -47,7 +47,8 @@ async function open(route) {
   check(visible === 1, `the Reviews chip leaves one prompt (got ${visible})`);
   check((await page.locator('.chip[aria-pressed="true"]').getAttribute("data-filter")) === "evaluation", "the chip is marked pressed");
   await page.click('.chip[data-filter="all"]');
-  check((await page.locator(".prompt:visible").count()) === 10, "All shows every prompt");
+  const promptCount = await page.locator(".prompt").count();
+  check(promptCount >= 10 && (await page.locator(".prompt:visible").count()) === promptCount, `All shows every prompt (${promptCount})`);
   await page.locator("#card-master_v3 .copy-btn").click();
   const clip = await page.evaluate(() => navigator.clipboard.readText());
   check(clip.includes("my-test-worker-ab12") && clip.length > 2000, "Copy the prompt puts the filled text on the clipboard");

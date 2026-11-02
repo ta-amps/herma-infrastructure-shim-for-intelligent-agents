@@ -22,7 +22,7 @@ const flag = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 
 const external = flag("--base");
 const routeArg = flag("--routes");
 
-const LIVE_ROUTES = ["/", "/connect", "/starter", "/prompts", "/get-started", "/dashboard", "/c/portable_autonomous_worker_agent_kit_v1", "/w/w_agent_muse-worker-01", "/q/demo/demo_dual_side_hybrid_search_v1"];
+const LIVE_ROUTES = ["/", "/connect", "/starter", "/prompts", "/get-started", "/dashboard", "/c/portable_autonomous_worker_agent_kit_v1", "/w/w_agent_muse-worker-01", "/q/demo/demo_dual_side_hybrid_search_v1", "/kits"];
 const SCHEMES = ["light", "dark"];
 const SCREENS = [{ name: "desktop", width: 1280, height: 800 }, { name: "phone", width: 390, height: 844 }];
 

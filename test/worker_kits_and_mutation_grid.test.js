@@ -129,10 +129,9 @@ describe("Herma v6.11 Downloadable Worker Kits, Prompt/Toolkit Evolutionary Band
     });
     expect(htmlRes.status, await htmlRes.clone().text()).toBe(200);
     const html = await htmlRes.text();
-    expect(html).toContain('<meta name="color-scheme" content="only light" />');
-    expect(html).toContain("#F5F2EA");
-    expect(html).toContain("#FFFDF8");
-    expect(html).toContain("#11161F");
+    // The page is on the shared Paper & Ink shell: light only, with its colours in the shared stylesheet.
+    expect(html).toContain('<meta name="color-scheme" content="only light">');
+    expect(html).toContain("/assets/herma-pages.css");
     expect(html).not.toMatch(/prefers-color-scheme\s*:\s*dark/i);
     expect(html).toContain("herma-agent-kit.tgz");
     expect(html).toContain("herma-worker-kit.zip");
@@ -743,7 +742,7 @@ describe("Herma v6.11 Downloadable Worker Kits, Prompt/Toolkit Evolutionary Band
     const wHtmlRes = await callGateway(`/w/${spawnerUuid}`);
     expect(wHtmlRes.status).toBe(200);
     const wHtml = await wHtmlRes.text();
-    expect(wHtml).toContain("Spawned Tasks Attribution");
+    expect(wHtml).toContain("Tasks it started for others");
     expect(wHtml).toContain("peer-solver-worker-09");
     expect(wHtml).not.toMatch(BANNED_SYN_RE);
 

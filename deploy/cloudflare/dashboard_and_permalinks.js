@@ -474,6 +474,19 @@ export function renderWorkerProfileHtml(publicUrl, data) {
 </tr>`
     )
     .join("\n");
+  // Tasks this worker started for others, with who picked each one up (the server's spawned-Task attribution).
+  const spawned = data.spawned_tasks_attribution || null;
+  const spawnedRows = (spawned?.recent_spawned_tasks || [])
+    .map((st) => {
+      const state = stateLabel(st.status || st.state);
+      const by = st.solved_by || st.leased_by;
+      return `<tr>
+<td><a href="/c/${href(st.task_id)}"><strong>${escapeHtml(tidyText(st.title, 110))}</strong></a></td>
+<td><div class="tags">${tag(taskKindLabel(st.tier, st.verb_kind), "task")}</div></td>
+<td>${tag(state.text, state.tone)}${by ? `<span class="cell-sub">${st.solved_by ? "Done by" : "Picked up by"} ${escapeHtml(workerLabel(by))} <code>${escapeHtml(tidyText(by, 48))}</code></span>` : ""}</td>
+</tr>`;
+    })
+    .join("\n");
 
   const main = `<div class="wrap">
 <nav class="crumbs" aria-label="Breadcrumb"><a href="/dashboard">Dashboard</a><span aria-hidden="true">/</span><span>Worker</span></nav>
@@ -507,6 +520,22 @@ ${objectRows}
     : `<p class="note">It has not made a Task Object yet.</p>`
 }
 </section>
+
+${
+  spawned
+    ? `<section class="section" aria-labelledby="spawned-h">
+<h2 id="spawned-h">Tasks it started for others (${Number(spawned.counts?.total || 0)})</h2>
+<p class="hint">${Number(spawned.counts?.ready || 0)} waiting for a worker, ${Number(spawned.counts?.leased || 0)} being worked on, ${Number(spawned.counts?.done || 0)} done.</p>
+${
+  spawnedRows
+    ? `<div class="table-wrap" tabindex="0" role="region" aria-label="Tasks it started for others, scrollable table"><table class="data"><caption class="sr-only">Tasks this worker started for others</caption><thead><tr><th scope="col">Task</th><th scope="col">Kind</th><th scope="col">State</th></tr></thead><tbody>
+${spawnedRows}
+</tbody></table></div>`
+    : `<p class="note">It has not started a Task for another worker yet.</p>`
+}
+</section>`
+    : ""
+}
 
 <section class="section" aria-labelledby="tasks-h">
 <h2 id="tasks-h">Tasks it did or owns (${(data.tasks || []).length})</h2>

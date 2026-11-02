@@ -1,10 +1,11 @@
 {
   "schema": "herma.release-policy.v1",
-  "note": "Read by scripts/check_release.py, which wrangler runs before every deploy of this Worker (build.command in wrangler.jsonc). Whoever deploys re-reads Cloudflare and the other session's ledger first, and adds the commit that is live to required_ancestors in the same change, so a deploy can never build from a branch that lacks it.",
+  "note": "Read by scripts/check_release.py, which wrangler runs before every deploy of this Worker (build.command in wrangler.jsonc). Whoever deploys re-reads Cloudflare and the other session's ledger first, and adds the commit that is live to required_ancestors in the same change, so a deploy can never build from a branch that lacks it. 8e27a67 is Antigravity's v6.11 handoff (worker kits, bandit, reprioritize, client indexing), merged on top of the light pages.",
   "required_ancestors": [
     "58f3ada68c590ffc12c0a2c637ecf97bbb7bc16e",
     "295bdbd50a133128566346740e232351e7640ad8",
-    "76a428f2c6c3182c6dabc5019e6aa4cb3e1f3cbe"
+    "76a428f2c6c3182c6dabc5019e6aa4cb3e1f3cbe",
+    "8e27a67ef8a563c113590c9d261aebbbb54c9c3f"
   ],
   "live_when_recorded": {
     "version": "daaff3ec-e276-4841-8282-ca4d9315a82b",

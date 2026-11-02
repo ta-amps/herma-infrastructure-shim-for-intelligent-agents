@@ -32,6 +32,7 @@ export const PAGE_ROUTES = [
   "/w/w_agent_muse-worker-01",
   "/w/w_missing",
   "/q/demo/demo_dual_side_hybrid_search_v1",
+  "/kits",
 ];
 
 // The same policy the Worker sends with every page (DEFAULT_CSP_PAGE in deploy/cloudflare/worker.js; a test keeps them equal),
@@ -46,6 +47,9 @@ export async function renderSite() {
   const prompts = await load("deploy/cloudflare/prompts_page.js");
   const demo = await load("deploy/cloudflare/demo_page.js");
   const help = await load("deploy/cloudflare/worker_help_and_starter.js");
+  const kits = await load("deploy/cloudflare/worker_kits_and_mutation_grid.js");
+  const kitBundle = await kits.buildWorkerKitArtifacts(BASE);
+  const kitsDoc = { kits: kitBundle.catalogItems, recommended_pitch: kits.HERMA_PROMPT_KIT_MUTATION_GRID.pitch_templates.recommended_infra_leverage };
   const engine = await load("deploy/cloudflare/herma_engine.js");
   const shell = await load("deploy/cloudflare/page_shell.js");
 
@@ -77,11 +81,13 @@ export async function renderSite() {
     "/w/w_agent_muse-worker-01": () => dash.renderWorkerProfileHtml(BASE, worker),
     "/w/w_missing": () => dash.renderWorkerProfileHtml(BASE, { worker_uuid: "w_missing", worker: null, tasks: [], objects: [] }),
     "/q/demo/demo_dual_side_hybrid_search_v1": () => demo.renderInteractiveDemoPageHtml(BASE, read("demo_object.json")),
+    "/kits": () => kits.renderKitsCatalogHtml(BASE, kitsDoc),
   };
   const scripts = {
     "/q/dashboard.js": () => dash.renderDashboardJs(),
     "/q/prompts.js": () => prompts.renderPromptsPageJs(),
     "/q/demo-runner.js": () => demo.renderInteractiveDemoRunnerJs(),
+    "/kits.js": () => kits.renderKitsClientJs(),
     "/preview.js": () => engine.PREVIEW_JS,
     "/favicon.svg": () => shell.FAVICON_SVG,
     "/llms.txt": () => "llms",

@@ -230,6 +230,9 @@ function publicRoutes() {
     "/prompts", "/prompts?format=json", "/get-started", "/dashboard", "/dashboard?format=json", "/dashboard.js", "/prompts.js", "/help", "/chat", "/status", "/health",
     "/dashboard?q=shelter&fragment=results", "/dashboard?q=shelter", "/dashboard?fragment=results",
     "/feedback", "/q", "/c/nothing_here", "/w/w_nothing_here", "/q/demo/nothing_here",
+    "/kits", "/kits?format=json", "/kits.js", "/kits/package.json", "/kits/mcp-manifest.json", "/kits/SKILL.md", "/kits/bootstrap.sh",
+    "/kits/herma_shim.py", "/kits/worker_distributed_indexer.py", "/kits/pretool_guard.py", "/kits/herma-agent-kit.tgz", "/kits/herma-worker-kit.zip",
+    "/experiments", "/reprioritize",
   ]);
   for (const action of actions) routes.add(`/q/${action}`);
   return [...routes].sort();

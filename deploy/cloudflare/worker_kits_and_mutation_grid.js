@@ -9,6 +9,8 @@
 // zero retired pack brand names, zero legacy model names, zero em-dashes, and Paper & Ink
 // Light-UI-Only (color-scheme: only light).
 
+import { documentHtml, escapeHtml, formatBytes, tidyText } from "./page_shell.js";
+
 export const HERMA_PROMPT_KIT_MUTATION_GRID = Object.freeze({
   grid_id: "herma.prompt_kit_mutation_and_reprioritization.grid.v6_11",
   schema_version: "herma.priority_work_gateway.kits_experiments_reprioritize.v6_11",
@@ -1412,15 +1414,6 @@ export async function buildWorkerKitArtifacts(publicUrl) {
   return bundle;
 }
 
-function escapeHtmlKits(str) {
-  return String(str || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 export function renderKitsClientJs() {
   return [
     "// Paper & Ink Light-UI-Only preference sanitizer + 1-click install command copy",
@@ -1449,178 +1442,47 @@ export function renderKitsClientJs() {
 }
 
 export function renderKitsCatalogHtml(publicUrl, catalogDoc = {}) {
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
   const items = Array.isArray(catalogDoc.kits) ? catalogDoc.kits : [];
-  const pitch =
-    catalogDoc.recommended_pitch ||
-    HERMA_PROMPT_KIT_MUTATION_GRID.pitch_templates.recommended_infra_leverage;
+  const pitch = tidyText(
+    catalogDoc.recommended_pitch || HERMA_PROMPT_KIT_MUTATION_GRID.pitch_templates.recommended_infra_leverage,
+    420
+  );
 
   const cards = items
     .map(
-      (item) => `
-      <article class="kit-card" id="kit-${escapeHtmlKits(item.kit_id)}">
-        <div class="kit-head">
-          <div>
-            <span class="kit-pill">${escapeHtmlKits(item.runtime)}</span>
-            <h2><a href="${escapeHtmlKits(item.url)}">${escapeHtmlKits(item.filename)}</a></h2>
-            <p class="kit-sum">${escapeHtmlKits(item.summary)}</p>
-          </div>
-          <div class="kit-actions">
-            <a class="dl-btn" href="${escapeHtmlKits(item.url)}">Download (${escapeHtmlKits(String(item.byte_length))} B)</a>
-            <button type="button" class="copy-btn" data-copy-cmd="${escapeHtmlKits(item.install_one_liner)}">Copy 1-Liner</button>
-          </div>
-        </div>
-        <pre class="cmd-pre">${escapeHtmlKits(item.install_one_liner)}</pre>
-        <div class="meta-line">SHA-256: <code>${escapeHtmlKits(item.sha256)}</code></div>
-      </article>`
+      (item) => `<article class="card" id="kit-${escapeHtml(item.kit_id)}">
+<span class="tags"><span class="tag">${escapeHtml(item.runtime)}</span></span>
+<h2 class="card-title"><a href="${escapeHtml(item.url)}">${escapeHtml(item.filename)}</a></h2>
+<p>${escapeHtml(tidyText(item.summary, 320))}</p>
+<div class="row"><a class="btn btn-sm" href="${escapeHtml(item.url)}">Download (${escapeHtml(formatBytes(item.byte_length))})</a><button type="button" class="btn-quiet btn-sm" data-copy-cmd="${escapeHtml(item.install_one_liner)}">Copy the install command</button></div>
+<pre tabindex="0">${escapeHtml(item.install_one_liner)}</pre>
+<p class="hint">File fingerprint, to check the download: <code>${escapeHtml(item.sha256)}</code></p>
+</article>`
     )
     .join("\n");
 
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="color-scheme" content="only light" />
-  <title>Herma Worker Onboarding Kits -- Zero-Dependency npm, PKZIP, Python, SKILL.md &amp; Hooks</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <style>
-    :root {
-      color-scheme: only light;
-      --paper: #F5F2EA;
-      --surface: #FFFDF8;
-      --ink: #11161F;
-      --muted: #4E5663;
-      --line: #DCD6C8;
-      --accent: #185C47;
-      --accent-hover: #114434;
-      --accent-soft: #E6F2ED;
-      --code-bg: #EFECE2;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: var(--paper);
-      color: var(--ink);
-      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      line-height: 1.55;
-    }
-    .wrap {
-      max-width: 1080px;
-      margin: 0 auto;
-      padding: 28px 20px 64px;
-    }
-    .topbar {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: space-between;
-      align-items: center;
-      gap: 12px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--line);
-      margin-bottom: 24px;
-    }
-    .brand {
-      font-weight: 700;
-      font-size: 0.92rem;
-      letter-spacing: 0.03em;
-      text-transform: uppercase;
-      color: var(--accent);
-    }
-    .nav a {
-      color: var(--ink);
-      text-decoration: none;
-      margin-left: 14px;
-      font-size: 0.9rem;
-      border-bottom: 1px solid var(--line);
-    }
-    .nav a:hover { color: var(--accent); border-color: var(--accent); }
-    h1 {
-      margin: 0 0 10px;
-      font-size: clamp(1.6rem, 2.8vw, 2.2rem);
-      letter-spacing: -0.02em;
-    }
-    .pitch {
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 14px 16px;
-      margin: 0 0 22px;
-      color: var(--ink);
-    }
-    .kit-card {
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 18px 20px;
-      margin-bottom: 16px;
-    }
-    .kit-head {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 12px;
-    }
-    .kit-pill {
-      display: inline-block;
-      background: var(--accent-soft);
-      color: var(--accent);
-      font-size: 0.74rem;
-      font-weight: 700;
-      padding: 3px 9px;
-      border-radius: 999px;
-      margin-bottom: 6px;
-    }
-    .kit-card h2 { margin: 0 0 4px; font-size: 1.14rem; }
-    .kit-card h2 a { color: var(--ink); text-decoration: none; }
-    .kit-card h2 a:hover { color: var(--accent); }
-    .kit-sum { margin: 0; color: var(--muted); font-size: 0.92rem; }
-    .kit-actions { display: flex; gap: 8px; align-items: center; }
-    .dl-btn, .copy-btn {
-      cursor: pointer;
-      border: 1px solid var(--accent);
-      border-radius: 8px;
-      padding: 8px 13px;
-      font-size: 0.86rem;
-      font-weight: 600;
-      text-decoration: none;
-    }
-    .dl-btn { background: var(--accent); color: #FFFDF8; }
-    .dl-btn:hover { background: var(--accent-hover); }
-    .copy-btn { background: var(--surface); color: var(--accent); }
-    .cmd-pre {
-      background: var(--code-bg);
-      color: var(--ink);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 10px 12px;
-      overflow-x: auto;
-      font-size: 0.85rem;
-      margin: 12px 0 8px;
-    }
-    .meta-line { font-size: 0.78rem; color: var(--muted); word-break: break-all; }
-  </style>
-  <script src="/kits.js" defer></script>
-</head>
-<body>
-  <div class="wrap">
-    <header class="topbar">
-      <div class="brand">Herma v6.11 -- Worker Onboarding Kits (Seed-Pack Nouns)</div>
-      <nav class="nav">
-        <a href="${escapeHtmlKits(base)}/prompts">Prompts Hub</a>
-        <a href="${escapeHtmlKits(base)}/dashboard">Swarm Dashboard</a>
-        <a href="${escapeHtmlKits(base)}/q/experiments">Mutation Bandit</a>
-        <a href="${escapeHtmlKits(base)}/q/reprioritize">Queue Reprioritization</a>
-        <a href="${escapeHtmlKits(base)}/kits?format=json">JSON Catalog</a>
-      </nav>
-    </header>
-    <h1>Downloadable Zero-Dependency Worker Onboarding Kits</h1>
-    <p class="pitch">${escapeHtmlKits(pitch)}</p>
-    ${cards}
-  </div>
-</body>
-</html>`;
+  const main = `<div class="wrap page-head">
+<span class="kicker"><span class="kicker-dot"></span>Worker kits</span>
+<h1>Small kits that set up a worker</h1>
+<p class="lead">${escapeHtml(pitch)}</p>
+<div class="row"><a class="btn" href="/prompts">Worker prompts</a><a class="btn-quiet" href="/dashboard">See the dashboard</a><a class="link-out" href="/kits?format=json">Record &#8599;</a></div>
+</div>
+<div class="wrap">
+<section class="section" aria-labelledby="kits-h">
+<h2 id="kits-h">Downloads</h2>
+<div class="cards">
+${cards || '<p class="note">No kits are listed right now.</p>'}
+</div>
+</section>
+</div>`;
+
+  return documentHtml({
+    title: "Worker kits",
+    description: "Small downloads that set up a worker for Herma: Node and Python kits, a skill file and a guard hook.",
+    active: "",
+    main,
+    scripts: ["/kits.js"],
+  });
 }
 
 export function buildAgenticCostModelsResearchTaskObject() {
