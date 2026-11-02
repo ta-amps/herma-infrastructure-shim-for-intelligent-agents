@@ -50,6 +50,7 @@ export const HELP_STARTER_GRID = Object.freeze({
   meta_wonder_input_microusd_per_1m: 4000000,
   meta_wonder_output_microusd_per_1m: 20000000,
   estimated_chars_per_token: 4,
+  worst_case_bytes_per_token: 2,
   call_id_random_bytes: 6,
   hex_radix: 16,
   hex_byte_pad: 2,
@@ -695,6 +696,87 @@ function estimateMetaMicrousd(modelId, inputTokens, outputTokens) {
   );
 }
 
+// Outcomes that count as a call against the daily cap: a reservation, an answer, and every failed or uncertain attempt (rule 8: they stay recorded).
+const COUNTED_META_OUTCOMES = "('reserved', 'completed', 'rate_limited', 'upstream_error', 'rejected')";
+
+/**
+ * Reserve a Meta call BEFORE making it, in one statement. D1 runs a single statement atomically, so a burst of simultaneous
+ * requests cannot all pass the same old counts: the row is inserted (outcome "reserved", cost set to the worst case for the model) only
+ * while today's calls are under the daily call cap, today's spend plus this ceiling is under the public day cap, and the total spend plus
+ * this ceiling is under the operator budget. Infrastructure callers skip the two day caps and keep the total. Returns true when the slot is theirs.
+ */
+async function reserveMetaCall(db, r) {
+  const result = await db
+    .prepare(
+      `INSERT INTO herma_meta_call_log
+       (call_id, endpoint, agent_id, worker_uuid, task_id, provider, requested_model, reported_model,
+        http_status, outcome, input_tokens, output_tokens, estimated_microusd, latency_ms,
+        shimmed_object_count, shimmed_provision_count, prompt_sha256, response_sha256, error_code, created_at)
+       SELECT ?1, ?2, ?3, ?4, ?5, 'meta', ?6, '', 0, 'reserved', 0, 0, ?7, 0, ?8, ?9, ?10, '', '', ?11
+        WHERE (SELECT COALESCE(SUM(estimated_microusd), 0) FROM herma_meta_call_log WHERE provider = 'meta') + ?7 <= ?12
+          AND (?13 = 1 OR (SELECT COALESCE(SUM(estimated_microusd), 0) FROM herma_meta_call_log
+                            WHERE provider = 'meta' AND created_at >= ?14) + ?7 <= ?15)
+          AND (?13 = 1 OR (SELECT COUNT(*) FROM herma_meta_call_log
+                            WHERE provider = 'meta' AND created_at >= ?14 AND outcome IN ${COUNTED_META_OUTCOMES}) < ?16)`
+    )
+    .bind(
+      String(r.call_id),
+      String(r.endpoint || "/q/help"),
+      String(r.agent_id || "").slice(0, HELP_STARTER_GRID.agent_max_len),
+      String(r.worker_uuid || "").slice(0, HELP_STARTER_GRID.worker_uuid_max_len),
+      String(r.task_id || "").slice(0, HELP_STARTER_GRID.task_id_max_len),
+      String(r.requested_model || "muse-spark-1.3"),
+      Math.max(0, Math.ceil(Number(r.ceiling_microusd || 0))),
+      Math.max(0, Number(r.shimmed_object_count || 0)),
+      Math.max(0, Number(r.shimmed_provision_count || 0)),
+      String(r.prompt_sha256 || ""),
+      r.created_at,
+      Math.round(Number(r.total_budget_microusd || 0)),
+      r.infra ? 1 : 0,
+      String(r.day_start_iso),
+      Math.round(Number(r.day_cap_microusd || 0)),
+      Math.max(1, Math.floor(Number(r.day_calls_cap || 1)))
+    )
+    .run();
+  return Number(result?.meta?.changes || 0) === 1;
+}
+
+/** Which cap refused a reservation (a plain read, only used to word the refusal; the refusal itself was decided atomically). */
+async function metaCallsToday(db, dayStartIso) {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS cnt FROM herma_meta_call_log
+       WHERE provider = 'meta' AND created_at >= ? AND outcome IN ${COUNTED_META_OUTCOMES}`
+    )
+    .bind(dayStartIso)
+    .first();
+  return Number(row?.cnt || 0);
+}
+
+/** After the call: the same row gets the real outcome, tokens and cost. A call that never reaches this keeps its reservation. */
+async function finishMetaCall(db, record) {
+  await db
+    .prepare(
+      `UPDATE herma_meta_call_log
+          SET reported_model = ?, http_status = ?, outcome = ?, input_tokens = ?, output_tokens = ?,
+              estimated_microusd = ?, latency_ms = ?, response_sha256 = ?, error_code = ?
+        WHERE call_id = ?`
+    )
+    .bind(
+      String(record.reported_model || ""),
+      Number(record.http_status || 0),
+      String(record.outcome || "unknown"),
+      Math.max(0, Number(record.input_tokens || 0)),
+      Math.max(0, Number(record.output_tokens || 0)),
+      Math.max(0, Number(record.estimated_microusd || 0)),
+      Math.max(0, Math.round(Number(record.latency_ms || 0))),
+      String(record.response_sha256 || ""),
+      String(record.error_code || "").slice(0, HELP_STARTER_GRID.error_code_max_len),
+      String(record.call_id)
+    )
+    .run();
+}
+
 async function logMetaCallAttempt(db, record) {
   const nowIso = record.created_at || new Date().toISOString();
   await db
@@ -974,6 +1056,7 @@ export async function runHelpAndMetaReasoningPipeline(
     payer: "operator_bounded_help_allowance",
     allowance: {
       daily_public_microusd_cap: HELP_STARTER_GRID.help_meta_daily_microusd_cap,
+      paid_calls_per_day: paidMuseDailyCallsCap,
       total_operator_budget_microusd: totalMetaBudgetMicrousd,
       max_output_tokens: maxOutputTokens,
     },
@@ -1052,6 +1135,8 @@ export async function runHelpAndMetaReasoningPipeline(
   let responseSha = "";
   let errorCode = "";
   let llmAttempted = false;
+  let reservedCall = false;
+  let reservedCeiling = 0;
 
   if (!apiKey) {
     outcome = "not_configured";
@@ -1059,45 +1144,38 @@ export async function runHelpAndMetaReasoningPipeline(
   } else {
     let budgetAllowed = true;
     if (provSpec.provider === "meta") {
-      const [daySpendRow, totalSpendRow, dayCallsRow] = await Promise.all([
-        db
-          .prepare(
-            `SELECT COALESCE(SUM(estimated_microusd), 0) AS spend FROM herma_meta_call_log
-             WHERE provider = 'meta' AND created_at >= ?`
-          )
-          .bind(`${utcDayPrefix}T00:00:00.000Z`)
-          .first(),
-        db
-          .prepare(
-            `SELECT COALESCE(SUM(estimated_microusd), 0) AS spend FROM herma_meta_call_log
-             WHERE provider = 'meta'`
-          )
-          .first(),
-        db
-          .prepare(
-            `SELECT COUNT(*) AS cnt FROM herma_meta_call_log
-             WHERE provider = 'meta' AND created_at >= ?
-               AND outcome IN ('completed', 'rate_limited', 'upstream_error')`
-          )
-          .bind(`${utcDayPrefix}T00:00:00.000Z`)
-          .first(),
-      ]);
-      const estCeiling = estimateMetaMicrousd(
-        candidateModel,
-        Math.ceil((sysPrompt.length + userPrompt.length) / HELP_STARTER_GRID.estimated_chars_per_token),
-        maxOutputTokens
-      );
-      const daySpend = Number(daySpendRow?.spend || 0);
-      const totalSpend = Number(totalSpendRow?.spend || 0);
-      const dayPaidMuseCalls = Number(dayCallsRow?.cnt || 0);
-      if (
-        totalSpend + estCeiling > totalMetaBudgetMicrousd ||
-        (!infraAllowed && daySpend + estCeiling > HELP_STARTER_GRID.help_meta_daily_microusd_cap) ||
-        (!infraAllowed && dayPaidMuseCalls >= paidMuseDailyCallsCap)
-      ) {
+      // Reserve the slot first, in one atomic statement (see reserveMetaCall): a burst of simultaneous requests cannot all pass the same old counts.
+      // The worst case, not the typical case: a token is almost never shorter than two bytes, and the reply is capped by max_tokens,
+      // so what the provider really reports stays under this ceiling and the caps hold in dollars too.
+      const encoder = new TextEncoder();
+      const promptBytes = encoder.encode(sysPrompt).length + encoder.encode(userPrompt).length;
+      reservedCeiling = estimateMetaMicrousd(candidateModel, Math.ceil(promptBytes / HELP_STARTER_GRID.worst_case_bytes_per_token), maxOutputTokens);
+      reservedCall = await reserveMetaCall(db, {
+        call_id: callId,
+        endpoint,
+        agent_id: cleanAgent,
+        worker_uuid: workerUuid,
+        task_id: taskId,
+        requested_model: candidateModel,
+        ceiling_microusd: reservedCeiling,
+        shimmed_object_count: intakeRes.herma_intake.reusable_task_objects.length,
+        shimmed_provision_count: intakeRes.herma_intake.shimmed_provisions.length,
+        prompt_sha256: promptSha,
+        created_at: new Date().toISOString(),
+        total_budget_microusd: totalMetaBudgetMicrousd,
+        infra: infraAllowed,
+        day_start_iso: `${utcDayPrefix}T00:00:00.000Z`,
+        day_cap_microusd: HELP_STARTER_GRID.help_meta_daily_microusd_cap,
+        day_calls_cap: paidMuseDailyCallsCap,
+      });
+      if (!reservedCall) {
         budgetAllowed = false;
         outcome = "budget_capped";
-        errorCode = dayPaidMuseCalls >= paidMuseDailyCallsCap ? "paid_muse_daily_calls_cap_reached" : "meta_daily_or_total_budget_capped";
+        const callsToday = await metaCallsToday(db, `${utcDayPrefix}T00:00:00.000Z`);
+        errorCode =
+          !infraAllowed && callsToday >= paidMuseDailyCallsCap
+            ? "paid_muse_daily_calls_cap_reached"
+            : "meta_daily_or_total_budget_capped";
       }
     }
 
@@ -1185,28 +1263,47 @@ export async function runHelpAndMetaReasoningPipeline(
   }
 
   const nowIso = new Date().toISOString();
-  await logMetaCallAttempt(db, {
-    call_id: callId,
-    endpoint,
-    agent_id: cleanAgent,
-    worker_uuid: workerUuid,
-    task_id: taskId,
-    provider: provSpec.provider,
-    requested_model: candidateModel,
-    reported_model: reportedModel,
-    http_status: upstreamStatus,
-    outcome,
-    input_tokens: inputTokens,
-    output_tokens: outputTokens,
-    estimated_microusd: estimatedMicrousd,
-    latency_ms: latencyMs,
-    shimmed_object_count: intakeRes.herma_intake.reusable_task_objects.length,
-    shimmed_provision_count: intakeRes.herma_intake.shimmed_provisions.length,
-    prompt_sha256: promptSha,
-    response_sha256: responseSha,
-    error_code: errorCode,
-    created_at: nowIso,
-  });
+  if (reservedCall) {
+    // An answer records its real cost and a refusal from the provider (429) costs nothing; every other attempt that did not
+    // end in an answer (timeout, network error, an error body, an empty reply) keeps the reserved worst case, because we
+    // cannot show it was not billed. Either way it stays counted against the daily cap.
+    const settledMicrousd = outcome === "completed" ? estimatedMicrousd : outcome === "rate_limited" ? 0 : reservedCeiling;
+    await finishMetaCall(db, {
+      call_id: callId,
+      reported_model: reportedModel,
+      http_status: upstreamStatus,
+      outcome,
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      estimated_microusd: settledMicrousd,
+      latency_ms: latencyMs,
+      response_sha256: responseSha,
+      error_code: errorCode,
+    });
+  } else {
+    await logMetaCallAttempt(db, {
+      call_id: callId,
+      endpoint,
+      agent_id: cleanAgent,
+      worker_uuid: workerUuid,
+      task_id: taskId,
+      provider: provSpec.provider,
+      requested_model: candidateModel,
+      reported_model: reportedModel,
+      http_status: upstreamStatus,
+      outcome,
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      estimated_microusd: estimatedMicrousd,
+      latency_ms: latencyMs,
+      shimmed_object_count: intakeRes.herma_intake.reusable_task_objects.length,
+      shimmed_provision_count: intakeRes.herma_intake.shimmed_provisions.length,
+      prompt_sha256: promptSha,
+      response_sha256: responseSha,
+      error_code: errorCode,
+      created_at: nowIso,
+    });
+  }
 
   let persistedSuggestionObject = null;
   let finetuneTraceId = null;

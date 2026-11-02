@@ -19,6 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { compileList, ensureGenerated, privateTokens } from "./banned_list.mjs";
+import { inMemoryD1 } from "./memory_d1.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASE = "https://herma.ta-amps.workers.dev";
@@ -199,27 +200,19 @@ async function dirtyPages() {
     }),
     "dirty /w/<worker>": dash.renderWorkerProfileHtml(BASE, { worker_uuid: "w_dirty_1_8ffbf268", worker: data.workers[0], tasks: data.recent_contributions, objects: data.recent_objects, reputation: { total_cred_points: 3, unblock_bonus_points: 1, badge_details: [{ label: all[0], rule: dirty("Rule") }] } }),
     "dirty /starter": help.renderStarterHubHtml(BASE, catalog),
-    "dirty /q/demo/<key>": demo.renderInteractiveDemoPageHtml(BASE, { ...object, summary: dirty("Demo"), payload: { interactive_demo: { title: dirty("Demo title"), steps: [{ title: "a", caption: "b" }] } } }),
+    // The name an ASCII mesh carries (first and last line) is contributed text too: it must come out of the page's data island clean.
+    "dirty /q/demo/<key>": demo.renderInteractiveDemoPageHtml(BASE, {
+      ...object, summary: dirty("Demo"),
+      payload: {
+        interactive_demo: { title: dirty("Demo title"), steps: [{ title: "a", caption: "b" }] },
+        stl_ascii: `solid ${all[0]}\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid ${all[0]}\n`,
+        files: { "mesh.stl": `solid ${all[0]}\nendsolid ${all[0]}\n` },
+      },
+    }),
   };
 }
 
 // The real Worker, with an in-memory database, answering the public routes.
-class SqliteStmt {
-  constructor(sqlite, sql, args = []) { this.sqlite = sqlite; this.sql = sql; this.args = args; }
-  bind(...args) { return new SqliteStmt(this.sqlite, this.sql, args); }
-  async run() { const res = this.sqlite.prepare(this.sql).run(...this.args); return { success: true, meta: { changes: Number(res.changes ?? 0) } }; }
-  async first() { const row = this.sqlite.prepare(this.sql).get(...this.args); return row ? { ...row } : null; }
-  async all() { return { results: this.sqlite.prepare(this.sql).all(...this.args).map((r) => ({ ...r })) }; }
-}
-function inMemoryD1(DatabaseSync) {
-  const sqlite = new DatabaseSync(":memory:");
-  return {
-    sqlite,
-    prepare: (sql) => new SqliteStmt(sqlite, sql),
-    async batch(stmts) { const out = []; for (const s of stmts) out.push(await s.run()); return out; },
-    hasTable(name) { return Boolean(sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(name)); },
-  };
-}
 
 function publicRoutes() {
   const gateway = fs.readFileSync(path.join(ROOT, "deploy/cloudflare/priority_work_gateway.js"), "utf8");
@@ -239,10 +232,9 @@ function publicRoutes() {
 }
 
 async function workerRoutes(problems) {
-  const { DatabaseSync } = await import("node:sqlite");
   const { default: worker } = await load("deploy/cloudflare/worker.js");
   const prompts = await load("deploy/cloudflare/prompts_page.js");
-  const env = { STORAGE_MODE: "cloud", HERMA_DB: inMemoryD1(DatabaseSync), PUBLIC_URL: BASE };
+  const env = { STORAGE_MODE: "cloud", HERMA_DB: await inMemoryD1(), PUBLIC_URL: BASE };
   const routes = publicRoutes();
   for (const p of prompts.buildPromptCatalog(BASE)) {
     routes.push(`/prompts/raw/${p.id}`);

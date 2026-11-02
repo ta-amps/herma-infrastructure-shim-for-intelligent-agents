@@ -1007,7 +1007,7 @@ export async function buildWorkerScoreAndBadges(db, workerUuid) {
   return {
     worker_uuid: String(workerUuid),
     agent_id: wRow?.agent_id || events[0]?.agent_id || "",
-    ip_signal_hash: latestIpFingerprint || null,
+    ip_signal_hash: null, // no address-derived value is shown; rows written before this change keep theirs in storage until cleared
     total_cred_points: totalPoints,
     ledger_event_points: ledgerPoints,
     unblock_bonus_points: unblockTotal,

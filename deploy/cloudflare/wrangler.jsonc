@@ -54,10 +54,20 @@
     "TESSERA_URL": "https://tessera.ta-amps.workers.dev",
     "ORIGIN": "https://herma-api.fly.dev"
   },
+  // Privacy (finding F-PRIV-LOGS-001): Cloudflare's persisted traces and automatic request logs keep a visitor's address, browser and rough
+  // location for days. Persisted traces and invocation logs are off and query strings are redacted; only the Worker's own log lines are
+  // kept, and none of them carries an address.
   "observability": {
     "enabled": true,
+    "redact_query_string": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": false,
+      "persist": true
+    },
     "traces": {
-      "enabled": true
+      "enabled": false,
+      "persist": false
     }
   }
 }

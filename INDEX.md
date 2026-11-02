@@ -31,7 +31,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) |  |
 
-## deploy/ (33)
+## deploy/ (34)
 
 | File | What it is |
 |---|---|
@@ -39,6 +39,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/agent_access.js](deploy/cloudflare/agent_access.js) |  |
 | [deploy/cloudflare/agent_start.js](deploy/cloudflare/agent_start.js) | Versioned onboarding instructions. |
 | [deploy/cloudflare/bilateral_bridge.js](deploy/cloudflare/bilateral_bridge.js) | Bilateral Agent Transport Shim (/bridge/) for Herma Cloud Worker. |
+| [deploy/cloudflare/client_family.js](deploy/cloudflare/client_family.js) | What Herma keeps of a visitor's browser or tool (finding F-PRIV-LOGS-001): a coarse family, never the version… |
 | [deploy/cloudflare/co_lease_and_ensemble.js](deploy/cloudflare/co_lease_and_ensemble.js) | Herma v6.9 Adaptive Multi-Worker Co-Leasing, Heartbeat (/q/heartbeat), |
 | [deploy/cloudflare/composition_and_demand_engine.js](deploy/cloudflare/composition_and_demand_engine.js) | Universal Task-Object Reuse Graph, Interface Composer & Adaptive Demand-Driven Prioritizer (/q/graph, /q/comp… |
 | [deploy/cloudflare/conversation.js](deploy/cloudflare/conversation.js) | Typed proposals only. |
@@ -148,7 +149,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [herma/triggers/micromodel.py](herma/triggers/micromodel.py) | Tier-3 micromodel router trigger: fast tiny/cloud classifier with deterministic offline fallback. |
 | [herma/triggers/semantic.py](herma/triggers/semantic.py) | Tier-2 semantic similarity trigger (~1-5 ms): hybrid concept + subword cosine + optional embeddings. |
 
-## scripts/ (11)
+## scripts/ (12)
 
 | File | What it is |
 |---|---|
@@ -160,11 +161,12 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/check_public.py](scripts/check_public.py) | Fail if a file headed for a public repo holds a secret or a private name. |
 | [scripts/check_release.py](scripts/check_release.py) | Fail closed before a deploy of the Herma Worker, from any checkout of this repository. |
 | [scripts/light_check.mjs](scripts/light_check.mjs) | The light check (owner rule 13: light only, everywhere). |
+| [scripts/memory_d1.mjs](scripts/memory_d1.mjs) | An in-memory stand-in for a D1 database, on Node's built-in SQLite, for the gate and for tests that run the r… |
 | [scripts/page_fixtures_server.mjs](scripts/page_fixtures_server.mjs) | Serves every public Herma page from small fixtures, with the real static assets, so a browser can check the l… |
 | [scripts/page_interactions.mjs](scripts/page_interactions.mjs) | Clicks through the interactive parts of the redesigned pages (fixture server, the Worker's real page policy)… |
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
 
-## test/ (13)
+## test/ (15)
 
 | File | What it is |
 |---|---|
@@ -172,8 +174,10 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/bilateral_bridge.test.js](test/bilateral_bridge.test.js) |  |
 | [test/conversation.test.js](test/conversation.test.js) |  |
 | [test/herma_v63_boundaries_and_chat.test.js](test/herma_v63_boundaries_and_chat.test.js) |  |
+| [test/node/help_burst.node-test.mjs](test/node/help_burst.node-test.mjs) | q/help spends Meta calls only inside its caps, even when many requests arrive at once (owner rule 8: an allow… |
 | [test/on_demand_api_keys_and_nodes.test.js](test/on_demand_api_keys_and_nodes.test.js) |  |
 | [test/priority_work_gateway.test.js](test/priority_work_gateway.test.js) |  |
+| [test/privacy_logs.test.js](test/privacy_logs.test.js) |  |
 | [test/provider_diagnostics.test.js](test/provider_diagnostics.test.js) |  |
 | [test/provider_grants.test.js](test/provider_grants.test.js) |  |
 | [test/provider_health.test.js](test/provider_health.test.js) |  |

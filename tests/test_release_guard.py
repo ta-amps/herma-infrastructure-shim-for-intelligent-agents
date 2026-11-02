@@ -235,3 +235,18 @@ def test_a_release_ignores_overrides_of_the_word_list(monkeypatch: pytest.Monkey
     environment = check_release.release_environment()
     assert "BANNED_WORDS_LIST" not in environment and "BANNED_NEUTRAL_NAMES" not in environment
     assert "PATH" in environment
+
+
+def test_the_worker_keeps_no_persisted_traces_and_no_invocation_logs() -> None:
+    """Finding F-PRIV-LOGS-001: Cloudflare's persisted traces and automatic request logs keep a visitor's address and browser for days."""
+    config = (REPO_ROOT / "deploy/cloudflare/wrangler.jsonc").read_text(encoding="utf-8")
+    block = re.search(r'"observability"\s*:\s*\{(.*)\}\s*\}\s*$', config, re.S)
+    assert block, "wrangler.jsonc needs an observability block"
+    observability = block.group(1)
+    assert re.search(r'"invocation_logs"\s*:\s*false', observability)
+    assert re.search(
+        r'"traces"\s*:\s*\{[^}]*"enabled"\s*:\s*false[^}]*"persist"\s*:\s*false',
+        observability,
+        re.S,
+    )
+    assert re.search(r'"redact_query_string"\s*:\s*true', observability)

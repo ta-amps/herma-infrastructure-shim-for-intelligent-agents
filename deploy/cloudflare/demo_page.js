@@ -9,7 +9,7 @@ import { documentHtml, escapeHtml, humanize, tidyText } from "./page_shell.js";
 
 // What the page needs to draw a demo, and nothing that reads as a hash or a receipt: those stay in the record. Text the
 // page shows (titles, captions, what a step holds) goes through the same word rules as every worker-written text; what
-// the runner draws from (a mesh, a sound) is passed through byte for byte.
+// the runner draws from (a mesh, a sound) is passed through byte for byte, except the name an ASCII mesh carries.
 const NOISY_KEY = /sha-?256|hash|digest|receipt/i;
 function plain(value) {
   if (typeof value === "string") return tidyText(value, 600);
@@ -30,12 +30,24 @@ function plainSteps(list) {
   }));
 }
 
+// An ASCII mesh carries a name on its first and last lines. That name is contributed text, so it goes through the word rules (rule 16);
+// the geometry between them, and any name the rules leave alone, stay byte for byte.
+function plainMesh(text) {
+  if (typeof text !== "string") return text;
+  return text.replace(/^([ \t]*(?:end)?solid)([ \t]+)(.*)$/gim, (line, word, space, name) => {
+    const clean = tidyText(name, 80);
+    return clean === name.trim() ? line : `${word}${space}${clean}`;
+  });
+}
+
 function demoIsland(doc) {
   const payload = doc.payload && typeof doc.payload === "object" ? doc.payload : {};
   const demo = payload.interactive_demo && typeof payload.interactive_demo === "object" ? payload.interactive_demo : null;
   const files = payload.files && typeof payload.files === "object" ? payload.files : {};
   const keep = {};
-  for (const name of ["stem.wav.b64", "mesh.stl", "model.stl"]) if (typeof files[name] === "string") keep[name] = files[name];
+  for (const name of ["stem.wav.b64", "mesh.stl", "model.stl"]) {
+    if (typeof files[name] === "string") keep[name] = name.endsWith(".stl") ? plainMesh(files[name]) : files[name];
+  }
   return {
     object_key: tidyText(doc.object_key, 90),
     summary: tidyText(doc.summary, 400),
@@ -51,7 +63,7 @@ function demoIsland(doc) {
       mesh_qa: plain(payload.mesh_qa),
       audio_qa: plain(payload.audio_qa),
       invariants: plain(payload.invariants),
-      stl_ascii: typeof payload.stl_ascii === "string" ? payload.stl_ascii : undefined,
+      stl_ascii: typeof payload.stl_ascii === "string" ? plainMesh(payload.stl_ascii) : undefined,
       wav_base64: typeof payload.wav_base64 === "string" ? payload.wav_base64 : undefined,
       files: Object.keys(keep).length ? keep : undefined,
     },

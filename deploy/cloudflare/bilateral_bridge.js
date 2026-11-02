@@ -5,6 +5,8 @@
 // `/v1/stores/demo.artifacts/records/*`, `/v1/tasks/submit`) plus D1 bilateral transcripts.
 // Tessera remains the sole task, lease, storage, and receipt authority.
 
+import { clientFamily } from "./client_family.js";
+
 export const BRIDGE_GRID_CONFIG = Object.freeze({
   schema_id: "herma.bilateral_bridge.grid.v1",
   challenge_addend_a: 1337,
@@ -347,10 +349,7 @@ async function ensureBridgeTables(db) {
 
 function extractClientTelemetry(request) {
   return {
-    user_agent: scrubSensitiveText(request.headers.get("user-agent") || "unknown").slice(
-      0,
-      BRIDGE_GRID_CONFIG.max_summary_chars
-    ),
+    user_agent: clientFamily(request.headers.get("user-agent")),
     accept: scrubSensitiveText(request.headers.get("accept") || "").slice(0, BRIDGE_GRID_CONFIG.max_summary_chars),
     cf_colo: String(request.cf?.colo || "edge"),
   };

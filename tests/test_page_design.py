@@ -352,6 +352,15 @@ BAD_PAGES = {
     ),
     "plain-light-meta.html": ("", "", "<p>x</p>", False),
     "dark-panel.html": ("", ".p{background:#11161F;height:300px}", '<div class="p"></div>', False),
+    # A 36 px ink banner is only 4.5% of the screen, so the area rule alone misses it; the band rule (wider than half the screen,
+    # taller than 8 px) is the one the live watchdog uses, and an ink link or button across the page stays allowed.
+    "dark-band.html": ("", ".b{background:#11161F;height:36px}", '<div class="b"></div>', False),
+    "ink-link-band.html": (
+        "",
+        ".b{display:block;background:#11161F;color:#F5F2EA;height:40px;padding:8px}",
+        '<a class="b" href="#main">An ink link across the page is allowed</a>',
+        True,
+    ),
     "dark-media.html": (
         "",
         "@media (prefers-color-scheme: dark){body{background:#0c1017}}",
@@ -409,7 +418,7 @@ def test_the_light_check_fails_on_every_kind_of_dark_page(bad_site: str) -> None
             "--base",
             bad_site,
             "--routes",
-            "/dark-media.html,/dark-panel.html,/dark-canvas.html,/plain-light-meta.html",
+            "/dark-media.html,/dark-panel.html,/dark-band.html,/dark-canvas.html,/plain-light-meta.html",
         ],
         cwd=REPO_ROOT,
         capture_output=True,
@@ -421,6 +430,7 @@ def test_the_light_check_fails_on_every_kind_of_dark_page(bad_site: str) -> None
     for message in (
         "dark-scheme media query",
         "opaque dark panel",
+        "opaque dark band",
         "drawn dark",
         'must be "only light"',
     ):

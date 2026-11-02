@@ -513,6 +513,23 @@
         "tests/test_release_guard.py::test_the_gate_fails_closed_without_the_list_and_with_samples_that_catch_nothing",
         "tests/test_release_guard.py::test_a_release_ignores_overrides_of_the_word_list"
       ]
+    },
+    {
+      "id": "H24",
+      "statement": "A /q/help request reserves its Meta call in one atomic statement before it makes it (the daily call cap, the public day cap and the total budget are checked together against the worst-case cost of the prompt), settles the same row afterward, and counts failed and uncertain attempts, so a burst of simultaneous requests cannot spend past a cap",
+      "enforced_by": "edge",
+      "checked_by": [
+        "test/node/help_burst.node-test.mjs"
+      ]
+    },
+    {
+      "id": "H25",
+      "statement": "Herma keeps no visitor address and no full browser string: persisted traces and automatic request logs are off, the trace log and the bridge records keep a coarse client family, and nothing is derived from an address",
+      "enforced_by": "edge",
+      "checked_by": [
+        "test/privacy_logs.test.js",
+        "tests/test_release_guard.py::test_the_worker_keeps_no_persisted_traces_and_no_invocation_logs"
+      ]
     }
   ],
   "import_rules": [

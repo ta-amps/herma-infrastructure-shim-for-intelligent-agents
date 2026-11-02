@@ -18,6 +18,7 @@
 //     hyperplane sketches, and Weighted Reciprocal Rank Fusion (RRF) + Quality/Tombstone reranking.
 
 import { computeTaskFingerprint, scrubSensitiveText } from "./bilateral_bridge.js";
+import { clientFamily } from "./client_family.js";
 import {
   renderContributionPermalinkHtml,
   renderDashboardHtml,
@@ -3606,7 +3607,7 @@ async function appendGatewayTrace(db, entry = {}) {
         String(entry.worker_uuid || "").slice(0, QUEUE_GATEWAY_GRID.worker_uuid_max_len),
         String(entry.harness_tier || "").slice(0, QUEUE_GATEWAY_GRID.facet_max_len),
         String(entry.cf_colo || "").slice(0, QUEUE_GATEWAY_GRID.colo_max_len),
-        scrubSensitiveText(entry.user_agent || "").slice(0, QUEUE_GATEWAY_GRID.ua_max_len),
+        clientFamily(entry.user_agent),
         String(entry.task_id || "").slice(0, QUEUE_GATEWAY_GRID.task_id_max_len),
         Math.max(0, Number(entry.request_bytes || 0)),
         Math.max(0, Math.round(Number(entry.latency_ms || 0))),
@@ -3692,7 +3693,7 @@ async function queryGatewayTraces(db, infraAllowed, params = {}) {
       worker_uuid: r.worker_uuid || null,
       harness_tier: r.harness_tier || null,
       cf_colo: r.cf_colo || null,
-      user_agent: r.user_agent || null,
+      user_agent: r.user_agent ? clientFamily(r.user_agent) : null, // a family word only, whatever an older row holds
       task_id: r.task_id || null,
       request_bytes: Number(r.request_bytes || 0),
       latency_ms: Number(r.latency_ms || 0),
@@ -7855,7 +7856,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
   const credAndProposalsOut = await recordVerifiedSubmissionCredAndProposals(db, {
     workerUuid: workerProfile.worker_uuid,
     agentId,
-    clientIp: reqMeta.clientIp || "",
+    clientIp: "", // nothing derived from a visitor's address is stored (finding F-PRIV-LOGS-001)
     envSalt: String(env?.HERMA_ADMIN_KEY || "herma-cred-v1").slice(0, QUEUE_GATEWAY_GRID.shape_hash_chars),
     taskId,
     existingTask,

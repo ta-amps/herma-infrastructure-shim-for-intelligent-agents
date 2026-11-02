@@ -132,8 +132,19 @@ export async function start(port = 7788) {
     }
     return send(404, "text/plain", "not routed in the fixtures server");
   });
-  await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
-  return { server, port, routes: PAGE_ROUTES };
+  // The wanted port, or a free one when another run (another session, another check) already holds it: the checks must not fail closed on a busy port.
+  const listen = (wanted) =>
+    new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(wanted, "127.0.0.1", () => { server.off("error", reject); resolve(); });
+    });
+  try {
+    await listen(port);
+  } catch (error) {
+    if (error?.code !== "EADDRINUSE") throw error;
+    await listen(0);
+  }
+  return { server, port: server.address().port, routes: PAGE_ROUTES };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

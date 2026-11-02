@@ -86,15 +86,24 @@ function auditPage() {
   scanSheets(document.styleSheets, "the page");
 
   const seen = [];
+  // The same two rules as the live watchdog: a dark element that covers more than 5% of the screen, or a dark band that is wider than
+  // half the screen and taller than 8 px (a 36 px ink banner is only 4.5% of a screen, so the area rule alone misses it).
+  // Buttons, links, images, video, svg and canvas may be dark (an ink button is allowed).
+  const MAY_BE_DARK = /^(button|a|img|video|svg|canvas)$/i;
   const visit = (el) => {
     const cs = getComputedStyle(el);
     if (cs.display === "none" || cs.visibility === "hidden") return;
     const rect = el.getBoundingClientRect();
     const area = rect.width * rect.height;
-    if (area <= 0.05 * viewportArea) return;
-    const share = `${Math.round((area / viewportArea) * 100)}% of the screen`;
+    const big = area > 0.05 * viewportArea;
+    const band = rect.width > 0.5 * window.innerWidth && rect.height > 8 && !MAY_BE_DARK.test(el.localName);
+    if (!big && !band) return;
+    const share = big ? `${Math.round((area / viewportArea) * 100)}% of the screen` : `a ${Math.round(rect.height)} px band across ${Math.round((rect.width / window.innerWidth) * 100)}% of the width`;
     const bg = parse(cs.backgroundColor);
-    if (bg && bg.a >= 0.99 && luminance(bg.r, bg.g, bg.b) < 0.25) seen.push(`${name(el)} is an opaque dark panel (${cs.backgroundColor}, ${share})`);
+    if (bg && luminance(bg.r, bg.g, bg.b) < 0.25 && ((big && bg.a >= 0.99) || (band && bg.a > 0.5))) {
+      seen.push(`${name(el)} is an opaque dark ${big ? "panel" : "band"} (${cs.backgroundColor}, ${share})`);
+    }
+    if (!big) return;
     if (/gradient/i.test(cs.backgroundImage)) {
       for (const m of cs.backgroundImage.matchAll(/rgba?\([^)]+\)/g)) {
         const c = parse(m[0]);

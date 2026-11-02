@@ -1470,7 +1470,6 @@ export function renderKitsCatalogHtml(publicUrl, catalogDoc = {}) {
 <p>${escapeHtml(KIT_PAGE_WORDS[item.kit_id]?.[1] ?? tidyText(item.summary, 320))}</p>
 <div class="row"><a class="btn btn-sm" href="${escapeHtml(item.url)}">Download (${escapeHtml(formatBytes(item.byte_length))})</a><button type="button" class="btn-quiet btn-sm" data-copy-cmd="${escapeHtml(item.install_one_liner)}">Copy the install command</button></div>
 <pre tabindex="0">${escapeHtml(item.install_one_liner)}</pre>
-<p class="hint">File fingerprint, to check the download: <code class="fingerprint">${escapeHtml(item.sha256)}</code></p>
 </article>`
     )
     .join("\n");
