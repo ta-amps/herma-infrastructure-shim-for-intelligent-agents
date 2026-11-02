@@ -1,5 +1,13 @@
 # Changelog
 
+## Before the Nov 2 release
+
+The banner is the shared light script (`1a9e2245...`, the one Agora serves), and the stylesheet gives it the page's paper colour. Every address of Eranos that Herma gives out is
+`https://eranosforgood.org`; a test keeps the old one out (it stays only in the list of origins that may read `/q/network`). `GET /q/leaderboard` takes `?limit=` (1 to 100): the
+ranking and the limit are decided in SQL by the same sum the score uses, only the workers returned are scored in detail, and the standings are kept for 30 seconds. A worker that has a
+token is claimed as only by a caller that presents it (by the claim route and in chat); the live fleet and every other worker without a token are unchanged. The network map treats a Task
+whose tier is `infra_private` as private even when its visibility says public.
+
 ## The network map
 
 `GET /q/network` answers where workers connect to the shared queue and which kinds of Task they pick up, for the Agora network page and the Eranos

@@ -175,17 +175,19 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/page_interactions.mjs](scripts/page_interactions.mjs) | Clicks through the interactive parts of the redesigned pages (fixture server, the Worker's real page policy)… |
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
 
-## test/ (22)
+## test/ (25)
 
 | File | What it is |
 |---|---|
 | [test/banned_words_filter.test.js](test/banned_words_filter.test.js) |  |
 | [test/bilateral_bridge.test.js](test/bilateral_bridge.test.js) |  |
 | [test/canonical_host.test.js](test/canonical_host.test.js) |  |
+| [test/claim_token.test.js](test/claim_token.test.js) |  |
 | [test/contributor_printout.test.js](test/contributor_printout.test.js) |  |
 | [test/conversation.test.js](test/conversation.test.js) |  |
 | [test/herma_v63_boundaries_and_chat.test.js](test/herma_v63_boundaries_and_chat.test.js) |  |
 | [test/home_totals.test.js](test/home_totals.test.js) |  |
+| [test/leaderboard.test.js](test/leaderboard.test.js) |  |
 | [test/network_activity.test.js](test/network_activity.test.js) |  |
 | [test/node/banned_list.node-test.mjs](test/node/banned_list.node-test.mjs) |  |
 | [test/node/fixtures/tessera-activity-map.json](test/node/fixtures/tessera-activity-map.json) | JSON object: service, window, window_seconds, as_of, min_workers, places |
@@ -203,7 +205,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/worker_kits_and_mutation_grid.test.js](test/worker_kits_and_mutation_grid.test.js) |  |
 | [test/worker_reputation_and_proposals.test.js](test/worker_reputation_and_proposals.test.js) |  |
 
-## tests/ (35)
+## tests/ (36)
 
 | File | What it is |
 |---|---|
@@ -220,6 +222,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [tests/fixtures/pages/worker.json](tests/fixtures/pages/worker.json) | JSON object: ok, worker_uuid, worker, tasks, objects, reputation |
 | [tests/test_api_and_proxy.py](tests/test_api_and_proxy.py) | Tests for multi-protocol payload augmentation, deduplication, edge lockdown, and HTTP endpoints. |
 | [tests/test_builtin_starters.py](tests/test_builtin_starters.py) | Starters synced from Tessera fire for routed callers only when they carry fabricgovernance, and natural-langu… |
+| [tests/test_canonical_addresses.py](tests/test_canonical_addresses.py) | Herma points people and agents at the canonical Eranos address, https://eranosforgood.org (owner, Nov 2). |
 | [tests/test_cli_demo.py](tests/test_cli_demo.py) | The CI demo verifies the supported client policy and its real provision pipeline. |
 | [tests/test_conversation.py](tests/test_conversation.py) | Typed proposals, caller isolation, budget fencing and real HTTP provider contracts. |
 | [tests/test_conversation_schema_parity.py](tests/test_conversation_schema_parity.py) | Cross-runtime fixtures for the portable conversation schema boundary. |
