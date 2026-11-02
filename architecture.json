@@ -459,12 +459,12 @@
     },
     {
       "id": "H20",
-      "statement": "Served pages, public JSON and shipped files never name the retired model family or the banned marker word, and the public model list comes from one catalog that the Python and Worker pages render identically with agent programs kept out of the model table",
+      "statement": "Served pages, public JSON and shipped files pass the ONE shared banned-word list, which is read from outside this repository and never copied into it (MUST-FOLLOW rule 16), and the public model list comes from one catalog that the Python and Worker pages render identically with agent programs kept out of the model table",
       "enforced_by": "api",
       "checked_by": [
         "tests/test_model_policy.py::test_models_section_and_text_are_identical_in_both_runtimes",
-        "tests/test_model_policy.py::test_served_pages_and_public_json_name_no_retired_family_or_banned_word",
-        "tests/test_model_policy.py::test_repository_names_neither_the_retired_family_nor_the_banned_word",
+        "tests/test_model_policy.py::test_served_pages_and_public_json_pass_the_shared_banned_word_list",
+        "tests/test_model_policy.py::test_repository_holds_no_word_that_is_banned_everywhere",
         "tests/test_model_policy.py::test_agent_apps_are_named_nowhere_in_the_repository",
         "tests/test_model_policy.py::test_home_page_has_no_receipt_or_hash_wording",
         "tests/test_model_policy.py::test_live_gateway_routes_keep_working_and_name_the_muse_default"
@@ -482,7 +482,7 @@
     },
     {
       "id": "H22",
-      "statement": "Every public Herma page is light only (color-scheme only light in its meta tag and on :root, no dark-scheme media query, no opaque dark panel under either colour scheme), carries the one thin agent banner, the header and the standard footer (the shared ta-amps.footer/1 spec: the brand and one row of links, then one short line) from a single shell (herma/page_shell.json) that the Python and Worker renderers produce byte for byte alike, and shows worker-written text only after the display-time word rules (tidyText), never altering a stored record",
+      "statement": "Every public Herma page is light only (color-scheme only light in its meta tag and on :root, no dark-scheme media query, no opaque dark panel under either colour scheme), carries the one thin agent banner, the header and the standard footer (the shared ta-amps.footer/1 spec: the brand and one row of links, then one short line) from a single shell (herma/page_shell.json) that the Python and Worker renderers produce byte for byte alike, and shows worker-written text only after the display-time filter (tidyText), which is built on the server from the shared banned-word list and never sent to a browser, and never alters a stored record",
       "enforced_by": "api",
       "checked_by": [
         "tests/test_page_design.py::test_python_and_worker_shells_are_byte_identical",
@@ -490,7 +490,8 @@
         "tests/test_page_design.py::test_stylesheet_is_light_only_and_text_is_never_small",
         "tests/test_page_design.py::test_every_page_carries_the_shell_and_stays_light",
         "tests/test_page_design.py::test_every_page_uses_plain_words",
-        "tests/test_page_design.py::test_worker_written_text_is_tidied_but_the_original_stays_in_the_record",
+        "tests/test_page_design.py::test_worker_written_text_is_filtered_by_the_list_and_the_original_stays_in_the_record",
+        "tests/test_page_design.py::test_no_script_a_browser_receives_carries_the_word_rules",
         "tests/test_page_design.py::test_the_light_check_fails_on_every_kind_of_dark_page",
         "tests/test_page_design.py::test_the_light_check_passes_on_every_redesigned_page",
         "tests/test_page_design.py::test_the_fixture_pages_are_served_with_the_workers_real_page_policy"
@@ -498,14 +499,16 @@
     },
     {
       "id": "H23",
-      "statement": "A deploy of the Worker from any checkout of this repository is refused unless the tree is clean, the commits listed in deploy/cloudflare/release-policy.json (the one that is live and the Muse-first release) are contained in HEAD, the page asset versions are current, the banned-word gate passes on every served surface, and the light check passes",
+      "statement": "A deploy of the Worker from any checkout of this repository is refused unless the tree is clean, the commits listed in deploy/cloudflare/release-policy.json (the one that is live and the Muse-first release) are contained in HEAD, the page asset versions are current, the word-list module comes from the shared banned-word list and not from an override, the banned-word gate passes that list on every served surface (and fails closed without it), and the light check passes",
       "enforced_by": "edge",
       "checked_by": [
         "tests/test_release_guard.py::test_a_dirty_or_untracked_tree_is_refused",
         "tests/test_release_guard.py::test_the_commit_that_is_live_must_be_contained",
         "tests/test_release_guard.py::test_the_policy_names_the_live_commit_and_this_history_contains_it",
         "tests/test_release_guard.py::test_wrangler_runs_the_guard_and_the_light_check_before_every_deploy",
-        "tests/test_release_guard.py::test_the_gate_fails_on_every_kind_of_dirty_page_and_passes_a_clean_one"
+        "tests/test_release_guard.py::test_the_gate_fails_on_every_kind_of_dirty_page_and_passes_a_clean_one",
+        "tests/test_release_guard.py::test_the_gate_fails_closed_without_the_list_and_with_samples_that_catch_nothing",
+        "tests/test_release_guard.py::test_a_release_ignores_overrides_of_the_word_list"
       ]
     }
   ],

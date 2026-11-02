@@ -1,0 +1,39 @@
+{
+  "kind": "task_object",
+  "id": "rules.banned-words.made-up",
+  "version": 0,
+  "updated": "2026-11-02",
+  "purpose": "A MADE-UP list in the shape of the shared banned-word list, for the unit tests of the gate and the display filter. None of these words is real.",
+  "case_insensitive": true,
+  "always": {
+    "why": "test",
+    "patterns": [
+      "\\bzorptest\\b",
+      "glimbo"
+    ]
+  },
+  "visible_text": {
+    "why": "test",
+    "patterns": [
+      "\\bplorps?\\b",
+      "\\bquux-?256\\b",
+      "\\b[0-9a-f]{12,}\\b",
+      "^\\s*Whim\\s*$",
+      "\\bsnarf[a-z]*\\b"
+    ],
+    "allowed_where": "test"
+  },
+  "private_names": {
+    "why": "test",
+    "match": "lowercase each word token (letters and digits only) and compare its sha256 hex to this list",
+    "sha256": [
+      "c87b3e4fa3c4e4229b303ca465e4037d1229e3d41f2198b89f3a58dfaed4e9db"
+    ]
+  },
+  "agent_apps_outside_models_page": {
+    "why": "test",
+    "patterns": [
+      "\\bwumpusapp\\b"
+    ]
+  }
+}

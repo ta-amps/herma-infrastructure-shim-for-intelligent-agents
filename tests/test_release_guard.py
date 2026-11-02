@@ -2,13 +2,15 @@
 
 `scripts/check_release.py` runs as `build.command` (deploy/cloudflare/wrangler.jsonc). These tests drive its rules in
 temporary git repositories, check that the policy names the live commit and that it is contained in this history, and
-prove that the banned-word gate (`scripts/release_gate.mjs`) fails on dirty pages and passes on clean ones. Banned words
-are written in pieces, so this file never contains them itself.
+prove that the banned-word gate (`scripts/release_gate.mjs`) fails on dirty pages and passes on clean ones. The gate reads
+the ONE shared banned-word list from outside this repository (MUST-FOLLOW rule 16); these tests drive it with the made-up list
+in tests/fixtures, so this file spells no banned word.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -120,7 +122,14 @@ def test_wrangler_runs_the_guard_and_the_light_check_before_every_deploy() -> No
     assert build, "wrangler.jsonc needs a build.command, the deploy-time guard"
     command = build.group(1)
     assert "scripts/check_release.py --check" in command and "make light-check" in command
+    assert command.index("banned_list.mjs") < command.index("check_release.py")
     assert command.index("check_release.py") < command.index("light-check"), "the guard runs first"
+    assert command.rindex("banned_list.mjs --check") > command.index("light-check"), (
+        "the module the bundle will contain is checked again after everything else ran"
+    )
+    assert re.search(r"unset BANNED_WORDS_LIST BANNED_NEUTRAL_NAMES", command), (
+        "a release never takes the word list from an override"
+    )
     assert "git rev-parse --show-toplevel" in command, "it works from any directory of any checkout"
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     assert re.search(r"^check:.*\bgate\b.*\blight-check\b.*\bpage-check\b", makefile, re.M), (
@@ -133,6 +142,15 @@ def test_the_asset_versions_and_the_gate_pass_on_this_tree() -> None:
     assert check_release.check_gate(REPO_ROOT) == []
 
 
+def made_up_environment(**extra: str) -> dict[str, str]:
+    return {
+        **os.environ,
+        "BANNED_WORDS_LIST": str(REPO_ROOT / "tests/fixtures/made-up-banned-words.json"),
+        "BANNED_NEUTRAL_NAMES": str(REPO_ROOT / "tests/fixtures/made-up-neutral-names.json"),
+        **extra,
+    }
+
+
 def gate_problems(pages: dict[str, str]) -> dict[str, list[str]]:
     result = subprocess.run(
         ["node", "--no-warnings", "scripts/release_gate.mjs", "--pages"],
@@ -141,34 +159,79 @@ def gate_problems(pages: dict[str, str]) -> dict[str, list[str]]:
         capture_output=True,
         text=True,
         check=True,
+        env=made_up_environment(),
     )
     return dict(json.loads(result.stdout))
 
 
 def test_the_gate_fails_on_every_kind_of_dirty_page_and_passes_a_clean_one() -> None:
-    family = "L" + "lama"
-    banned = "syn" + "thetic"
-    third_party = "nano" + "Muse"
+    private_name = "Fnorbleton"  # a made-up name; the list holds only its sha256
     dirty = {
-        "family": f"<main><h1>x</h1><p>Tuned from {family} 3.2.</p></main>",
-        "word": f"<main><h1>x</h1><p>A {banned} run.</p></main>",
-        "app": f"<main><h1>x</h1><p>Checked in {third_party}.</p></main>",
-        "prose": "<main><h1>x</h1><p>Reusable nouns and verbs.</p></main>",
-        "receipt": "<main><h1>x</h1><p>The receipt and the SHA-256.</p></main>",
-        "hash": "<main><h1>x</h1><p>Seen as 9699abcdef0123456789.</p></main>",
-        "stamp": "<main><h1>x</h1><p>COMING SOON</p></main>",
+        "always": "<main><h1>x</h1><p>Tuned from a zorptest run.</p></main>",
+        "always inside a longer word": "<main><h1>x</h1><p>Seen in superglimbo mode.</p></main>",
+        "app": "<main><h1>x</h1><p>Checked in wumpusapp.</p></main>",
+        "prose": "<main><h1>x</h1><p>Reusable plorps for everyone.</p></main>",
+        "hash wording": "<main><h1>x</h1><p>A quux-256 sum.</p></main>",
+        "long id": "<main><h1>x</h1><p>Seen as 9699abcdef0123456789.</p></main>",
+        "label": "<main><h1>x</h1><p>Whim</p></main>",
+        "suffix": "<main><h1>x</h1><p>A snarfling pass.</p></main>",
+        "private name": f"<main><h1>x</h1><p>Written by {private_name}.</p></main>",
+        "private name in an attribute": f'<main><h1>x</h1><img alt="{private_name.lower()}" src="/a.png"></main>',
         "dash": f"<main><h1>x</h1><p>one {chr(0x2014)} two</p></main>",
-        "cloud": "<main><h1>x</h1><p>A dedicated cloud worker.</p></main>",
     }
     clean = {
         "clean": "<main><h1>Tasks and Task Objects</h1><p>Muse Spark 1.3 through the Meta API.</p>"
-        '<code>verb_kind</code> <a href="/c/ab_9f3a2b1c4d5e6f7a">a record</a><pre>queued_tasks, payload_sha256_verified, noun.*</pre></main>',
+        '<code>plorp_kind</code> <a href="/c/ab_9f3a2b1c4d5e6f7a">a record</a>'
+        "<pre>plorps, quux256_verified, 9699abcdef0123456789</pre>"
+        "<p>A whim, not a label. Fnorbletons are not the name.</p></main>",
     }
     found = gate_problems({**dirty, **clean})
     for name in dirty:
         assert found[name], f"the gate missed the {name} case"
     assert found["clean"] == [], found["clean"]
+    # A reader never gets a banned word echoed back in a problem report.
+    reported = [line for lines in found.values() for line in lines]
+    assert not any("zorptest" in line or "wumpusapp" in line for line in reported)
     # An id inside a link's address is the record's name; the same id in the words people read is not.
     assert gate_problems({"visible": "<main><h1>x</h1><p>See 9f3a2b1c4d5e6f7a</p></main>"})[
         "visible"
     ]
+
+
+def run_gate(**env: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["node", "--no-warnings", "scripts/release_gate.mjs"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=made_up_environment(**env),
+    )
+
+
+def test_the_gate_fails_closed_without_the_list_and_with_samples_that_catch_nothing(
+    tmp_path: Path,
+) -> None:
+    missing = run_gate(BANNED_WORDS_LIST=str(tmp_path / "nowhere.json"))
+    assert missing.returncode == 1 and "missing" in missing.stderr
+    # Samples that the list would not catch make the dirty-page check vacuous, so the gate refuses them.
+    neutral = json.loads(
+        (REPO_ROOT / "tests/fixtures/made-up-neutral-names.json").read_text(encoding="utf-8")
+    )
+    neutral["samples"] = ["Nothing to catch here"]
+    toothless = tmp_path / "toothless.json"
+    toothless.write_text(json.dumps(neutral), encoding="utf-8")
+    vacuous = run_gate(BANNED_NEUTRAL_NAMES=str(toothless))
+    assert vacuous.returncode == 1 and "vacuous" in vacuous.stderr
+    neutral["samples"] = []
+    toothless.write_text(json.dumps(neutral), encoding="utf-8")
+    empty = run_gate(BANNED_NEUTRAL_NAMES=str(toothless))
+    assert empty.returncode == 1 and "no samples" in empty.stderr
+
+
+def test_a_release_ignores_overrides_of_the_word_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BANNED_WORDS_LIST", "/somewhere/weaker.json")
+    monkeypatch.setenv("BANNED_NEUTRAL_NAMES", "/somewhere/weaker-names.json")
+    environment = check_release.release_environment()
+    assert "BANNED_WORDS_LIST" not in environment and "BANNED_NEUTRAL_NAMES" not in environment
+    assert "PATH" in environment

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -46,3 +48,21 @@ def grant(
 def example_operator_grants(monkeypatch: pytest.MonkeyPatch) -> None:
     """The default test deployment grants two example callers; others start ungranted."""
     grant(monkeypatch, "key:alice", "key:bob")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def word_list_module() -> None:
+    """The Worker's page modules import a git-ignored module built from the shared banned-word list (rule 16).
+
+    Several tests load those modules through node, so build it once per run. With no shared list on this machine the made-up
+    one stands in; the release gate and the deploy hook refuse that and need the real list.
+    """
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        ["node", "scripts/banned_list.mjs", "--ensure"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr[-1500:]

@@ -28,6 +28,11 @@ async function open(route) {
   check(rows === 5, `dashboard search shows 5 results (got ${rows})`);
   const text = await page.locator("#search-results-box").innerText();
   check(/31 found/.test(text), "dashboard search says how many it found");
+  check(await page.locator("#search-results-box").count() === 1, "the results are swapped into the one results box");
+  // Without JavaScript the same form opens the page with the results already in it.
+  await page.goto(base + "/dashboard?q=shelter", { waitUntil: "networkidle" });
+  check(await page.locator("#search-results-box:not([hidden]) tbody tr").count() === 5, "the search also works as a plain page");
+  check(await page.inputValue("#q-input") === "shelter", "the search box keeps what was typed");
   check(await page.locator("details.fold").count() >= 3, "long lists are folded");
   await page.locator("details.fold >> nth=0").locator("summary").click();
   check(errors.length === 0, `dashboard has no console errors ${errors.join(" | ")}`);

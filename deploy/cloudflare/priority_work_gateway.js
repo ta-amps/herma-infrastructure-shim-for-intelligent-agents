@@ -22,6 +22,7 @@ import {
   renderContributionPermalinkHtml,
   renderDashboardHtml,
   renderDashboardJs,
+  renderSearchResultsHtml,
   renderWorkerProfileHtml,
 } from "./dashboard_and_permalinks.js";
 import { renderInteractiveDemoPageHtml, renderInteractiveDemoRunnerJs } from "./demo_page.js";
@@ -8104,12 +8105,27 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     if (method !== "GET" && method !== "HEAD") {
       return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
+    // The search runs here, on the server, so the titles and summaries workers wrote pass through the shared word list
+    // (tidyText) before a page shows them. With JavaScript the page asks only for the results fragment.
+    const searchParams = {};
+    for (const key of ["q", "opt_goal", "prog_lang", "deliverable_kind"]) {
+      const value = (url.searchParams.get(key) || "").trim().slice(0, QUEUE_GATEWAY_GRID.facet_max_len * 4);
+      if (value) searchParams[key] = value;
+    }
+    let searchAnswer = null;
+    if (Object.keys(searchParams).length) {
+      searchAnswer = await executeHybridSearch(db, infraAllowed, { ...searchParams, limit: 12 }, publicUrl);
+      if (searchAnswer.forbidden) searchAnswer = { results: [], total_matches: 0 };
+    }
+    if (url.searchParams.get("fragment") === "results") {
+      return sendHtml(renderSearchResultsHtml(searchAnswer));
+    }
     const includeDiagnostics = url.searchParams.get("include_diagnostics") === "1";
     const dashData = await buildDashboardSnapshot(db, env, infraAllowed, { includeDiagnostics });
     if (wantsJson && url.searchParams.get("format") === "json") {
       return sendJson(dashData);
     }
-    return sendHtml(renderDashboardHtml(publicUrl, dashData));
+    return sendHtml(renderDashboardHtml(publicUrl, dashData, searchAnswer ? { params: searchParams, answer: searchAnswer } : null));
   }
 
   if (action === "permalink_c" || action === "c") {

@@ -7,7 +7,9 @@ that breaks a rule stops here instead of going live. The rules, in order:
 2. Every commit in deploy/cloudflare/release-policy.json `required_ancestors` (the commit that is live now, and the
    Muse-first release) is contained in HEAD, so a deploy can never build from a branch that lacks it.
 3. The page assets' versions in herma/page_shell.json match the files in herma/static/assets.
-4. The banned-word gate (scripts/release_gate.mjs) passes on every served page, public JSON and text file, and on pages
+4. The git-ignored module the display filter imports was built from the ONE shared banned-word list (outside this repository,
+   MUST-FOLLOW rule 16), not from the made-up test list, and is current.
+5. The banned-word gate (scripts/release_gate.mjs) passes that list on every served page, public JSON and text file, and on pages
    rendered from worker-written text that breaks every rule on purpose.
 
 `make light-check` (rule 13, both colour schemes, no dark panel) runs right after this script in the build command.
@@ -19,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -29,8 +32,18 @@ POLICY = ROOT / "deploy/cloudflare/release-policy.json"
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
+# A release always uses the real shared list: the paths that the tests override are dropped for every step.
+OVERRIDES = ("BANNED_WORDS_LIST", "BANNED_NEUTRAL_NAMES")
+
+
+def release_environment() -> dict[str, str]:
+    return {key: value for key, value in os.environ.items() if key not in OVERRIDES}
+
+
 def run(root: Path, *command: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, cwd=root, capture_output=True, text=True, check=False)
+    return subprocess.run(
+        command, cwd=root, capture_output=True, text=True, check=False, env=release_environment()
+    )
 
 
 def check_clean(root: Path) -> list[str]:
@@ -69,6 +82,17 @@ def check_assets(root: Path) -> list[str]:
     )
 
 
+def check_word_list(root: Path) -> list[str]:
+    result = run(root, "node", "scripts/banned_list.mjs", "--check")
+    if result.returncode == 0:
+        return []
+    return [
+        line.strip()
+        for line in (result.stderr or result.stdout).strip().splitlines()
+        if line.strip()
+    ] or ["the word-list module does not match the shared banned-word list"]
+
+
 def check_gate(root: Path) -> list[str]:
     result = run(root, "node", "--no-warnings", "scripts/release_gate.mjs")
     if result.returncode == 0:
@@ -96,6 +120,7 @@ def main() -> int:
         ("clean working tree", lambda: check_clean(ROOT)),
         ("required ancestors", lambda: check_ancestors(ROOT, policy)),
         ("page asset versions", lambda: check_assets(ROOT)),
+        ("shared banned-word list", lambda: check_word_list(ROOT)),
         ("banned-word gate", lambda: check_gate(ROOT)),
     ):
         problems = check()

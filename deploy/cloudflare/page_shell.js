@@ -6,6 +6,8 @@
 // that Cloudflare serves before the Worker runs (herma/static/assets). Pages never carry inline styles or scripts.
 
 import SHELL from "../../herma/page_shell.json" with { type: "json" };
+import BANNED from "./banned_words.generated.js";
+import { sha256Hex } from "./sha256_sync.js";
 
 export const PAGE_SHELL = SHELL;
 
@@ -120,47 +122,66 @@ ${page}
 // Plain-language helpers
 // ---------------------------------------------------------------------------------------------------------------
 
-// Worker-written text is tidied before a page shows it. The rules are data, so the dashboard script applies exactly the
-// same ones in the browser (renderDashboardJs embeds TIDY_RULES). Words the pages never show are written in pieces, so
-// this file never contains them itself.
-export const TIDY_RULES = [
-  { re: ["\\b[a-z][a-z0-9]*(?:_[a-z0-9]+)*_[0-9a-f]{8,}\\b"], flags: "gi", to: "\u2026" },
-  { re: ["(?<![0-9a-f])[0-9a-f]{12,}(?![0-9a-f])"], flags: "gi", to: "\u2026" },
-  { re: ["\\bl", "lama[\\w.\\-]*(?:\\s+\\d+(?:\\.\\d+)*[\\w\\-]*)?"], flags: "gi", to: "an older model" },
-  { re: ["\\bsyn", "thetic\\b"], flags: "gi", to: "example" },
-  { re: ["\\bnano\\s?", "muse\\b"], flags: "gi", to: "an agent app" },
-  { re: ["\\bmuse\\s+", "code\\b"], flags: "gi", to: "an agent app" },
-  { re: ["\\bnouns\\b"], flags: "gi", to: "Task Objects" },
-  { re: ["\\bnoun\\b"], flags: "gi", to: "Task Object" },
-  { re: ["\\bverbs\\b"], flags: "gi", to: "Tasks" },
-  { re: ["\\bverb\\b"], flags: "gi", to: "Task" },
-  { re: ["\\breceipts\\b"], flags: "gi", to: "records" },
-  { re: ["\\breceipt\\b"], flags: "gi", to: "record" },
-  { re: ["\\bsha-?256\\b"], flags: "gi", to: "checksum" },
-  { re: ["\\u2014"], flags: "g", to: "--" },
-  // Tidy up what the dropped ids leave behind: empty or unfinished brackets, runs of dots, extra spaces.
-  { re: ["\\(\\s*(?:\u2026[,;\\s]*)+\\)"], flags: "g", to: "" },
-  { re: ["\\s*\\(\\s*(?:\u2026[,;\\s]*)+$"], flags: "g", to: "" },
-  { re: ["(?:\u2026[,;]?\\s*){2,}"], flags: "g", to: "\u2026 " },
-  { re: ["\\s+"], flags: "g", to: " " },
+// Worker-written text is filtered before a page shows it (MUST-FOLLOW rule 16). The banned words come from the ONE shared
+// list (notes/coordination-2026-10-31/rules/banned-words.json). It is read when the Worker is built and written into the
+// git-ignored module banned_words.generated.js, so this file never spells a banned word, and the module stays on the
+// server: no script a browser receives carries these rules. Only the page changes; stored records keep their words.
+const ELLIPSIS = "\u2026";
+
+// Rules that are not about words: long ids and hashes are dropped, then the brackets and spaces they leave are tidied.
+const ID_RULES = [
+  { re: /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)*_[0-9a-f]{8,}\b/gi, to: ELLIPSIS },
+  { re: /(?<![0-9a-f])[0-9a-f]{12,}(?![0-9a-f])/gi, to: ELLIPSIS },
 ];
-const COMPILED_RULES = TIDY_RULES.map((rule) => ({ re: new RegExp(rule.re.join(""), rule.flags), to: rule.to }));
+const CLEANUP_RULES = [
+  { re: /\u2014/g, to: "--" },
+  { re: /\(\s*(?:\u2026[,;\s]*)+\)/g, to: "" },
+  { re: /\s*\(\s*(?:\u2026[,;\s]*)+$/g, to: "" },
+  { re: /(?:\u2026[,;]?\s*){2,}/g, to: `${ELLIPSIS} ` },
+  { re: /\s+/g, to: " " },
+];
+const MAX_REMEMBERED_WORDS = 5000;
 
 /**
- * Text that workers wrote (titles, summaries, labels), made fit to show: long ids and hashes are dropped, the old
- * vocabulary becomes "Task" and "Task Object", receipts become records, and nothing is longer than `max` characters.
- * Only the page changes; the record behind each "Record" link keeps the original words.
+ * A display filter for one banned-word configuration, { displayRules: [{ re, flags, to }], privateSha256: [hash] }.
+ * `to` is a replacement string, or an object that maps the lowercase matched word to its replacement. Private names are
+ * kept only as sha256 hashes, so each word is hashed and a match becomes an ellipsis.
  */
-export function tidyText(value, max = 240) {
-  let text = String(value ?? "");
-  for (const rule of COMPILED_RULES) text = text.replace(rule.re, rule.to);
-  text = text.trim();
-  if (max && text.length > max) {
-    const cut = text.slice(0, max);
-    text = `${cut.slice(0, Math.max(cut.lastIndexOf(" "), Math.floor(max * 0.6))).trimEnd()}\u2026`;
-  }
-  return text;
+export function buildTidy(config) {
+  const rules = (config.displayRules || []).map((rule) => {
+    const flags = rule.flags.includes("g") ? rule.flags : `${rule.flags}g`;
+    const to = typeof rule.to === "string" ? rule.to : (match) => rule.to[match.toLowerCase()] ?? ELLIPSIS;
+    return { re: new RegExp(rule.re, flags), to };
+  });
+  const hashes = new Set((config.privateSha256 || []).map((hash) => String(hash).toLowerCase()));
+  const remembered = new Map();
+  const isPrivateName = (word) => {
+    if (!remembered.has(word)) {
+      if (remembered.size >= MAX_REMEMBERED_WORDS) remembered.clear();
+      remembered.set(word, hashes.has(sha256Hex(word)));
+    }
+    return remembered.get(word);
+  };
+  return function tidy(value, max = 240) {
+    let text = String(value ?? "");
+    for (const rule of ID_RULES) text = text.replace(rule.re, rule.to);
+    for (const rule of rules) text = text.replace(rule.re, rule.to);
+    if (hashes.size) text = text.replace(/[A-Za-z0-9]+/g, (word) => (isPrivateName(word.toLowerCase()) ? ELLIPSIS : word));
+    for (const rule of CLEANUP_RULES) text = text.replace(rule.re, rule.to);
+    text = text.trim();
+    if (max && text.length > max) {
+      const cut = text.slice(0, max);
+      text = `${cut.slice(0, Math.max(cut.lastIndexOf(" "), Math.floor(max * 0.6))).trimEnd()}${ELLIPSIS}`;
+    }
+    return text;
+  };
 }
+
+/**
+ * Text that workers wrote (titles, summaries, labels), made fit to show: long ids and hashes are dropped, every word on
+ * the shared banned-word list is replaced by its plain description, and nothing is longer than `max` characters.
+ */
+export const tidyText = buildTidy(BANNED);
 
 /** `runs_on_small_4gb_laptop` becomes "Runs on small 4gb laptop". */
 export function humanize(id) {

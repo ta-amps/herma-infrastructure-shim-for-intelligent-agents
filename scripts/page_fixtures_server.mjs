@@ -8,6 +8,10 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { ensureGenerated } from "./banned_list.mjs";
+
+// The page modules import the git-ignored word-list module. Make sure it exists; with no shared list on this machine the made-up one stands in.
+ensureGenerated({ fixtureOk: true });
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURES = path.join(ROOT, "tests/fixtures/pages");
@@ -87,11 +91,11 @@ export async function renderSite() {
   for (const [route, make] of Object.entries(pages)) rendered[route] = make();
   const renderedScripts = {};
   for (const [route, make] of Object.entries(scripts)) renderedScripts[route] = make();
-  return { pages: rendered, scripts: renderedScripts, makers: { pages, scripts }, dashboard };
+  return { pages: rendered, scripts: renderedScripts, makers: { pages, scripts }, dashboard, dash };
 }
 
 export async function start(port = 7788) {
-  const { makers, dashboard } = await renderSite();
+  const { makers, dashboard, dash } = await renderSite();
   const pages = makers.pages;
   const scripts = makers.scripts;
   const server = http.createServer((req, res) => {
@@ -104,9 +108,14 @@ export async function start(port = 7788) {
       }
       return send(404, "text/plain", "missing asset");
     }
-    if (url.pathname === "/q/search") {
+    // The Worker runs the search on the server and renders the results there: /dashboard?q=...&fragment=results returns just the
+    // results, /dashboard?q=... the whole page with them in place.
+    if (url.pathname === "/dashboard" && (url.searchParams.get("q") || url.searchParams.get("fragment"))) {
       const results = dashboard.recent_objects.slice(0, 5).map((o, i) => ({ id: o.object_key, artifact_kind: i % 2 ? "task_object" : "task", title: o.object_key, summary: o.summary, opt_goal: o.opt_goal, prog_lang: o.prog_lang, deliverable_kind: o.deliverable_kind }));
-      return send(200, "application/json", JSON.stringify({ total_matches: 31, results }));
+      const answer = url.searchParams.get("q") ? { total_matches: 31, results } : null;
+      if (url.searchParams.get("fragment") === "results") return send(200, "text/html; charset=utf-8", dash.renderSearchResultsHtml(answer));
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": PAGE_CSP });
+      return res.end(dash.renderDashboardHtml(BASE, dashboard, { params: { q: url.searchParams.get("q") }, answer }));
     }
     const script = scripts[url.pathname];
     if (script) return send(200, `${MIME[path.extname(url.pathname)] || "text/javascript"}; charset=utf-8`, script());

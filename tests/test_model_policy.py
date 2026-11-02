@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from banned_support import shared_words, shared_words_or_none
 from fastapi.testclient import TestClient
 from test_herma import REPO_ROOT, _run_worker_node_script
 
@@ -33,11 +34,7 @@ from herma.model_catalog import (
 from herma.proxy import DEFAULT_UPSTREAMS
 from herma.store import ProvisionStore
 
-# Built from pieces so this file never contains the retired name itself. The pattern also catches the
-# hosted runtime that carries the name inside its own.
-RETIRED = re.compile("l" + "lama", re.IGNORECASE)
-# The owner also bans this word in anything people or agents read.
-BANNED_WORD = re.compile("syn" + "thetic", re.IGNORECASE)
+# The banned words come from the ONE shared list, read from outside this repository (rule 16); none is spelled here.
 PROSE_PRIMITIVES = re.compile(r"\b(?:noun|verb)s?\b", re.IGNORECASE)
 
 # Ids that `GET https://api.meta.ai/v1/models` lists today. Only the tuned Glimmer is outside it.
@@ -332,16 +329,16 @@ def test_models_section_and_text_are_identical_in_both_runtimes(
     )
 
 
-def test_served_pages_and_public_json_name_no_retired_family_or_banned_word(
+def test_served_pages_and_public_json_pass_the_shared_banned_word_list(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    words = shared_words()
     surfaces = {"python": python_surface(tmp_path, monkeypatch), "worker": worker_surface()}
     offenders = [
-        f"{runtime} {route}: {match.group(0)!r}"
+        f"{runtime} {route}: {hit}"
         for runtime, served in surfaces.items()
         for route, body in served.items()
-        for pattern in (RETIRED, BANNED_WORD)
-        for match in pattern.finditer(body)
+        for hit in words.always_hits(body)
     ]
     assert offenders == []
     for runtime, served in surfaces.items():
@@ -379,7 +376,8 @@ def test_visible_text_says_tasks_and_task_objects(
         assert "Task Objects" in visible_prose(served["/"])
 
 
-def test_repository_names_neither_the_retired_family_nor_the_banned_word() -> None:
+def test_repository_holds_no_word_that_is_banned_everywhere() -> None:
+    words = shared_words()
     offenders: list[str] = []
     scanned = 0
     for path in repo_text_files():
@@ -388,9 +386,8 @@ def test_repository_names_neither_the_retired_family_nor_the_banned_word() -> No
         except (UnicodeDecodeError, OSError):
             continue
         scanned += 1
-        for number, line in enumerate(text.splitlines(), start=1):
-            if RETIRED.search(line) or BANNED_WORD.search(line):
-                offenders.append(f"{path.relative_to(REPO_ROOT).as_posix()}:{number}")
+        if words.always_hits(text):
+            offenders.append(path.relative_to(REPO_ROOT).as_posix())
     assert scanned > 100
     assert offenders == []
     wrangler = (REPO_ROOT / "deploy/cloudflare/wrangler.jsonc").read_text(encoding="utf-8")
@@ -416,7 +413,9 @@ def test_category_guidance_respells_the_banned_word_for_both_runtimes() -> None:
     data = json.loads(
         (REPO_ROOT / "deploy/cloudflare/conversation_data.json").read_text(encoding="utf-8")
     )
-    assert not BANNED_WORD.search(json.dumps(data["categories"]))
+    words = shared_words_or_none()
+    if words is not None:
+        assert words.always_hits(json.dumps(data["categories"])) == []
 
 
 def test_agent_apps_are_named_nowhere_in_the_repository() -> None:

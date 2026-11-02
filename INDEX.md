@@ -31,7 +31,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) |  |
 
-## deploy/ (31)
+## deploy/ (32)
 
 | File | What it is |
 |---|---|
@@ -57,6 +57,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/provider_diagnostics.js](deploy/cloudflare/provider_diagnostics.js) | Fixed provider-reported categories only. |
 | [deploy/cloudflare/provider_health.js](deploy/cloudflare/provider_health.js) | Deterministic shared availability inside the existing operator allowance coordinator. |
 | [deploy/cloudflare/release-policy.json](deploy/cloudflare/release-policy.json) | JSON object: schema, note, required_ancestors, live_when_recorded, rules |
+| [deploy/cloudflare/sha256_sync.js](deploy/cloudflare/sha256_sync.js) | A small synchronous SHA-256 for the Worker's display filter. |
 | [deploy/cloudflare/taxonomy_affinity_and_proactive_feedback.js](deploy/cloudflare/taxonomy_affinity_and_proactive_feedback.js) | Herma v6.10 Deterministic Taxonomy Auto-Describer, Preferred-Worker / Setup Affinity, |
 | [deploy/cloudflare/thick_path_and_schema_coach.js](deploy/cloudflare/thick_path_and_schema_coach.js) | Herma v6.8 Thick-Path Plateau Grid Telemetry, Proactive Open-World Schema Coach (/q/schema, /q/schema/validat… |
 | [deploy/cloudflare/worker.js](deploy/cloudflare/worker.js) |  |
@@ -146,10 +147,11 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [herma/triggers/micromodel.py](herma/triggers/micromodel.py) | Tier-3 micromodel router trigger: fast tiny/cloud classifier with deterministic offline fallback. |
 | [herma/triggers/semantic.py](herma/triggers/semantic.py) | Tier-2 semantic similarity trigger (~1-5 ms): hybrid concept + subword cosine + optional embeddings. |
 
-## scripts/ (10)
+## scripts/ (11)
 
 | File | What it is |
 |---|---|
+| [scripts/banned_list.mjs](scripts/banned_list.mjs) | Reads the ONE shared banned-word list (MUST-FOLLOW rule 16) from OUTSIDE this repository and turns it into th… |
 | [scripts/build_conversation_data.py](scripts/build_conversation_data.py) | Export canonical category guidance and the prompt for the Worker, without model calls. |
 | [scripts/build_index.py](scripts/build_index.py) | Build this repo's indexes from its own files. |
 | [scripts/build_page_assets.py](scripts/build_page_assets.py) | Keep the shared page shell's asset versions equal to the files in herma/static/assets. |
@@ -159,12 +161,13 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/light_check.mjs](scripts/light_check.mjs) | The light check (owner rule 13: light only, everywhere). |
 | [scripts/page_fixtures_server.mjs](scripts/page_fixtures_server.mjs) | Serves every public Herma page from small fixtures, with the real static assets, so a browser can check the l… |
 | [scripts/page_interactions.mjs](scripts/page_interactions.mjs) | Clicks through the interactive parts of the redesigned pages (fixture server, the Worker's real page policy)… |
-| [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release: what Herma serves must not name the retired model family, the banned word… |
+| [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
 
-## test/ (11)
+## test/ (12)
 
 | File | What it is |
 |---|---|
+| [test/banned_words_filter.test.js](test/banned_words_filter.test.js) |  |
 | [test/bilateral_bridge.test.js](test/bilateral_bridge.test.js) |  |
 | [test/conversation.test.js](test/conversation.test.js) |  |
 | [test/herma_v63_boundaries_and_chat.test.js](test/herma_v63_boundaries_and_chat.test.js) |  |
@@ -177,12 +180,15 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/triggers.test.js](test/triggers.test.js) |  |
 | [test/worker_reputation_and_proposals.test.js](test/worker_reputation_and_proposals.test.js) |  |
 
-## tests/ (30)
+## tests/ (33)
 
 | File | What it is |
 |---|---|
+| [tests/banned_support.py](tests/banned_support.py) | The ONE shared banned-word list, read from outside this repository for tests (MUST-FOLLOW rule 16). |
 | [tests/conftest.py](tests/conftest.py) | Example operator grants for managed conversation tests; no provider is ever contacted. |
 | [tests/fixtures/footer.v1.json](tests/fixtures/footer.v1.json) | JSON object: schema, version, updated, rule, links, external_mark |
+| [tests/fixtures/made-up-banned-words.json](tests/fixtures/made-up-banned-words.json) | JSON object: kind, id, version, updated, purpose, case_insensitive |
+| [tests/fixtures/made-up-neutral-names.json](tests/fixtures/made-up-neutral-names.json) | JSON object: note, rules, samples |
 | [tests/fixtures/pages/contribution_kit.json](tests/fixtures/pages/contribution_kit.json) | JSON object: ok, lookup_id, task, objects, child_verbs, evaluations |
 | [tests/fixtures/pages/dashboard.json](tests/fixtures/pages/dashboard.json) | JSON object: ok, schema, registered_workers, distinct_contributor_agents, total_evaluations, indexed_sidecar_docs |
 | [tests/fixtures/pages/demo_object.json](tests/fixtures/pages/demo_object.json) | JSON object: ok, schema, object_key, requested_key, version_num, version_count |

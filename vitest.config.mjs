@@ -1,5 +1,10 @@
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
+import { ensureGenerated } from "./scripts/banned_list.mjs";
+
+// The page modules import a git-ignored module built from the shared banned-word list (rule 16). Make sure it exists; with no list on
+// this machine the made-up one stands in, which is fine for unit tests (the release gate and the deploy hook refuse it).
+ensureGenerated({ fixtureOk: true });
 
 // Exact operator grants for example callers drawn from a fixed pool by each test file.
 const choices = [

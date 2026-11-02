@@ -3,7 +3,7 @@
 SHELL := /bin/bash
 API_PORT ?= 7730
 
-.PHONY: help setup check lint types test public index index-check architecture demo serve gate light-check page-check release-guard
+.PHONY: help setup check lint types test public index index-check architecture demo serve words gate light-check page-check release-guard
 
 help: ## List the targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -47,6 +47,9 @@ serve: ## Seed example provisions and serve the Herma middleware on :7730
 
 architecture: ## architecture.json must match the code: paths, tests, layering rules
 	python3 scripts/check_architecture.py . --summary
+
+words: ## Rebuild the git-ignored word-list module from the ONE shared banned-word list (outside this repo; rule 16)
+	node scripts/banned_list.mjs
 
 gate: ## Banned-word gate: every served page, public JSON and text file, and dirty worker text rendered at display time
 	node --no-warnings scripts/release_gate.mjs

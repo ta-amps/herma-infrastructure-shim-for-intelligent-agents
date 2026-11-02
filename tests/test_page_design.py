@@ -5,7 +5,8 @@ Everything the pages share lives in `herma/page_shell.json`, `herma/static/asset
 equal and check every page, rendered from small fixtures, against the rules. The browser half of the light rule is
 `scripts/light_check.mjs` (`make light-check`); one test here proves that script really fails on dark pages.
 
-Banned words are written in pieces, so this file never contains them itself.
+The banned words come from the ONE shared list, read from outside this repository (rule 16); this file spells none. The
+mechanics are tested on the made-up list in tests/fixtures; the real list is exercised by the release gate (`make gate`).
 """
 
 from __future__ import annotations
@@ -28,8 +29,8 @@ from herma.api.pages import render_connect_page, render_overview_page
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CSS_PATH = REPO_ROOT / "herma/static/assets/herma-pages.css"
-RETIRED = "l" + "lama"
-BANNED_WORD = "syn" + "thetic"
+MADE_UP_LIST = REPO_ROOT / "tests/fixtures/made-up-banned-words.json"
+MADE_UP_NEUTRAL = REPO_ROOT / "tests/fixtures/made-up-neutral-names.json"
 AGENT_APPS = ("nano" + "muse", "muse" + " code")
 STAMPS = ("PLANNED", "Not yet", "Layout preview", "COMING SOON", "Not ready yet")
 NAV_LABELS = ["Overview", "Connect", "Starter kit", "Prompts", "Dashboard"]
@@ -271,52 +272,69 @@ def test_pages_name_the_model_and_link_the_record_instead_of_hashes(
     assert "Links: your contribution" in prompts and "never print hashes" in prompts
 
 
-def test_worker_written_text_is_tidied_but_the_original_stays_in_the_record() -> None:
+def test_worker_written_text_is_filtered_by_the_list_and_the_original_stays_in_the_record() -> None:
+    """The display filter's mechanics, on the made-up list: replacements, order, ellipsis fallback, private names by hash."""
     corpus = [
         "Audit (verb_evl_f550d8794064, verb_own_b4e012efd371, verb_own_564830af3d51",
         "See w_musehermawor_8ffbf268 and 969951471abf3c now",
-        "Receipt SHA-256 of the nouns and verbs of a "
-        + BANNED_WORD
-        + " run with "
-        + RETIRED.title()
-        + " 3.2",
-        "muse-herma-worker_obj_1793540120302_0 built in "
-        + AGENT_APPS[0].title()
-        + " and "
-        + AGENT_APPS[1].title(),
+        "A zorptest run of plorps and a Plorp with a quux-256 sum",
+        "Served by glimbo cloud, then glimbo, with wumpusapp",
+        "A snarfling pass by Fnorbleton, not Fnorbletons",
+        "Whim",
+        "A whim",
         "one" + chr(0x2014) + "two",
         "x" * 400,
     ]
     out = json.loads(
         run_node(
             f"""
-            import {{ tidyText, TIDY_RULES }} from "./deploy/cloudflare/page_shell.js";
-            import {{ renderDashboardJs }} from "./deploy/cloudflare/dashboard_and_permalinks.js";
-            const corpus = {json.dumps(corpus)};
-            const script = renderDashboardJs();
-            const start = script.indexOf("function tidy(value, max) {{");
-            const end = script.indexOf("function humanize", start);
-            const RULES = TIDY_RULES;
-            const client = new Function("RULES", script.slice(start, end) + "; return tidy;")(RULES);
-            console.log(JSON.stringify({{
-              server: corpus.map((c) => tidyText(c, 120)),
-              client: corpus.map((c) => client(c, 120)),
-              embedded: script.includes(JSON.stringify(TIDY_RULES)),
-            }}));
+            import {{ readList, displayRules, groups }} from "./scripts/banned_list.mjs";
+            import {{ buildTidy }} from "./deploy/cloudflare/page_shell.js";
+            process.env.BANNED_WORDS_LIST = {json.dumps(str(MADE_UP_LIST))};
+            process.env.BANNED_NEUTRAL_NAMES = {json.dumps(str(MADE_UP_NEUTRAL))};
+            const {{ list, neutral }} = readList();
+            const tidy = buildTidy({{ displayRules: displayRules(list, neutral), privateSha256: groups(list).privateSha256 }});
+            console.log(JSON.stringify({json.dumps(corpus)}.map((c) => tidy(c, 120))));
             """
         )
     )
-    assert out["embedded"], "the browser script embeds the very same rules the server uses"
-    assert out["server"] == out["client"], "the browser and the server tidy text the same way"
-    first, second, third, fourth, dashed, fifth = out["server"]
-    assert first == "Audit"
-    assert second == "See … and … now"
-    for banned in (RETIRED, BANNED_WORD, "receipt", "sha", "nouns", "verbs"):
-        assert banned not in third.lower()
-    assert "Task Objects and Tasks" in third and "an older model" in third and "example" in third
-    assert "_…_" in fourth and "an agent app" in fourth and AGENT_APPS[0] not in fourth.lower()
-    assert dashed == "one--two"
-    assert len(fifth) <= 121
+    assert out[:8] == [
+        "Audit",
+        "See \u2026 and \u2026 now",
+        "A example run of Widgets and a Widget with a checksum sum",
+        "Served by a hosted thing, then a thing, with an agent app",
+        "A \u2026 pass by \u2026, not Fnorbletons",
+        "Note",
+        "A whim",
+        "one--two",
+    ]
+    assert len(out[8]) <= 121
+
+
+def test_no_script_a_browser_receives_carries_the_word_rules() -> None:
+    """The rules and the private-name hashes stay on the server: no script, page or static asset holds them."""
+    offenders = json.loads(
+        run_node(
+            """
+            import fs from "node:fs";
+            import BANNED from "./deploy/cloudflare/banned_words.generated.js";
+            import { renderSite } from "./scripts/page_fixtures_server.mjs";
+            import { renderDashboardJs } from "./deploy/cloudflare/dashboard_and_permalinks.js";
+            const site = await renderSite();
+            const served = { ...site.scripts, ...site.pages, "dashboard.js": renderDashboardJs() };
+            for (const f of fs.readdirSync("herma/static/assets")) {
+              if (/\\.(js|css|html|json)$/.test(f)) served["assets/" + f] = fs.readFileSync("herma/static/assets/" + f, "utf8");
+            }
+            const needles = [...BANNED.displayRules.map((r) => r.re), ...BANNED.privateSha256, "displayRules", "privateSha256", "TIDY_RULES"];
+            const offenders = [];
+            for (const [name, text] of Object.entries(served)) {
+              needles.forEach((needle, i) => { if (needle && String(text).includes(needle)) offenders.push(name + " holds rule " + i); });
+            }
+            console.log(JSON.stringify(offenders));
+            """
+        )
+    )
+    assert offenders == []
 
 
 # ---------------------------------------------------------------------------------------------------------------

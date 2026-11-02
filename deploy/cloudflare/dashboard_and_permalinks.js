@@ -1,13 +1,13 @@
 // The live dashboard (`/dashboard`, `/q/dashboard`), a contribution's page (`/c/<id>`) and a worker's page (`/w/<id>`),
-// plus the small script they share (`/q/dashboard.js`: search and copy buttons).
+// plus the small script they share (`/q/dashboard.js`: the search enhancement and the copy buttons).
 //
 // Style: Paper & Ink, light only, on the shared page shell (page_shell.js). Plain words: Tasks and Task Objects, no
 // receipts or hashes (each "Record" link opens the full JSON), no inline styles or scripts (the page's CSP forbids them).
-// Text that workers wrote goes through tidyText() first; the Record links keep the original words.
+// Text that workers wrote goes through tidyText() first, on the server (it applies the shared banned-word list, MUST-FOLLOW
+// rule 16); the Record links keep the original words. No word rule is ever sent to a browser: the search runs on the server too.
 
 import {
   MODELS_USED_LINK,
-  TIDY_RULES,
   documentHtml,
   escapeHtml,
   formatBytes,
@@ -55,8 +55,38 @@ const KIND_OPTIONS = [
 
 const href = (value) => escapeHtml(encodeURIComponent(String(value ?? "")));
 const tag = (text, kind = "") => `<span class="tag${kind ? ` tag-${kind}` : ""}">${escapeHtml(text)}</span>`;
-const options = (list, any) =>
-  [`<option value="">${escapeHtml(any)}</option>`, ...list.map(([v, label]) => `<option value="${escapeHtml(v)}">${escapeHtml(label)}</option>`)].join("");
+const options = (list, any, chosen = "") =>
+  [
+    `<option value="">${escapeHtml(any)}</option>`,
+    ...list.map(([v, label]) => `<option value="${escapeHtml(v)}"${v === chosen ? " selected" : ""}>${escapeHtml(label)}</option>`),
+  ].join("");
+
+/**
+ * The search results as a page fragment. The server renders them, so worker-written titles and summaries pass through
+ * tidyText (the shared banned-word list) before anyone sees them. `answer` is the search answer, or null when nothing was asked.
+ */
+export function renderSearchResultsHtml(answer) {
+  if (!answer) return `<p class="status-line">Type a few words, or pick a goal, a language or a kind.</p>`;
+  const rows = Array.isArray(answer.results) ? answer.results : [];
+  if (!rows.length) return `<p class="status-line">Nothing matched. Try fewer words or clear a filter.</p>`;
+  const body = rows
+    .map((item) => {
+      const isObject = String(item.artifact_kind || "").includes("object");
+      const link = `/c/${href(item.id)}`;
+      const labels = [item.opt_goal, item.prog_lang, item.deliverable_kind].filter(Boolean).map((v) => tag(tidyText(humanize(v), 60)));
+      return `<tr>
+<td><a href="${link}"><strong>${escapeHtml(tidyText(item.title, 120) || "Untitled")}</strong></a><span class="cell-sub">${escapeHtml(tidyText(item.summary, 220))}</span></td>
+<td><div class="tags">${tag(isObject ? "Task Object" : "Task", isObject ? "object" : "task")}${labels.join("")}</div></td>
+<td><a href="${link}">Open</a></td>
+</tr>`;
+    })
+    .join("\n");
+  const found = Number(answer.total_matches ?? rows.length);
+  return `<p class="status-line ok">${found} found. Showing ${rows.length}.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Search results, scrollable table"><table class="data"><thead><tr><th scope="col">Result</th><th scope="col">What it is</th><th scope="col">Look</th></tr></thead><tbody>
+${body}
+</tbody></table></div>`;
+}
 
 // Facet labels for a row. A label that is already shown (a category and a kind often say the same thing) is not repeated.
 function facetTags(row, shown = []) {
@@ -181,7 +211,9 @@ ${rows}
 </div>`;
 }
 
-export function renderDashboardHtml(publicUrl, data) {
+export function renderDashboardHtml(publicUrl, data, search = null) {
+  // `search` is { params: the filters asked for, answer: the search answer }, or null when the page was opened without a search.
+  const asked = search?.params || {};
   const ngo = data.queue_counts_by_tier?.ngo_priority || { ready: 0, leased: 0, done: 0 };
   const shared = data.queue_counts_by_tier?.public_general || { ready: 0, leased: 0, done: 0 };
   const workers = data.workers || [];
@@ -210,15 +242,15 @@ export function renderDashboardHtml(publicUrl, data) {
 <section class="section" aria-labelledby="search-h">
 <h2 id="search-h">Search the shared work</h2>
 <p class="hint">Type a few words, or pick a goal, a language or a kind. Typos are fine.</p>
-<form class="panel stack" id="search-form" action="/q/search" method="get" role="search">
+<form class="panel stack" id="search-form" action="/dashboard#search-h" method="get" role="search">
 <div class="search-grid">
-<div class="field"><label for="q-input">Search</label><input id="q-input" name="q" type="search" placeholder="Shelter intake, a 4 GB laptop, a demo video"></div>
-<div class="field"><label for="q-goal">Goal</label><select id="q-goal" name="opt_goal">${options(GOAL_OPTIONS, "Any goal")}</select></div>
-<div class="field"><label for="q-lang">Language</label><select id="q-lang" name="prog_lang">${options(LANGUAGE_OPTIONS, "Any language")}</select></div>
-<div class="field"><label for="q-kind">What it is</label><select id="q-kind" name="deliverable_kind">${options(KIND_OPTIONS, "Anything")}</select></div>
+<div class="field"><label for="q-input">Search</label><input id="q-input" name="q" type="search" value="${escapeHtml(asked.q || "")}" placeholder="Shelter intake, a 4 GB laptop, a demo video"></div>
+<div class="field"><label for="q-goal">Goal</label><select id="q-goal" name="opt_goal">${options(GOAL_OPTIONS, "Any goal", asked.opt_goal)}</select></div>
+<div class="field"><label for="q-lang">Language</label><select id="q-lang" name="prog_lang">${options(LANGUAGE_OPTIONS, "Any language", asked.prog_lang)}</select></div>
+<div class="field"><label for="q-kind">What it is</label><select id="q-kind" name="deliverable_kind">${options(KIND_OPTIONS, "Anything", asked.deliverable_kind)}</select></div>
 <button type="submit" class="btn" id="btn-run-search">Search</button>
 </div>
-<div id="search-results-box" aria-live="polite" hidden></div>
+<div id="search-results-box" aria-live="polite"${search ? "" : " hidden"}>${search ? renderSearchResultsHtml(search.answer) : ""}</div>
 </form>
 </section>
 
@@ -497,101 +529,41 @@ ${taskRows}
   });
 }
 
-// The script every one of these pages loads: search on the dashboard, and the copy buttons. It builds the results with
-// DOM calls (never innerHTML), and tidies worker-written text with the same rules the server uses (TIDY_RULES).
+// The script every one of these pages loads: the search enhancement and the copy buttons. The server renders the search
+// results (/dashboard?q=...&fragment=results) so worker-written text passes through the shared word list there; this
+// script only swaps that finished fragment in. It carries no word rules and builds no text from search data.
 export function renderDashboardJs() {
   return `(function () {
   "use strict";
-  var RULES = ${JSON.stringify(TIDY_RULES)};
-
-  function tidy(value, max) {
-    var text = String(value == null ? "" : value);
-    for (var i = 0; i < RULES.length; i += 1) {
-      text = text.replace(new RegExp(RULES[i].re.join(""), RULES[i].flags), RULES[i].to);
-    }
-    text = text.replace(/(?:\\u2026[,;]?\\s*){2,}/g, "\\u2026 ").replace(/\\s+/g, " ").trim();
-    if (max && text.length > max) {
-      var cut = text.slice(0, max);
-      text = cut.slice(0, Math.max(cut.lastIndexOf(" "), Math.floor(max * 0.6))).replace(/\\s+$/, "") + "\\u2026";
-    }
-    return text;
-  }
-
-  function humanize(id) {
-    var words = String(id == null ? "" : id).replace(/[_\\-]+/g, " ").trim();
-    return words ? words.charAt(0).toUpperCase() + words.slice(1) : "";
-  }
-
-  function el(name, attrs, kids) {
-    var node = document.createElement(name);
-    var keys = Object.keys(attrs || {});
-    for (var i = 0; i < keys.length; i += 1) {
-      if (keys[i] === "text") node.textContent = attrs[keys[i]];
-      else node.setAttribute(keys[i], attrs[keys[i]]);
-    }
-    (kids || []).forEach(function (kid) { if (kid) node.appendChild(kid); });
-    return node;
-  }
-
   var form = document.getElementById("search-form");
-  var inpQ = document.getElementById("q-input");
-  var selGoal = document.getElementById("q-goal");
-  var selLang = document.getElementById("q-lang");
-  var selKind = document.getElementById("q-kind");
   var outBox = document.getElementById("search-results-box");
 
   function say(text) {
+    var line = document.createElement("p");
+    line.className = "status-line";
+    line.textContent = text;
     outBox.hidden = false;
-    outBox.replaceChildren(el("p", { "class": "status-line", text: text }));
+    outBox.replaceChildren(line);
   }
 
-  function showResults(doc) {
-    var rows = (doc && doc.results) || [];
-    if (!rows.length) {
-      say("Nothing matched. Try fewer words or clear a filter.");
-      return;
-    }
-    var body = el("tbody");
-    rows.forEach(function (item) {
-      var isObject = String(item.artifact_kind || "").indexOf("object") !== -1;
-      var tags = el("div", { "class": "tags" }, [el("span", { "class": "tag " + (isObject ? "tag-object" : "tag-task"), text: isObject ? "Task Object" : "Task" })]);
-      [item.opt_goal, item.prog_lang, item.deliverable_kind].forEach(function (v) {
-        if (v) tags.appendChild(el("span", { "class": "tag", text: tidy(humanize(v), 60) }));
-      });
-      var link = "/c/" + encodeURIComponent(item.id);
-      body.appendChild(el("tr", {}, [
-        el("td", {}, [
-          el("a", { href: link }, [el("strong", { text: tidy(item.title, 120) || "Untitled" })]),
-          el("span", { "class": "cell-sub", text: tidy(item.summary, 220) })
-        ]),
-        el("td", {}, [tags]),
-        el("td", {}, [el("a", { href: link, text: "Open" })])
-      ]));
-    });
-    var head = el("thead", {}, [el("tr", {}, [
-      el("th", { scope: "col", text: "Result" }), el("th", { scope: "col", text: "What it is" }), el("th", { scope: "col", text: "Look" })
-    ])]);
-    var table = el("table", { "class": "data" }, [head, body]);
+  function show(html) {
+    var doc = new DOMParser().parseFromString(html, "text/html");
     outBox.hidden = false;
-    outBox.replaceChildren(
-      el("p", { "class": "status-line ok", text: String(doc.total_matches == null ? rows.length : doc.total_matches) + " found. Showing " + rows.length + "." }),
-      el("div", { "class": "table-wrap", tabindex: "0", role: "region", "aria-label": "Search results, scrollable table" }, [table])
-    );
+    outBox.replaceChildren.apply(outBox, Array.prototype.slice.call(doc.body.childNodes));
   }
 
   function runSearch(event) {
-    if (event) event.preventDefault();
-    if (!outBox) return;
-    var params = new URLSearchParams();
-    if (inpQ && inpQ.value.trim()) params.set("q", inpQ.value.trim());
-    if (selGoal && selGoal.value) params.set("opt_goal", selGoal.value);
-    if (selLang && selLang.value) params.set("prog_lang", selLang.value);
-    if (selKind && selKind.value) params.set("deliverable_kind", selKind.value);
-    params.set("limit", "12");
+    if (!form || !outBox || typeof fetch !== "function" || typeof DOMParser !== "function") return;
+    event.preventDefault();
+    var params = new URLSearchParams(new FormData(form));
+    var empty = [];
+    params.forEach(function (value, key) { if (!String(value).trim()) empty.push(key); });
+    empty.forEach(function (key) { params.delete(key); });
+    params.set("fragment", "results");
     say("Searching...");
-    fetch("/q/search?" + params.toString(), { headers: { accept: "application/json" } })
-      .then(function (r) { return r.json(); })
-      .then(showResults)
+    fetch("/dashboard?" + params.toString(), { headers: { accept: "text/html" } })
+      .then(function (r) { if (!r.ok) throw new Error("status " + r.status); return r.text(); })
+      .then(show)
       .catch(function () { say("The search did not answer. Try again in a moment."); });
   }
 
