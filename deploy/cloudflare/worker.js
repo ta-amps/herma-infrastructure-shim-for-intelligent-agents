@@ -1534,6 +1534,11 @@ const application = {
       if (
         path === "/q" ||
         path.startsWith("/q/") ||
+        path === "/kits" ||
+        path.startsWith("/kits/") ||
+        path === "/kits.js" ||
+        path === "/experiments" ||
+        path === "/reprioritize" ||
         path === "/starter" ||
         path.startsWith("/starter/") ||
         path === "/help" ||

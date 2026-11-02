@@ -39,6 +39,8 @@ export const HELP_STARTER_GRID = Object.freeze({
   max_output_tokens_cap: 4096,
   llm_timeout_ms: 25000,
   max_llm_response_bytes: 524288,
+  default_paid_muse_daily_calls_cap: 50,
+  max_paid_muse_daily_calls_cap: 5000,
   help_meta_daily_microusd_cap: 1000000,
   default_meta_total_budget_usd: 5,
   microusd_per_usd: 1000000,
@@ -949,6 +951,13 @@ export async function runHelpAndMetaReasoningPipeline(
     HELP_STARTER_GRID.min_max_output_tokens,
     Math.min(HELP_STARTER_GRID.max_output_tokens_cap, Number.isFinite(rawMaxOut) ? rawMaxOut : HELP_STARTER_GRID.default_max_output_tokens)
   );
+  const paidMuseDailyCallsCap = Math.max(
+    1,
+    Math.min(
+      HELP_STARTER_GRID.max_paid_muse_daily_calls_cap,
+      Number(env?.HERMA_PAID_MUSE_CALLS_PER_DAY || HELP_STARTER_GRID.default_paid_muse_daily_calls_cap)
+    )
+  );
   const totalMetaBudgetUsd = Number(env?.HERMA_META_BUDGET_USD || HELP_STARTER_GRID.default_meta_total_budget_usd);
   const totalMetaBudgetMicrousd = Math.round(totalMetaBudgetUsd * HELP_STARTER_GRID.microusd_per_usd);
 
@@ -1050,7 +1059,7 @@ export async function runHelpAndMetaReasoningPipeline(
   } else {
     let budgetAllowed = true;
     if (provSpec.provider === "meta") {
-      const [daySpendRow, totalSpendRow] = await Promise.all([
+      const [daySpendRow, totalSpendRow, dayCallsRow] = await Promise.all([
         db
           .prepare(
             `SELECT COALESCE(SUM(estimated_microusd), 0) AS spend FROM herma_meta_call_log
@@ -1064,6 +1073,14 @@ export async function runHelpAndMetaReasoningPipeline(
              WHERE provider = 'meta'`
           )
           .first(),
+        db
+          .prepare(
+            `SELECT COUNT(*) AS cnt FROM herma_meta_call_log
+             WHERE provider = 'meta' AND created_at >= ?
+               AND outcome IN ('completed', 'rate_limited', 'upstream_error')`
+          )
+          .bind(`${utcDayPrefix}T00:00:00.000Z`)
+          .first(),
       ]);
       const estCeiling = estimateMetaMicrousd(
         candidateModel,
@@ -1072,13 +1089,15 @@ export async function runHelpAndMetaReasoningPipeline(
       );
       const daySpend = Number(daySpendRow?.spend || 0);
       const totalSpend = Number(totalSpendRow?.spend || 0);
+      const dayPaidMuseCalls = Number(dayCallsRow?.cnt || 0);
       if (
         totalSpend + estCeiling > totalMetaBudgetMicrousd ||
-        (!infraAllowed && daySpend + estCeiling > HELP_STARTER_GRID.help_meta_daily_microusd_cap)
+        (!infraAllowed && daySpend + estCeiling > HELP_STARTER_GRID.help_meta_daily_microusd_cap) ||
+        (!infraAllowed && dayPaidMuseCalls >= paidMuseDailyCallsCap)
       ) {
         budgetAllowed = false;
         outcome = "budget_capped";
-        errorCode = "meta_daily_or_total_budget_capped";
+        errorCode = dayPaidMuseCalls >= paidMuseDailyCallsCap ? "paid_muse_daily_calls_cap_reached" : "meta_daily_or_total_budget_capped";
       }
     }
 

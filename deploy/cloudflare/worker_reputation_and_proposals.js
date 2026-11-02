@@ -26,6 +26,9 @@ export const REPUTATION_AND_PROPOSAL_GRID = Object.freeze({
   publish_relay_subproblem_points: 2,
   unblock_bonus_per_prior_worker: 8,
   unblock_bonus_cap: 24,
+  indexer_dense_lsh_points: 4,
+  indexer_block_leaf_points: 4,
+  indexer_enrich_review_points: 4,
   milli_scale: 1000,
   gpu_multiplier_milli: 1500,
   high_bandwidth_multiplier_milli: 1250,
@@ -108,6 +111,21 @@ export const BADGE_CATALOG = Object.freeze({
     id: "marathoner",
     label: "Marathoner",
     rule: "Sustained 5 or more verified autonomous contribution cycles under a stable worker identity.",
+  },
+  vector_smith: {
+    id: "vector_smith",
+    label: "Vector Smith",
+    rule: "Submitted O(1)-verified client-side dense_embedding_int8 vectors (up to 1024-d Int8, $0.00 cloud spend).",
+  },
+  cartographer: {
+    id: "cartographer",
+    label: "Cartographer",
+    rule: "Submitted verified client-side Multi-Scale LSH hex signatures (lsh_small_64b / lsh_medium_256b / lsh_wide_1024b).",
+  },
+  leaf_cutter: {
+    id: "leaf_cutter",
+    label: "Leaf Cutter",
+    rule: "Submitted verified hierarchical search_blocks and search_leafs chunks for sub-document RAG retrieval.",
   },
 });
 
@@ -468,6 +486,7 @@ export async function recordVerifiedSubmissionCredAndProposals(db, ctx = {}) {
     appliedEvaluations = [],
     enqueuedVerbs = [],
     rawVerbs = [],
+    clientIndexSummaries = [],
     payload = {},
     salvagedConcurrentTwinAttempt = false,
     nowIso = new Date().toISOString(),
@@ -500,9 +519,20 @@ export async function recordVerifiedSubmissionCredAndProposals(db, ctx = {}) {
     multiplierMilli = REPUTATION_AND_PROPOSAL_GRID.high_bandwidth_multiplier_milli;
   }
 
-  const insertCredEvent = async (evKey, kind, basePts, unblockPts, priorFailed, evRef, objKey, detail) => {
+  const insertCredEvent = async (
+    evKey,
+    kind,
+    basePts,
+    unblockPts,
+    priorFailed,
+    evRef,
+    objKey,
+    detail,
+    { unscaled = false } = {}
+  ) => {
     if (!evRef) return 0;
-    const scaled = Math.round(((basePts + unblockPts) * multiplierMilli) / REPUTATION_AND_PROPOSAL_GRID.milli_scale);
+    const effMult = unscaled ? REPUTATION_AND_PROPOSAL_GRID.milli_scale : multiplierMilli;
+    const scaled = Math.round(((basePts + unblockPts) * effMult) / REPUTATION_AND_PROPOSAL_GRID.milli_scale);
     if (scaled <= 0) return 0;
     const res = await db
       .prepare(
@@ -520,7 +550,7 @@ export async function recordVerifiedSubmissionCredAndProposals(db, ctx = {}) {
         scaled,
         unblockPts,
         priorFailed,
-        multiplierMilli,
+        effMult,
         evRef,
         String(taskId || ""),
         String(objKey || ""),
@@ -730,7 +760,77 @@ export async function recordVerifiedSubmissionCredAndProposals(db, ctx = {}) {
     );
   }
 
-  // 5. Register clearly labeled `infra_proposal` / `retraining_request` / `pipeline_step_proposal` Task Objects
+  // 5. Zero-Cloud-Spend Client Distributed Indexing Cred (+4 dense+LSH, +4 block+leaf, +4 enrich/peer-review completion)
+  for (const ci of clientIndexSummaries) {
+    if (!ci || !ci.object_key) continue;
+    if (ci.has_verified_dense_and_lsh) {
+      await insertCredEvent(
+        `idx_dense_lsh:${ci.object_key}:${workerUuid}`,
+        "indexer_dense_lsh",
+        REPUTATION_AND_PROPOSAL_GRID.indexer_dense_lsh_points,
+        0,
+        0,
+        receiptHash,
+        ci.object_key,
+        {
+          embedding_dims: ci.embedding_dims,
+          has_verified_dense: true,
+          has_verified_lsh: true,
+        },
+        { unscaled: true }
+      );
+    }
+    if (ci.has_verified_blocks_and_leafs) {
+      await insertCredEvent(
+        `idx_block_leaf:${ci.object_key}:${workerUuid}`,
+        "indexer_block_leaf",
+        REPUTATION_AND_PROPOSAL_GRID.indexer_block_leaf_points,
+        0,
+        0,
+        receiptHash,
+        ci.object_key,
+        {
+          search_blocks_count: ci.search_blocks_count,
+          search_leafs_count: ci.search_leafs_count,
+        },
+        { unscaled: true }
+      );
+    }
+  }
+
+  const isIndexEnrichVerb = String(taskId || "").startsWith("verb_index_enrich_");
+  const isPeerReviewVerb = String(taskId || "").startsWith("verb_peer_review_");
+  if ((isIndexEnrichVerb || isPeerReviewVerb) && existingTask && !salvagedConcurrentTwinAttempt) {
+    const authorUuid = String(existingTask.producer_worker_uuid || "").trim();
+    const authorAgent = String(existingTask.producer_agent || "").trim().toLowerCase();
+    const isSelfAuthor =
+      (authorUuid && authorUuid === workerUuid) ||
+      (authorAgent && authorAgent === String(agentId || "").trim().toLowerCase());
+    const hasEnrichEvidence = isIndexEnrichVerb
+      ? clientIndexSummaries.some((ci) => ci && (ci.has_verified_dense || ci.has_verified_lsh || ci.has_verified_blocks_and_leafs))
+      : true;
+    if (!isSelfAuthor && hasEnrichEvidence) {
+      const targetKey = isIndexEnrichVerb
+        ? String(taskId).slice("verb_index_enrich_".length)
+        : String(taskId).slice("verb_peer_review_".length);
+      await insertCredEvent(
+        `idx_enrich_review:${taskId}:${workerUuid}`,
+        "indexer_enrich_review",
+        REPUTATION_AND_PROPOSAL_GRID.indexer_enrich_review_points,
+        0,
+        0,
+        receiptHash,
+        targetKey,
+        {
+          verb_type: isIndexEnrichVerb ? "verb_index_enrich" : "verb_peer_review",
+          reviewer_not_author_verified: true,
+        },
+        { unscaled: true }
+      );
+    }
+  }
+
+  // 6. Register clearly labeled `infra_proposal` / `retraining_request` / `pipeline_step_proposal` Task Objects
   const proposalsRegistered = [];
   for (let i = 0; i < storedObjects.length; i += 1) {
     const so = storedObjects[i];
@@ -812,6 +912,9 @@ export async function buildWorkerScoreAndBadges(db, workerUuid) {
   let relayPubCount = 0;
   let bridgeBuilderCount = 0;
   let heavyEventCount = 0;
+  let vectorSmithCount = 0;
+  let cartographerCount = 0;
+  let leafCutterCount = 0;
   let latestIpFingerprint = "";
 
   for (const ev of events) {
@@ -821,15 +924,39 @@ export async function buildWorkerScoreAndBadges(db, workerUuid) {
     if (ev.event_kind === "independent_verify" || ev.event_kind === "verify_caught_defect") verifyCount += 1;
     if (ev.event_kind === "defect_erratum_caught" || ev.event_kind === "verify_caught_defect") eagleEyeCount += 1;
     if (ev.event_kind === "publish_relay_subproblem") relayPubCount += 1;
+    if (ev.event_kind === "indexer_dense_lsh") {
+      vectorSmithCount += 1;
+      cartographerCount += 1;
+    }
+    if (ev.event_kind === "indexer_block_leaf") {
+      leafCutterCount += 1;
+    }
     if (Number(ev.multiplier_milli || 1000) > REPUTATION_AND_PROPOSAL_GRID.milli_scale) heavyEventCount += 1;
     if (!latestIpFingerprint && ev.ip_fingerprint) latestIpFingerprint = ev.ip_fingerprint;
     try {
       const det = JSON.parse(ev.detail_json || "{}");
       if (det.alternative_route_used) bridgeBuilderCount += 1;
+      if (det.has_verified_dense) vectorSmithCount += 1;
+      if (det.has_verified_lsh) cartographerCount += 1;
     } catch {
       // ignore
     }
   }
+
+  const clientIdxBadgeRow = await db
+    .prepare(
+      `SELECT COALESCE(MAX(has_verified_dense), 0) AS has_dense,
+              COALESCE(MAX(has_verified_lsh), 0) AS has_lsh,
+              COALESCE(MAX(has_verified_blocks_and_leafs), 0) AS has_bl
+       FROM herma_object_client_index
+       WHERE indexer_worker_uuid = ?`
+    )
+    .bind(String(workerUuid))
+    .first()
+    .catch(() => null);
+  if (Number(clientIdxBadgeRow?.has_dense || 0) > 0) vectorSmithCount += 1;
+  if (Number(clientIdxBadgeRow?.has_lsh || 0) > 0) cartographerCount += 1;
+  if (Number(clientIdxBadgeRow?.has_bl || 0) > 0) leafCutterCount += 1;
 
   const baselineHistoricalPoints =
     events.length > 0
@@ -866,6 +993,15 @@ export async function buildWorkerScoreAndBadges(db, workerUuid) {
   }
   if (regIters >= REPUTATION_AND_PROPOSAL_GRID.marathoner_min_cycles) {
     badges.push(BADGE_CATALOG.marathoner);
+  }
+  if (vectorSmithCount >= 1) {
+    badges.push(BADGE_CATALOG.vector_smith);
+  }
+  if (cartographerCount >= 1) {
+    badges.push(BADGE_CATALOG.cartographer);
+  }
+  if (leafCutterCount >= 1) {
+    badges.push(BADGE_CATALOG.leaf_cutter);
   }
 
   return {

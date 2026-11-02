@@ -261,6 +261,7 @@
         "deploy/cloudflare/priority_work_gateway.js",
         "deploy/cloudflare/thick_path_and_schema_coach.js",
         "deploy/cloudflare/taxonomy_affinity_and_proactive_feedback.js",
+        "deploy/cloudflare/worker_kits_and_mutation_grid.js",
         "deploy/cloudflare/feedback_steps_and_uploads.js",
         "deploy/cloudflare/co_lease_and_ensemble.js",
         "deploy/cloudflare/prompts_page.js",
@@ -284,11 +285,13 @@
         "test/bilateral_bridge.test.js",
         "test/priority_work_gateway.test.js",
         "test/thick_path_and_schema_coach.test.js",
+        "test/worker_kits_and_mutation_grid.test.js",
         "test/provider_diagnostics.test.js",
         "test/provider_health.test.js",
         "test/provider_grants.test.js",
         "tests/test_retired_names.py",
-        "tests/test_builtin_starters.py"
+        "tests/test_builtin_starters.py",
+        "tests/test_worker_kits_archives.py"
       ]
     }
   ],
