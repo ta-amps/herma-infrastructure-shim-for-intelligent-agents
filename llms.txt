@@ -15,8 +15,6 @@
 - [docs/access-modes.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/access-modes.md): External agent access
 - [docs/agent-troubleshooting.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/agent-troubleshooting.md): Bilateral agent communication
 - [docs/architecture.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/architecture.md): Architecture
-- [docs/architecture.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/architecture.md): Architecture
-- [docs/architecture.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/architecture.md): Architecture
 - [docs/conversations.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/conversations.md): Typed work conversations
 - [docs/design-and-evidence.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/design-and-evidence.md): Design decisions and measured limits
 - [docs/handoff.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/docs/handoff.md): Handoff & Status

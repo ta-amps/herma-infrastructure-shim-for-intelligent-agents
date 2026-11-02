@@ -77,15 +77,13 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/fly/Dockerfile](deploy/fly/Dockerfile) |  |
 | [deploy/fly/fly.toml](deploy/fly/fly.toml) |  |
 
-## docs/ (14)
+## docs/ (12)
 
 | File | What it is |
 |---|---|
 | [docs/WORKER-FIRST-EXECUTION.md](docs/WORKER-FIRST-EXECUTION.md) | Worker-first execution and private work |
 | [docs/access-modes.md](docs/access-modes.md) | External agent access |
 | [docs/agent-troubleshooting.md](docs/agent-troubleshooting.md) | Bilateral agent communication |
-| [docs/architecture.md](docs/architecture.md) | Architecture |
-| [docs/architecture.md](docs/architecture.md) | Architecture |
 | [docs/architecture.md](docs/architecture.md) | Architecture |
 | [docs/conversations.md](docs/conversations.md) | Typed work conversations |
 | [docs/design-and-evidence.md](docs/design-and-evidence.md) | Design decisions and measured limits |
@@ -187,6 +185,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/contributor_printout.test.js](test/contributor_printout.test.js) |  |
 | [test/conversation.test.js](test/conversation.test.js) |  |
 | [test/herma_v63_boundaries_and_chat.test.js](test/herma_v63_boundaries_and_chat.test.js) |  |
+| [test/home_totals.test.js](test/home_totals.test.js) |  |
 | [test/network_activity.test.js](test/network_activity.test.js) |  |
 | [test/node/banned_list.node-test.mjs](test/node/banned_list.node-test.mjs) |  |
 | [test/node/fixtures/tessera-activity-map.json](test/node/fixtures/tessera-activity-map.json) | JSON object: service, window, window_seconds, as_of, min_workers, places |

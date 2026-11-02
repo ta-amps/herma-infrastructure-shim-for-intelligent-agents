@@ -12,13 +12,14 @@ export function canonicalRedirect(request, env = {}) {
   const url = new URL(request.url);
   const host = url.hostname.toLowerCase();
   if (host === SHELL.site.host || LOCAL_HOST.test(host)) return null;
-  const target = new URL(url.pathname + url.search, SHELL.site.origin);
+  // Joined as text, never resolved as a URL: a path such as //example.com/x must stay a path on our host, not become another site.
+  const target = `${SHELL.site.origin}${url.pathname}${url.search}`;
   const method = request.method.toUpperCase();
   const safe = method === "GET" || method === "HEAD";
   return new Response(null, {
     status: safe ? 301 : 308,
     headers: {
-      location: target.toString(),
+      location: target,
       // A moved page may be remembered for an hour; a moved POST is never cached.
       "cache-control": safe ? "public, max-age=3600" : "no-store",
       "x-content-type-options": "nosniff",

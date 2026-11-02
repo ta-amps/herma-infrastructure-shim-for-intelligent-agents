@@ -27,6 +27,14 @@ describe("canonicalRedirect", () => {
     }
   });
 
+  it("never turns a path into another site (no open redirect)", () => {
+    for (const path of ["//example.com/x", "///example.com", "/\\example.com", "/%2F%2Fexample.com"]) {
+      const res = canonicalRedirect(request(`https://herma.ta-amps.workers.dev${path}`), on);
+      const where = new URL(res.headers.get("location"));
+      expect(where.origin, path).toBe("https://herma.teleionlabs.com");
+    }
+  });
+
   it("leaves the canonical host, local hosts and an unset or off switch alone", () => {
     expect(canonicalRedirect(request("https://herma.teleionlabs.com/q/claim", { method: "POST" }), on)).toBeNull();
     expect(canonicalRedirect(request("https://HERMA.TELEIONLABS.COM/dashboard"), on)).toBeNull();

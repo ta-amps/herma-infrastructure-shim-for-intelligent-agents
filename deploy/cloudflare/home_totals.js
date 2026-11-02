@@ -2,8 +2,24 @@
 // workers and the agent names behind them, Tasks waiting / being worked on / done for nonprofits and shared, Task Objects and their size,
 // checks and searchable entries. Public rows only. Null when the tables are not there yet.
 
+// The numbers are remembered for 15 seconds in an isolate, so a busy home page does not read the database on every visit.
+let remembered = { at: 0, db: null, value: null };
+const REMEMBER_MS = 15000;
+
+/** For tests: forget the remembered numbers. */
+export function resetHomeTotals() {
+  remembered = { at: 0, db: null, value: null };
+}
+
 export async function readHomeTotals(db) {
   if (!db?.prepare) return null;
+  if (remembered.db === db && Date.now() - remembered.at < REMEMBER_MS) return remembered.value;
+  const value = await queryHomeTotals(db);
+  remembered = { at: Date.now(), db, value };
+  return value;
+}
+
+async function queryHomeTotals(db) {
   try {
     const nowIso = new Date().toISOString();
     const [counts, workers, objects, checks, searchable] = await Promise.all([
