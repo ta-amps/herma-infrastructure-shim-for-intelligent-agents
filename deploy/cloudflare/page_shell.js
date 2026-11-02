@@ -71,13 +71,11 @@ export function headerHtml(active = "") {
 
 export function footerHtml() {
   const footer = SHELL.footer;
-  const links = (list) => list.map((l) => `<li><a href="${escapeHtml(l.href)}">${escapeHtml(l.label)}</a></li>`).join("");
+  const links = footer.links.map((l) => `<li><a href="${escapeHtml(l.href)}">${escapeHtml(l.label)}</a></li>`).join("");
   return (
     '<footer class="site-footer">\n<div class="wrap">\n' +
-    `<p class="footer-brand"><b>${escapeHtml(SHELL.site.name)}</b> <span>${escapeHtml(footer.note)}</span></p>\n` +
-    `<nav aria-label="Site information">\n<ul>${links(footer.links)}</ul>\n</nav>\n` +
-    `<nav aria-label="${escapeHtml(footer.agent_label)}">\n<ul><li><span class="footer-label">${escapeHtml(footer.agent_label)}</span></li>${links(footer.agent_links)}</ul>\n</nav>\n` +
-    `<p class="footer-privacy">${escapeHtml(footer.privacy)}</p>\n` +
+    `<nav aria-label="Site information">\n<ul>${links}</ul>\n</nav>\n` +
+    `<p class="footer-line">${escapeHtml(footer.note)}</p>\n` +
     "</div>\n</footer>"
   );
 }
@@ -95,7 +93,7 @@ export function documentHtml({ title, description = "", active = "", main, scrip
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)} | ${escapeHtml(SHELL.site.name)}</title>
 <meta name="description" content="${escapeHtml(description)}">
-<meta name="color-scheme" content="light">
+<meta name="color-scheme" content="only light">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 ${preload}
 <link rel="stylesheet" href="${escapeHtml(SHELL.assets.css)}">
@@ -135,6 +133,7 @@ export const TIDY_RULES = [
   { re: ["\\breceipts\\b"], flags: "gi", to: "records" },
   { re: ["\\breceipt\\b"], flags: "gi", to: "record" },
   { re: ["\\bsha-?256\\b"], flags: "gi", to: "checksum" },
+  { re: ["\\u2014"], flags: "g", to: "--" },
   // Tidy up what the dropped ids leave behind: empty or unfinished brackets, runs of dots, extra spaces.
   { re: ["\\(\\s*(?:\u2026[,;\\s]*)+\\)"], flags: "g", to: "" },
   { re: ["\\s*\\(\\s*(?:\u2026[,;\\s]*)+$"], flags: "g", to: "" },

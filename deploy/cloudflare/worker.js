@@ -1,4 +1,4 @@
-import { agentStartAsset, withAgentStart } from "./agent_start.js";
+import { agentStartAsset } from "./agent_start.js";
 import { agentFetch } from "./agent_access.js";
 import { handleBilateralBridge } from "./bilateral_bridge.js";
 import { handlePriorityWorkGateway } from "./priority_work_gateway.js";
@@ -2221,6 +2221,8 @@ const onboardingApplication = {
 export default {
   ...onboardingApplication,
   async fetch(request, env, ctx) {
-    return agentStartAsset(request) || withAgentStart(request, await onboardingApplication.fetch(request, env, ctx));
+    // Herma's own pages carry the one thin agent banner (page_shell.js), so the older "Put your agent to work" block is
+    // not injected into the home page any more; the /agent-start.* files stay available.
+    return agentStartAsset(request) || onboardingApplication.fetch(request, env, ctx);
   },
 };

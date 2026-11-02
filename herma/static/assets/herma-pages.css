@@ -1,7 +1,8 @@
 /*
  * Herma public pages: Paper & Ink, light only (owner, Nov 1, 2026).
  * One stylesheet for every Herma page (home, connect, get started, dashboard, contributions, workers, demos).
- * - Tokens v3 are copied unchanged from notes/claude-design-2026-10-31/tokens.css (the same file Eranos and Agora use).
+ * - Tokens v3 are copied from notes/claude-design-2026-10-31/tokens.css (the same file Eranos and Agora use), with one
+ *   change: color-scheme is `only light` (owner, Nov 1, rule 13), which also keeps browsers' automatic dark modes off.
  *   New code uses the --task* and --object* aliases; --noun/--verb stay only because the tokens define them.
  * - Dark ink appears only as text, primary buttons and the logo; it is never a page or panel background, the agent
  *   banner included. There is no dark palette and no dark-scheme media rule in this file (a test enforces both).
@@ -18,7 +19,7 @@
 
 /* Tokens v3 */
 :root {
-  color-scheme: light;
+  color-scheme: only light;
   --bg: #F5F2EA;
   --surface: #FFFDF8;
   --sunken: #EDE8DC;
@@ -105,6 +106,7 @@ p, ul, ol, dl, dd, figure, blockquote { margin: 0; }
 /* Worker-written text can hold long unbroken strings; let it break rather than push a card past the screen. */
 .card, .panel, .fact, .note, .result-list li, table.data td, .kv dd, .lead, .hint { overflow-wrap: anywhere; }
 ul, ol { padding-left: 1.25em; }
+.plain-list { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--step-2) var(--step-5); }
 a { color: var(--link); text-underline-offset: 0.18em; text-decoration-thickness: 1px; }
 a:hover { color: var(--link-hover); text-decoration-thickness: 2px; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
@@ -123,6 +125,8 @@ hr { border: 0; border-top: 1px solid var(--line); margin: var(--step-6) 0; }
 .text-2 { color: var(--text-2); }
 .nowrap { white-space: nowrap; }
 .stack { display: flex; flex-direction: column; gap: var(--step-3); }
+.files-h, .card-title { font-size: var(--fs-h3); line-height: var(--lh-h3); }
+.files-h { margin-top: var(--step-2); }
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--step-2) var(--step-3); }
 .row-between { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: var(--step-3) var(--step-5); }
 .grow { flex: 1 1 auto; min-width: 0; }
@@ -171,18 +175,17 @@ ta-agent-banner[data-ready] .agent-fallback { display: none; }
   .site-nav ul { gap: 2px; padding-bottom: var(--step-2); }
 }
 
-/* Footer */
-.site-footer { border-top: 1px solid var(--line); background: var(--bg); padding: var(--step-6) 0 var(--step-7); color: var(--text-2); font-size: var(--fs-small); line-height: var(--lh-small); }
-.site-footer .wrap { display: grid; gap: var(--step-4); }
-.footer-brand { color: var(--text); font-size: var(--fs-ui); }
-.footer-brand b { font-family: var(--font-display); font-weight: 700; margin-right: 6px; }
+/* Footer: one row of links and one short line, the same on every surface */
+.site-footer { border-top: 1px solid var(--line); background: var(--bg); padding: var(--step-5) 0 var(--step-6); color: var(--text-2); font-size: var(--fs-small); line-height: var(--lh-small); }
+.site-footer .wrap { display: grid; gap: var(--step-2); }
 .site-footer ul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--step-1) var(--step-5); }
 .site-footer a { display: inline-flex; align-items: center; min-height: 32px; }
-.footer-label { color: var(--text-3); font-weight: 600; margin-right: var(--step-2); }
-.footer-privacy { color: var(--text-3); max-width: 90ch; }
+.footer-line { color: var(--text-3); }
 
 /* Page head and sections */
-.page-head { padding-block: var(--step-7) var(--step-3); }
+.page-head { padding-block: var(--step-7) var(--step-5); }
+.page-head > .row { margin-top: var(--step-5); }
+.page-head > .hint { margin-top: var(--step-3); margin-bottom: 0; }
 .page-head h1 { margin: var(--step-3) 0; }
 .lead { font-size: var(--fs-lead); line-height: var(--lh-lead); color: var(--text-2); max-width: var(--measure); }
 .kicker { display: inline-flex; align-items: center; gap: var(--step-2); font-size: var(--fs-small); font-weight: 600; color: var(--text-2); }
@@ -196,6 +199,9 @@ ta-agent-banner[data-ready] .agent-fallback { display: none; }
 .hint { color: var(--text-2); max-width: var(--measure); margin-bottom: var(--step-4); }
 .note { background: var(--sunken); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 14px 18px; color: var(--text-2); }
 .note b, .note strong { color: var(--text); }
+.note p + p { margin-top: var(--step-2); }
+.lead code, .hint code, .card p code { white-space: nowrap; }
+.chips + .stack { margin-top: var(--step-4); }
 .note-real { background: var(--real-wash); border-color: transparent; color: var(--text); }
 .note-attn { background: var(--attention-wash); border-color: transparent; color: var(--text); }
 .note-line { color: var(--text-2); margin: var(--step-1) 0 var(--step-3); max-width: 820px; font-size: var(--fs-ui); }

@@ -15,8 +15,10 @@ from typing import Any
 
 CATALOG_PATH = Path(__file__).with_name("model_catalog.json")
 HEADING = "Which Meta Models Do What"
-TABLE_HEAD = "<tr><th>Model</th><th>What it's for</th><th>Does Herma route to it?</th></tr>"
-NOTE_STYLE = "color:var(--muted);margin:0.2rem 0 0.8rem;font-size:0.9rem;max-width:820px;"
+TABLE_HEAD = (
+    '<tr><th scope="col">Model</th><th scope="col">What it\'s for</th>'
+    '<th scope="col">Does Herma route to it?</th></tr>'
+)
 
 
 def escape(value: object) -> str:
@@ -62,9 +64,15 @@ def render_models_section() -> str:
     catalog = load_catalog()
     rows = []
     for model in catalog["models"]:
-        ident = f"<br/><small><code>{escape(model['id'])}</code></small>" if model["id"] else ""
+        ident = (
+            f'<span class="cell-sub"><code>{escape(model["id"])}</code></span>'
+            if model["id"]
+            else ""
+        )
         evidence = (
-            f"<br/><small>{escape(model['evidence'])}</small>" if model.get("evidence") else ""
+            f'<span class="cell-sub">{escape(model["evidence"])}</span>'
+            if model.get("evidence")
+            else ""
         )
         rows.append(
             f"<tr><td><strong>{escape(model['name'])}</strong>{ident}</td>"
@@ -72,14 +80,15 @@ def render_models_section() -> str:
             f"<td>{escape(model['route'])}</td></tr>"
         )
     models_used = (
-        f'<p style="{NOTE_STYLE}">See '
+        '<p class="hint">See '
         f'<a href="{escape(catalog["models_used_url"])}">Models used ↗</a> for the full list.</p>'
     )
     return (
-        f"<h2>{HEADING}</h2>"
-        f'<p style="{NOTE_STYLE}">{escape(catalog["routing_note"])}</p>'
-        f'<div class="table-wrap"><table><thead>{TABLE_HEAD}</thead>'
-        f"<tbody>{''.join(rows)}</tbody></table></div>"
+        f'<h2 id="models-h">{HEADING}</h2>'
+        f'<p class="hint">{escape(catalog["routing_note"])}</p>'
+        '<div class="table-wrap" tabindex="0" role="region" aria-label="Meta models, scrollable table">'
+        '<table class="data"><caption class="sr-only">Meta models and whether Herma routes to them</caption>'
+        f"<thead>{TABLE_HEAD}</thead><tbody>{''.join(rows)}</tbody></table></div>"
         f"{models_used}"
     )
 

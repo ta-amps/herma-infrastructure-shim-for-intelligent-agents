@@ -2,6 +2,7 @@
 // deterministic Anti-RAG entity memory, direct-response formatter, and HTML console
 // for Herma Cloud on Cloudflare Workers + D1.
 import MODEL_CATALOG from "../../herma/model_catalog.json" with { type: "json" };
+import { documentHtml, FAVICON_SVG, PAGE_SHELL } from "./page_shell.js";
 import { operatorPolicy, providerForHost } from "./provider_health.js";
 
 export const HERMA_VERSION = "0.1.0";
@@ -489,21 +490,7 @@ export const DEFAULT_PROVISIONS = [
   },
 ];
 
-export const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Herma boundary pillar">
-  <rect width="32" height="32" rx="7" fill="#f6f4ee"/>
-  <path d="M9 27h14v2H9zm2-3h10l1 3H10zm1-14h8v14h-8z" fill="#155e48"/>
-  <rect x="9" y="6" width="14" height="4" rx="1.5" fill="#161920"/>
-  <path d="M14 13h4v1.5h-4zm0 3.2h4v1.5h-4zm0 3.2h4v1.5h-4z" fill="#ffffff"/>
-</svg>
-`;
-
-const BRAND_SVG =
-  '<svg class="brand-mark" viewBox="0 0 32 32" width="28" height="28" aria-hidden="true">' +
-  '<rect width="32" height="32" rx="7" fill="currentColor" opacity="0.14"/>' +
-  '<path d="M9 26.5h14v2H9zm2-2.8h10l1 2.8H10zm1-13.7h8v13.7h-8z" fill="currentColor"/>' +
-  '<rect x="9" y="6" width="14" height="3.8" rx="1.4" fill="currentColor"/>' +
-  '<path d="M14 13h4v1.4h-4zm0 3h4v1.4h-4zm0 3h4v1.4h-4z" fill="var(--bg)"/>' +
-  "</svg>";
+export { FAVICON_SVG };
 
 export const ROBOTS_TXT = `User-agent: *
 Allow: /
@@ -622,7 +609,7 @@ export const PREVIEW_JS = `(function () {
   });
 
   function renderEmpty(msg) {
-    statusEl.className = "preview-status";
+    statusEl.className = "status-line";
     statusEl.textContent = msg;
     outputEl.innerHTML = "";
   }
@@ -645,8 +632,8 @@ export const PREVIEW_JS = `(function () {
     const workspacePaths = rawPath ? rawPath.split(",").map(function (p) { return p.trim(); }).filter(Boolean) : [];
 
     runBtn.disabled = true;
-    statusEl.className = "preview-status";
-    statusEl.textContent = "Evaluating system_builtin 3-tier triggers and deterministic entity patterns...";
+    statusEl.className = "status-line";
+    statusEl.textContent = "Checking the built-in triggers and entity patterns...";
     outputEl.innerHTML = "";
 
     try {
@@ -657,12 +644,12 @@ export const PREVIEW_JS = `(function () {
       });
       const data = await resp.json();
       if (!resp.ok) {
-        statusEl.className = "preview-status error";
+        statusEl.className = "status-line error";
         statusEl.textContent = "Preview refused (" + resp.status + "): " + (data.detail || data.title || "invalid input");
         return;
       }
-      statusEl.className = "preview-status ok";
-      statusEl.textContent = "Evaluated scope: " + data.scope_evaluated + " | persisted: " + String(data.persisted) + " | matches: " + (data.matches || []).length + " | entities: " + (data.entities || []).length;
+      statusEl.className = "status-line ok";
+      statusEl.textContent = "Checked the " + data.scope_evaluated + " rules. Saved: " + String(data.persisted) + ". Matches: " + (data.matches || []).length + ". Entities: " + (data.entities || []).length + ".";
 
       const matchItems = (data.matches || []).map(function (m) {
         return "<li><code>" + escText(m.prov_id) + "@v" + escText(m.version) + "</code> (" + escText((m.matched_tiers || []).join(", ")) + "): " + escText((m.reasons || []).join("; ")) + "</li>";
@@ -677,16 +664,16 @@ export const PREVIEW_JS = `(function () {
         : JSON.stringify(data.augmented_payload, null, 2);
 
       outputEl.innerHTML =
-        "<div style='margin-top:0.8rem;'>" +
-        "<strong>Matched Builtin Provisions:</strong>" +
-        (matchItems ? "<ul>" + matchItems + "</ul>" : "<p style='color:var(--muted);margin:0.3rem 0;'>No system_builtin rules matched this prompt.</p>") +
-        "<strong>Extracted Top-of-Mind Entities (0 LLM calls):</strong>" +
-        (entItems ? "<div class='entity-tags'>" + entItems + "</div>" : "<p style='color:var(--muted);margin:0.3rem 0;'>No file paths, symbols, URIs, statute cards, or errors detected.</p>") +
-        "<strong>" + (data.responded_directly ? "Direct Protocol Reply (0 upstream tokens):" : "Augmented Wire Payload:") + "</strong>" +
-        "<pre>" + escText(previewPayload) + "</pre>" +
+        "<div class='inspector-out'>" +
+        "<div><strong>Matched built-in provisions</strong>" +
+        (matchItems ? "<ul>" + matchItems + "</ul>" : "<p class='muted'>No built-in rules matched this prompt.</p>") + "</div>" +
+        "<div><strong>Entities found (0 model calls)</strong>" +
+        (entItems ? "<div class='entity-tags'>" + entItems + "</div>" : "<p class='muted'>No file paths, symbols, URIs, statute cards or errors found.</p>") + "</div>" +
+        "<div><strong>" + (data.responded_directly ? "Direct reply (0 upstream tokens)" : "Request after shimming") + "</strong>" +
+        "<pre tabindex='0'>" + escText(previewPayload) + "</pre></div>" +
         "</div>";
     } catch (err) {
-      statusEl.className = "preview-status error";
+      statusEl.className = "status-line error";
       statusEl.textContent = "Preview network error: " + String(err && err.message ? err.message : err);
     } finally {
       runBtn.disabled = false;
@@ -2142,41 +2129,11 @@ export function buildLlmsFullTxt(publicUrl) {
   ].join("\n");
 }
 
-const STYLE = `:root{color-scheme:only light;--bg:#f6f4ee;--card:#ffffff;--border:#dcd6ca;--fg:#161920;--muted:#565d6a;--accent:#155e48;--pill:#e3f2ec;--danger:#b42318;--ok:#067647}
-*{box-sizing:border-box}html,body{max-width:100%;overflow-x:hidden;margin:0;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg);line-height:1.55}
-.site-header{border-bottom:1px solid var(--border);background:var(--card)}.header-inner{max-width:1040px;margin:0 auto;padding:.9rem 1.2rem;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.8rem 1.2rem}
-.brand{display:inline-flex;align-items:center;gap:.55rem;color:var(--fg);text-decoration:none;font-weight:700;font-size:1.05rem}.brand-mark{color:var(--accent);flex-shrink:0}
-nav{display:flex;flex-wrap:wrap;gap:.55rem 1rem;font-size:.9rem;align-items:center}nav a{color:var(--accent);text-decoration:none;font-weight:600}nav a:hover{text-decoration:underline}
-main{max-width:1040px;margin:0 auto;padding:2rem 1.2rem 3rem}
-.site-footer{max-width:1040px;margin:0 auto;padding:1.4rem 1.2rem 2.4rem;border-top:1px solid var(--border);color:var(--muted);font-size:.86rem;display:flex;flex-wrap:wrap;gap:.6rem 1.4rem;justify-content:space-between}.site-footer a{color:var(--accent);text-decoration:none}
-.pill{display:inline-block;padding:.2rem .6rem;border-radius:999px;background:var(--pill);color:var(--accent);font-size:.76rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
-h1{margin:.6rem 0 .5rem;font-size:clamp(1.55rem,3vw,2.3rem);overflow-wrap:anywhere}.lead{color:var(--muted);max-width:820px;margin:0 0 1.8rem}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,270px),1fr));gap:1rem;margin-bottom:1.8rem}
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.15rem;min-width:0}.card h2,.card h3{margin:.2rem 0 .5rem;font-size:1.06rem}
-pre,code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85rem}pre{background:var(--pill);border:1px solid var(--border);border-radius:8px;padding:.85rem;overflow-x:auto;max-width:100%;margin:.5rem 0 0}
-.table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border);border-radius:10px;background:var(--card);margin-bottom:1.4rem}
-table{width:100%;border-collapse:collapse;font-size:.89rem;min-width:540px}th,td{text-align:left;padding:.65rem .85rem;border-bottom:1px solid var(--border);vertical-align:top}tbody tr:last-child td{border-bottom:none}th{color:var(--muted);font-weight:600;white-space:nowrap}
-.inspector{margin:1.8rem 0 2.2rem}.preset-row{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:.8rem}
-.btn{appearance:none;border:1px solid var(--border);background:var(--pill);color:var(--fg);border-radius:8px;padding:.45rem .8rem;font-size:.85rem;font-weight:600;cursor:pointer}.btn-primary{background:var(--accent);color:#fff;border-color:var(--accent)}.btn:disabled{opacity:.6;cursor:wait}
-.form-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:.75rem;margin:.75rem 0}
-label{display:block;font-size:.82rem;font-weight:600;color:var(--muted);margin-bottom:.25rem}textarea,input[type="text"],select{width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:8px;padding:.55rem .7rem;font:inherit;font-size:.88rem}textarea{min-height:84px;resize:vertical}
-.preview-status{margin-top:.75rem;font-size:.86rem;color:var(--muted)}.preview-status.error{color:var(--danger);font-weight:600}.preview-status.ok{color:var(--ok)}
-.entity-tags{display:flex;flex-wrap:wrap;gap:.4rem;margin:.5rem 0}.entity-chip{display:inline-block;padding:.18rem .55rem;border-radius:6px;background:var(--pill);border:1px solid var(--border);font-size:.8rem}`;
-
-function renderHeader() {
-  return `<header class="site-header"><div class="header-inner"><a class="brand" href="/">${BRAND_SVG}<span>Herma</span></a><nav aria-label="Primary"><a href="/">Overview</a><a href="/connect">Connect Harness</a><a href="/healthz">Health JSON</a><a href="/llms.txt">llms.txt</a><a href="/.well-known/agent-card.json">Agent Card</a><a href="https://tessera.ta-amps.workers.dev/board">Tessera Cloud</a><a href="https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents">GitHub</a></nav></div></header>`;
-}
-
-function renderFooter(publicUrl) {
-  return `<footer class="site-footer"><span>Endpoint: <code>${esc(publicUrl)}</code> · Backed by Cloudflare D1 (<code>ta-amps-herma</code>) · Standard mode only (<code>-contributor</code> refused).</span><span><a href="/llms.txt">llms.txt</a> · <a href="/llms-full.txt">llms-full.txt</a> · <a href="/.well-known/agent-card.json">agent-card.json</a></span></footer>`;
-}
-
 const KIND_LABELS = { noun: "Task Object", verb: "Task", detail: "Detail" };
 export const kindLabel = (kind) => KIND_LABELS[kind] || String(kind ?? "");
 
 const MODELS_HEADING = "Which Meta Models Do What";
-const MODELS_TABLE_HEAD = "<tr><th>Model</th><th>What it's for</th><th>Does Herma route to it?</th></tr>";
-const MODELS_NOTE_STYLE = "color:var(--muted);margin:0.2rem 0 0.8rem;font-size:0.9rem;max-width:820px;";
+const MODELS_TABLE_HEAD = '<tr><th scope="col">Model</th><th scope="col">What it\'s for</th><th scope="col">Does Herma route to it?</th></tr>';
 
 export const modelCatalog = () => MODEL_CATALOG;
 export const routedModelIds = () => new Set(MODEL_CATALOG.models.filter((m) => m.routed && m.id).map((m) => m.id));
@@ -2186,13 +2143,13 @@ export const listedModelIds = () => new Set(MODEL_CATALOG.models.filter((m) => m
 export function renderModelsSection() {
   const rows = MODEL_CATALOG.models
     .map((m) => {
-      const ident = m.id ? `<br/><small><code>${esc(m.id)}</code></small>` : "";
-      const evidence = m.evidence ? `<br/><small>${esc(m.evidence)}</small>` : "";
+      const ident = m.id ? `<span class="cell-sub"><code>${esc(m.id)}</code></span>` : "";
+      const evidence = m.evidence ? `<span class="cell-sub">${esc(m.evidence)}</span>` : "";
       return `<tr><td><strong>${esc(m.name)}</strong>${ident}</td><td>${esc(m.use)}${evidence}</td><td>${esc(m.route)}</td></tr>`;
     })
     .join("");
-  const modelsUsed = `<p style="${MODELS_NOTE_STYLE}">See <a href="${esc(MODEL_CATALOG.models_used_url)}">Models used ↗</a> for the full list.</p>`;
-  return `<h2>${MODELS_HEADING}</h2><p style="${MODELS_NOTE_STYLE}">${esc(MODEL_CATALOG.routing_note)}</p><div class="table-wrap"><table><thead>${MODELS_TABLE_HEAD}</thead><tbody>${rows}</tbody></table></div>${modelsUsed}`;
+  const modelsUsed = `<p class="hint">See <a href="${esc(MODEL_CATALOG.models_used_url)}">Models used ↗</a> for the full list.</p>`;
+  return `<h2 id="models-h">${MODELS_HEADING}</h2><p class="hint">${esc(MODEL_CATALOG.routing_note)}</p><div class="table-wrap" tabindex="0" role="region" aria-label="Meta models, scrollable table"><table class="data"><caption class="sr-only">Meta models and whether Herma routes to them</caption><thead>${MODELS_TABLE_HEAD}</thead><tbody>${rows}</tbody></table></div>${modelsUsed}`;
 }
 
 // The same lines as herma/model_catalog.py models_text().
@@ -2223,14 +2180,14 @@ export function renderOverviewHtml(
       const tiers = ["keyword", "semantic", "micromodel"].filter((k) => p.triggers?.[k]);
       const action = p.action || "shim_context";
       const refsNote = (p.context_refs || []).length ? ` · ${p.context_refs.length} ref(s)` : "";
-      return `<tr><td><code>${esc(p.prov_id)}</code> (v${sp.version})</td><td>${esc(p.title)}<br/><small><code>${esc(action)}</code>${esc(refsNote)}</small></td><td><code>${esc(tiers.join(", "))}</code> (${esc(p.triggers?.mode || "any")})</td><td>${(p.uris || []).length} URI(s) · prio ${p.priority}</td><td><code>${esc(sp.source_store)}</code></td></tr>`;
+      return `<tr><td><code>${esc(p.prov_id)}</code><span class="cell-sub">version ${esc(sp.version)}</span></td><td>${esc(p.title)}<span class="cell-sub"><code>${esc(action)}</code>${esc(refsNote)}</span></td><td><code>${esc(tiers.join(", "))}</code><span class="cell-sub">match ${esc(p.triggers?.mode || "any")}</span></td><td>${(p.uris || []).length} URI(s)<span class="cell-sub">priority ${p.priority}</span></td><td><code>${esc(sp.source_store)}</code></td></tr>`;
     })
     .join("");
   const cRows = (contextEntries || [])
     .slice(0, 25)
     .map(
       (e) =>
-        `<tr><td><code>${esc(e.entry_id)}</code></td><td>${esc(kindLabel(e.kind))}</td><td>${esc(e.title)}</td><td>${esc(e.summary)}</td><td>${e.source_uri ? `<code>${esc(e.source_uri)}</code>` : "--"}</td></tr>`
+        `<tr><td><code>${esc(e.entry_id)}</code></td><td>${esc(kindLabel(e.kind))}</td><td>${esc(e.title)}</td><td>${esc(e.summary)}</td><td>${e.source_uri ? `<code>${esc(e.source_uri)}</code>` : "none"}</td></tr>`
     )
     .join("");
 
@@ -2239,77 +2196,122 @@ export function renderOverviewHtml(
     total_working_entities: 0,
     total_rule_outcomes: 0,
   };
+  const table = (label, head, rows, empty, cols) =>
+    `<div class="table-wrap" tabindex="0" role="region" aria-label="${label}, scrollable table"><table class="data"><caption class="sr-only">${label}</caption><thead><tr>${head.map((h) => `<th scope="col">${h}</th>`).join("")}</tr></thead><tbody>${rows || `<tr><td colspan="${cols}">${empty}</td></tr>`}</tbody></table></div>`;
 
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="color-scheme" content="only light"/><link rel="icon" href="/favicon.svg" type="image/svg+xml"/><title>Herma v${HERMA_VERSION} -- Context-Shimming AI Middleware</title><style>${STYLE}</style></head><body>
-${renderHeader()}
-<main>
-<span class="pill">Herma v${HERMA_VERSION} · Programmable AI Request Middleware · Tasks &amp; Task Objects Shim · 24/7 Cloudflare D1 + Tessera Cloud</span>
-<h1>Tasks, Task Objects &amp; Context-Shimming Middleware for Coding Harnesses</h1>
-<p class="lead"><strong>Herma:</strong> context-shimming AI middleware for configurable coding harnesses -- connects <strong>Tasks</strong> and <strong>Task Objects</strong> (reusable tools, feeds, datasets, LoRA adapters and shims) to Meta's Muse models without static prompt bloat (<code>HarnessTax</code>) or post-cutoff schema amnesia. Herma intercepts requests via <strong>keyword</strong>, <strong>semantic</strong>, or <strong>micromodel</strong> rules to <strong>respond directly</strong> in 0 tokens or shim bounded context before the model runs. Requests route to the Meta API at standard tier with your own key, led by <code>Muse Wonder 1.0</code> and <code>Muse Spark 1.3</code>. Personal assistants with scoped credentials are supported; <code>*-contributor</code> models remain refused.</p>
-<section class="grid">
-<div class="card"><span class="pill">Tasks &amp; Task Objects</span><h3>Plain-Language Primitives, Wire-Safe</h3><p>Independently schedulable <strong>Tasks</strong> run as fenced queue work; reusable tools, <code>Feed</code> profiles and LoRA specs are compare-and-set <strong>Task Objects</strong>.</p></div>
-<div class="card"><span class="pill">0-Weight Shim + LoRA Memory</span><h3>Kill Prompt Bloat &amp; Amnesia</h3><p>Shim volatile rules inline today with zero weight updates, then promote stabilized post-cutoff schemas into <code>Muse Glimmer</code> LoRA adapters fine-tuned by ta-amps (93.3% to 99.3% exact tool-call match on a fixed 150-task evaluation).</p></div>
-<div class="card"><span class="pill">respond_directly</span><h3>Zero-Token Direct Responses</h3><p>Answers natural-language Task / Task-Object and contract lookups directly across OpenAI, Responses, and Anthropic wire formats, without calling a model.</p></div>
+  const main = `<div class="wrap page-head">
+<span class="kicker"><span class="kicker-dot"></span>Infrastructure for agents &middot; version ${HERMA_VERSION}</span>
+<h1>A context shim between an agent and its model</h1>
+<p class="lead">Herma connects <strong>Tasks</strong> and <strong>Task Objects</strong> (reusable tools, feeds, datasets, LoRA adapters and shims) to Meta's Muse models without prompt bloat or post-cutoff schema amnesia. Requests route to the Meta API at the standard tier with your own key, led by <code>Muse Wonder 1.0</code> and <code>Muse Spark 1.3</code>.</p>
+<p class="hint">Herma is context-shimming AI middleware for configurable coding harnesses. It intercepts a request with keyword, semantic or micromodel rules, then <strong>responds directly</strong> in 0 tokens or shims bounded context before the model runs. Personal assistants with scoped credentials are supported; <code>*-contributor</code> models remain refused.</p>
+<div class="row"><a class="btn" href="/connect">Connect an agent</a><a class="btn-quiet" href="/starter">Start a worker</a><a class="link-out" href="${esc(PAGE_SHELL.header_link.href)}">How it works &#8599;</a></div>
+</div>
+<div class="wrap">
+<section class="section" aria-label="What Herma does">
+<div class="cards">
+<div class="card"><span class="tags"><span class="tag tag-task">Tasks &amp; Task Objects</span></span><h2 class="card-title">Plain-language primitives, wire-safe</h2><p>Independently schedulable <strong>Tasks</strong> run as fenced queue work; reusable tools, <code>Feed</code> profiles and LoRA specs are compare-and-set <strong>Task Objects</strong>.</p></div>
+<div class="card"><span class="tags"><span class="tag tag-object">Zero-weight shim + LoRA memory</span></span><h2 class="card-title">Kill prompt bloat and amnesia</h2><p>Shim volatile rules inline today with zero weight updates, then promote stabilized post-cutoff schemas into <code>Muse Glimmer 30B</code> LoRA adapters fine-tuned by ta-amps (93.3% to 99.3% exact tool-call match on a fixed 150-task evaluation).</p></div>
+<div class="card"><span class="tags"><span class="tag tag-real">respond_directly</span></span><h2 class="card-title">Zero-token direct responses</h2><p>Answers natural-language Task, Task Object and contract lookups directly across OpenAI, Responses and Anthropic wire formats, without calling a model.</p></div>
+</div>
 </section>
-<section class="card inspector" aria-labelledby="inspector-heading">
-<span class="pill">Read-Only Inspector · persisted: false</span>
-<h2 id="inspector-heading">Shim Trigger &amp; Entity Extractor Preview</h2>
-<p style="color:var(--muted);margin:0.2rem 0 0.8rem;font-size:0.9rem;">Test starter <code>system_builtin</code> provisions and deterministic regex entity extraction in memory without saving anything or reading caller state.</p>
-<div class="preset-row">
-<button class="btn" type="button" data-herma-preset="tasks">Preset: Tasks &amp; Task Objects</button>
-<button class="btn" type="button" data-herma-preset="feeds">Preset: Agent Harness Feeds</button>
-<button class="btn" type="button" data-herma-preset="lora">Preset: Shim vs LoRA Memory</button>
-<button class="btn" type="button" data-herma-preset="fencing">Preset: Tessera Lease Fencing</button>
-<button class="btn" type="button" data-herma-preset="direct">Preset: Direct Task Object Schema</button>
-<button class="btn" type="button" data-herma-preset="statute">Preset: Statute Card &amp; Error Retry</button>
+
+<section class="section" aria-labelledby="inspector-h">
+<h2 id="inspector-h">Try the shim</h2>
+<p class="hint">A read-only preview. It tests the starter <code>system_builtin</code> provisions and entity extraction in memory; nothing is saved and no caller state is read.</p>
+<div class="panel">
+<div class="presets">
+<button class="btn-quiet btn-sm" type="button" data-herma-preset="tasks">Tasks and Task Objects</button>
+<button class="btn-quiet btn-sm" type="button" data-herma-preset="feeds">Agent harness feeds</button>
+<button class="btn-quiet btn-sm" type="button" data-herma-preset="lora">Shim or LoRA memory</button>
+<button class="btn-quiet btn-sm" type="button" data-herma-preset="fencing">Tessera lease fencing</button>
+<button class="btn-quiet btn-sm" type="button" data-herma-preset="direct">A direct Task Object schema</button>
+<button class="btn-quiet btn-sm" type="button" data-herma-preset="statute">Statute card and error retry</button>
 </div>
-<div><label for="herma-preview-prompt">Outbound Harness Prompt</label><textarea id="herma-preview-prompt" placeholder="e.g. What are tasks and task objects?"></textarea></div>
-<div class="form-row">
-<div><label for="herma-preview-path">Workspace Paths (comma-separated)</label><input id="herma-preview-path" type="text" placeholder="src/tessera/_tasks.py"/></div>
-<div><label for="herma-preview-wire">Wire Protocol</label><select id="herma-preview-wire"><option value="chat_completions">OpenAI /v1/chat/completions</option><option value="responses">Responses /v1/responses</option><option value="messages">Anthropic /v1/messages</option></select></div>
+<div class="stack">
+<div class="field"><label for="herma-preview-prompt">The prompt your harness sends</label><textarea id="herma-preview-prompt" placeholder="For example: What are tasks and task objects?"></textarea></div>
+<div class="form-grid">
+<div class="field"><label for="herma-preview-path">Workspace paths, separated by commas</label><input id="herma-preview-path" type="text" class="mono" placeholder="src/tessera/_tasks.py"></div>
+<div class="field"><label for="herma-preview-wire">Wire protocol</label><select id="herma-preview-wire"><option value="chat_completions">OpenAI /v1/chat/completions</option><option value="responses">Responses /v1/responses</option><option value="messages">Anthropic /v1/messages</option></select></div>
 </div>
-<button id="herma-preview-btn" class="btn btn-primary" type="button">Run Read-Only Preview</button>
-<div id="herma-preview-status" class="preview-status" role="status" aria-live="polite">Enter a coding-harness prompt or choose a preset above to preview builtin triggers and entity extraction (persisted: false).</div>
+<div><button id="herma-preview-btn" class="btn" type="button">Run the preview</button></div>
+<div id="herma-preview-status" class="status-line" role="status" aria-live="polite">Type a prompt or pick an example, then run the preview. Nothing is saved.</div>
 <div id="herma-preview-output"></div>
+</div>
+</div>
 </section>
+
+<section class="section" aria-labelledby="models-h">
 ${renderModelsSection()}
-<h2>Starter Builtin Provisions (${builtinProvs.length})</h2>
-<div class="table-wrap"><table><thead><tr><th>ID</th><th>Title &amp; Action</th><th>Triggers</th><th>URIs &amp; Priority</th><th>Store</th></tr></thead><tbody>${pRows || "<tr><td colspan='5'>No builtin provisions seeded yet.</td></tr>"}</tbody></table></div>
-<h2>Starter Builtin Task Object, Task &amp; Detail Context (${(contextEntries || []).length})</h2>
-<div class="table-wrap"><table><thead><tr><th>Entry ID</th><th>Kind</th><th>Title</th><th>Summary</th><th>Source URI</th></tr></thead><tbody>${cRows || "<tr><td colspan='5'>No builtin Task Object, Task or detail entries configured yet.</td></tr>"}</tbody></table></div>
-<h2>Aggregate Middleware Telemetry (Caller Data Isolated)</h2>
-<div class="table-wrap"><table><thead><tr><th>Builtin Provisions</th><th>Builtin Context Entries</th><th>Intercepted Turns</th><th>Tracked Entities</th><th>Outcome Signals</th></tr></thead><tbody><tr><td><code>${builtinProvs.length}</code></td><td><code>${(contextEntries || []).length}</code></td><td><code>${Number(counts.total_intercepted_requests || 0)}</code></td><td><code>${Number(counts.total_working_entities || 0)}</code></td><td><code>${Number(counts.total_rule_outcomes || 0)}</code></td></tr></tbody></table></div>
-</main>
-${renderFooter(publicUrl)}
-<script src="/preview.js" defer></script>
-</body></html>`;
+</section>
+
+<section class="section" aria-labelledby="prov-h">
+<h2 id="prov-h">Starter provisions (${builtinProvs.length})</h2>
+${table("Starter provisions", ["ID", "Title and action", "Triggers", "URIs and priority", "Store"], pRows, "No built-in provisions are seeded yet.", 5)}
+</section>
+
+<section class="section" aria-labelledby="ctx-h">
+<h2 id="ctx-h">Starter Task Objects, Tasks and details (${(contextEntries || []).length})</h2>
+${table("Starter context entries", ["Entry", "Kind", "Title", "Summary", "Source"], cRows, "No built-in Task Object, Task or detail entries are configured yet.", 5)}
+</section>
+
+<section class="section" aria-labelledby="tele-h">
+<h2 id="tele-h">Totals, with each caller's data kept apart</h2>
+${table("Aggregate telemetry", ["Built-in provisions", "Built-in entries", "Requests handled", "Entities tracked", "Outcome signals"], `<tr><td><code>${builtinProvs.length}</code></td><td><code>${(contextEntries || []).length}</code></td><td><code>${Number(counts.total_intercepted_requests || 0)}</code></td><td><code>${Number(counts.total_working_entities || 0)}</code></td><td><code>${Number(counts.total_rule_outcomes || 0)}</code></td></tr>`, "", 5)}
+</section>
+
+<section class="section" aria-labelledby="files-h">
+<h2 id="files-h">Files for agents</h2>
+<ul class="plain-list">
+<li><a href="/llms.txt">llms.txt</a></li>
+<li><a href="/llms-full.txt">llms-full.txt</a></li>
+<li><a href="/.well-known/agent-card.json">Agent card</a></li>
+<li><a href="/healthz">Health</a></li>
+</ul>
+</section>
+</div>`;
+
+  return documentHtml({
+    title: `Herma ${HERMA_VERSION}, a context shim for agents`,
+    description:
+      "Herma sits between an agent's harness and its model, shimming Tasks and Task Objects into requests to Meta's Muse models.",
+    active: "overview",
+    main,
+    scripts: ["/preview.js"],
+  });
 }
 
 export function renderConnectHtml(publicUrl) {
   const base = esc(String(publicUrl || "").replace(/\/+$/, ""));
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="color-scheme" content="only light"/><link rel="icon" href="/favicon.svg" type="image/svg+xml"/><title>Connect a Configurable Coding Harness -- Herma</title><style>${STYLE}</style></head><body>
-${renderHeader()}
-<main>
-<span class="pill">Scoped Agent Access</span>
+  const main = `<div class="wrap page-head">
+<span class="kicker"><span class="kicker-dot"></span>Scoped agent access</span>
 <h1>Connect a coding harness or personal assistant</h1>
-<p class="lead">Coding harnesses and personal assistants that control custom base URLs, headers, and scoped <code>hmk_</code> credentials can route through or configure Herma. Personal assistants use the same scoped keys; missing credentials return <code>HTTP 403 harness_required</code>.</p>
-<div class="card" style="margin-bottom:1.2rem;"><h3>1. Populate Caller-Scoped Task Object / Task Context Entries</h3><pre>curl -fsS -X POST ${base}/v1/context \\
+<p class="lead">Coding harnesses and personal assistants that control custom base URLs, headers and scoped <code>hmk_</code> credentials can route through or configure Herma. Personal assistants use the same scoped keys; missing credentials return <code>HTTP 403 harness_required</code>.</p>
+<p class="hint">We don't accept private information at this stage. Use your own Meta API key, and never send credentials or personal details in a Task Object.</p>
+</div>
+<div class="wrap">
+<div class="stack section">
+<div class="card"><h2>1. Add Task Object and Task entries for your key</h2><pre tabindex="0">curl -fsS -X POST ${base}/v1/context \\
   -H "Content-Type: application/json" \\
   -H "X-Herma-Key: hmk_&lt;id&gt;.&lt;secret&gt;" \\
-  -H "X-Herma-Harness: opencode" \\
+  -H "X-Herma-Harness: custom-harness" \\
   -d '{"entry_id":"noun:custom.lease_contract","kind":"noun","title":"Custom Lease Contract","summary":"Caller-scoped atomic Task Object definition."}'</pre></div>
-<div class="card" style="margin-bottom:1.2rem;"><h3>2. Dry-Run 3-Tier Context Shimming or Direct Response</h3><pre>curl -fsS -X POST ${base}/v1/dry-run \\
+<div class="card"><h2>2. Dry-run the three-tier shim or a direct response</h2><pre tabindex="0">curl -fsS -X POST ${base}/v1/dry-run \\
   -H "Content-Type: application/json" \\
   -H "X-Herma-Key: hmk_&lt;id&gt;.&lt;secret&gt;" \\
-  -H "X-Herma-Harness: opencode" \\
+  -H "X-Herma-Harness: custom-harness" \\
   -H "X-Herma-Project: my-repo" \\
   -d '{"wire_format":"chat_completions","payload":{"model":"muse-spark-1.3","messages":[{"role":"user","content":"Show the canonical task and task-object schema"}]}}'</pre></div>
-<div class="card"><h3>3. Sync Governed Provisions &amp; Inspect Self-Improving Insights</h3><pre>curl -fsS ${base}/v1/insights?project_tag=my-repo \\
+<div class="card"><h2>3. Sync governed provisions and read the insights</h2><pre tabindex="0">curl -fsS ${base}/v1/insights?project_tag=my-repo \\
   -H "X-Herma-Key: hmk_&lt;id&gt;.&lt;secret&gt;" \\
-  -H "X-Herma-Harness: muse-code"</pre></div>
-</main>
-${renderFooter(publicUrl)}
-</body></html>`;
+  -H "X-Herma-Harness: custom-harness"</pre></div>
+</div>
+</div>`;
+  return documentHtml({
+    title: "Connect a harness",
+    description: "How a coding harness or personal assistant routes through Herma with a scoped key.",
+    active: "connect",
+    main,
+  });
 }
 
 export async function reserveRouteRequest(db, callerScope, limit = 60) {

@@ -99,7 +99,7 @@ async function sha256HexV610(input) {
 
 /**
  * Normalizes drifted model_hint strings stored in D1:
- * e.g. "Codex" -> "codex", "ollama-cloud/muse-spark-open" -> "muse-spark-open", "GPT_Astra" -> "gpt-astra".
+ * e.g. "Codex" -> "codex", "cloud-host/muse-spark-open" -> "muse-spark-open", "GPT_Astra" -> "gpt-astra".
  */
 export function canonicalizeModelHint(rawHint, { agentId = "", userAgent = "" } = {}) {
   let cleaned = String(rawHint || "").trim().toLowerCase();

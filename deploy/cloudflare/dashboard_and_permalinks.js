@@ -12,7 +12,6 @@ import {
   formatBytes,
   formatWhen,
   humanize,
-  nextTurnLabel,
   stateLabel,
   taskKindLabel,
   tidyText,
@@ -21,8 +20,6 @@ import {
 
 export const DASHBOARD_GRID = Object.freeze({
   schema_id: "herma.dashboard_and_permalinks.grid.v1",
-  beat_cycle_length: 3,
-  preview_json_chars: 16384,
   summary_clip_chars: 220,
   percent_scale: 100,
   milli_scale: 10,
@@ -60,16 +57,31 @@ const tag = (text, kind = "") => `<span class="tag${kind ? ` tag-${kind}` : ""}"
 const options = (list, any) =>
   [`<option value="">${escapeHtml(any)}</option>`, ...list.map(([v, label]) => `<option value="${escapeHtml(v)}">${escapeHtml(label)}</option>`)].join("");
 
-function facetTags(row) {
+// Facet labels for a row. A label that is already shown (a category and a kind often say the same thing) is not repeated.
+function facetTags(row, shown = []) {
+  const seen = new Set(shown.map((t) => String(t).toLowerCase()));
   return [row.opt_goal, row.prog_lang, row.locale_country, row.deliverable_kind]
     .filter(Boolean)
-    .map((v) => tag(tidyText(humanize(v), 60)))
+    .map((v) => tidyText(humanize(v), 60))
+    .filter((text) => text && !seen.has(text.toLowerCase()) && seen.add(text.toLowerCase()))
+    .map((text) => tag(text))
     .join("");
 }
 
-function workerCredit(agentId) {
+// A long list shows its first rows and folds the rest, so the page stays short and calm.
+function fold(label, inner) {
+  return `<details class="fold"><summary>${escapeHtml(label)}</summary><div class="fold-body">${inner}</div></details>`;
+}
+
+// "tier_2_sandboxed_chat_worker" becomes "Sandboxed chat worker".
+function tierLabel(tier) {
+  return tidyText(humanize(String(tier ?? "").replace(/^tier_\d+_/, "")), 40);
+}
+
+function workerCredit(agentId, lower = false) {
   const handle = tidyText(agentId, 48);
-  return `${escapeHtml(workerLabel(agentId))}${handle ? ` &middot; <code>${escapeHtml(handle)}</code>` : ""}`;
+  const label = workerLabel(agentId);
+  return `${escapeHtml(lower ? label.charAt(0).toLowerCase() + label.slice(1) : label)}${handle ? ` &middot; <code>${escapeHtml(handle)}</code>` : ""}`;
 }
 
 function bar(ngo, evl, own) {
@@ -77,7 +89,7 @@ function bar(ngo, evl, own) {
   const a = Math.round((ngo / total) * 100);
   const b = Math.round((evl / total) * 100);
   const c = Math.max(0, 100 - a - b);
-  const label = `${ngo} nonprofit, ${evl} reviews, ${own} of its own`;
+  const label = `${ngo} nonprofit, ${evl} reviews, ${own} general`;
   return (
     `<svg class="bar" viewBox="0 0 100 10" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(label)}">` +
     `<rect class="seg-ngo" x="0" y="0" width="${a}" height="10"/>` +
@@ -88,21 +100,22 @@ function bar(ngo, evl, own) {
 
 function workersTable(workers) {
   if (!workers.length) {
-    return `<p class="note">No workers have joined yet. <a href="/get-started">Add the first one</a>.</p>`;
+    return `<p class="note">No workers have joined yet. <a href="/starter">Start the first one</a>.</p>`;
   }
   const rows = workers
     .map((w) => {
       const ngo = Number(w.ngo_completed || 0);
       const evl = Number(w.eval_completed || 0);
       const own = Number(w.own_completed || 0);
+      const sessions = Number(w.profile_count || 1);
       const latest = w.last_task_id
         ? `<a href="/c/${href(w.last_task_id)}">Open the latest</a>`
         : `<span class="muted">Just joined</span>`;
+      const tier = w.harness_tier ? `<div class="tags">${tag(tierLabel(w.harness_tier))}</div>` : "";
       return `<tr>
-<td><a href="/w/${href(w.worker_uuid)}"><strong>${escapeHtml(tidyText(w.persona_label, 90) || "Worker")}</strong></a><span class="cell-sub">${workerCredit(w.agent_id)}</span></td>
+<td><a href="/w/${href(w.worker_uuid)}"><strong>${escapeHtml(tidyText(w.persona_label, 90) || "Worker")}</strong></a><span class="cell-sub">${workerCredit(w.agent_id)}${sessions > 1 ? ` &middot; ${sessions} sessions` : ""}</span>${tier}</td>
 <td>${escapeHtml(tidyText(w.specialty_lens, 150))}</td>
-<td><strong>${Number(w.iteration_count || 0)}</strong> runs<span class="cell-sub">${ngo} nonprofit &middot; ${evl} reviews &middot; ${own} own</span>${bar(ngo, evl, own)}</td>
-<td>${escapeHtml(nextTurnLabel(w.iteration_count, DASHBOARD_GRID.beat_cycle_length))}</td>
+<td><strong>${Number(w.iteration_count || 0)}</strong> runs<span class="cell-sub">${ngo} nonprofit &middot; ${evl} reviews &middot; ${own} general</span>${bar(ngo, evl, own)}</td>
 <td>${latest}</td>
 </tr>`;
     })
@@ -110,7 +123,7 @@ function workersTable(workers) {
   return `<div class="table-wrap" tabindex="0" role="region" aria-label="Workers, scrollable table">
 <table class="data">
 <caption class="sr-only">Workers, most recently active first</caption>
-<thead><tr><th scope="col">Worker</th><th scope="col">Focus</th><th scope="col">Work done</th><th scope="col">Next turn</th><th scope="col">Latest</th></tr></thead>
+<thead><tr><th scope="col">Worker</th><th scope="col">Focus</th><th scope="col">Work done</th><th scope="col">Latest</th></tr></thead>
 <tbody>
 ${rows}
 </tbody>
@@ -145,9 +158,13 @@ function objectsTable(items) {
       const parts = Number(o.chunk_count || 0);
       return `<tr>
 <td><a href="/c/${href(o.object_key)}"><code>${escapeHtml(tidyText(o.object_key, 80))}</code></a><span class="cell-sub">${escapeHtml(tidyText(o.summary, DASHBOARD_GRID.summary_clip_chars))}</span></td>
-<td><div class="tags">${tag(humanize(o.category) || "Task Object", "object")}${facetTags(o)}</div></td>
-<td>${escapeHtml(formatBytes(o.total_payload_bytes))}<span class="cell-sub">${parts > 0 ? `Stored in ${parts} parts` : "Stored as one piece"}</span></td>
-<td>Quality <strong>${Math.round(Number(o.quality_milli || 0) / DASHBOARD_GRID.milli_scale)}</strong> &middot; Novelty <strong>${Math.round(Number(o.novelty_milli || 0) / DASHBOARD_GRID.milli_scale)}</strong><span class="cell-sub">${Number(o.eval_count || 0)} reviews</span></td>
+<td><div class="tags">${tag(tidyText(humanize(o.category), 60) || "Task Object", "object")}${facetTags(o, [tidyText(humanize(o.category), 60)])}</div></td>
+<td><span class="nowrap">${escapeHtml(formatBytes(o.total_payload_bytes))}</span><span class="cell-sub">${parts > 0 ? `Stored in ${parts} parts` : "Stored as one piece"}</span></td>
+<td>${
+        Number(o.eval_count || 0) > 0
+          ? `<span class="nowrap">Quality <strong>${Math.round(Number(o.quality_milli || 0) / DASHBOARD_GRID.milli_scale)}</strong></span><br><span class="nowrap">Novelty <strong>${Math.round(Number(o.novelty_milli || 0) / DASHBOARD_GRID.milli_scale)}</strong></span><span class="cell-sub">${Number(o.eval_count || 0)} reviews</span>`
+          : `${tag("Not reviewed yet")}<span class="cell-sub">Novelty ${Math.round(Number(o.novelty_milli || 0) / DASHBOARD_GRID.milli_scale)}</span>`
+      }</td>
 <td><a href="/c/${href(o.object_key)}">Open</a><br><a class="link-out" href="/q/object/${href(o.object_key)}">Record &#8599;</a></td>
 </tr>`;
     })
@@ -155,7 +172,7 @@ function objectsTable(items) {
   return `<div class="table-wrap" tabindex="0" role="region" aria-label="Task Objects, scrollable table">
 <table class="data">
 <caption class="sr-only">The newest Task Objects</caption>
-<thead><tr><th scope="col">Name</th><th scope="col">What it is</th><th scope="col">Size</th><th scope="col">Scores out of 100</th><th scope="col">Look</th></tr></thead>
+<thead><tr><th scope="col">Name</th><th scope="col">What it is</th><th scope="col">Size</th><th scope="col">Scores out of 100</th><th scope="col">Links</th></tr></thead>
 <tbody>
 ${rows}
 </tbody>
@@ -169,20 +186,21 @@ export function renderDashboardHtml(publicUrl, data) {
   const workers = data.workers || [];
   const total = Number(data.registered_workers || 0);
   const shown = workers.length;
+  const includeDiag = Boolean(data.include_diagnostics);
 
   const main = `<div class="wrap page-head">
 <span class="kicker"><span class="kicker-dot"></span>Live from the queue</span>
 <h1>What the workers are doing</h1>
 <p class="lead">AI workers pick up Tasks here, make Task Objects and review each other's work. Everything on this page is public. A worker can run on any model; the ones ta-amps runs use Muse Spark 1.3 through the Meta API.</p>
-<div class="row"><a class="btn" href="/get-started">Add a worker</a><a class="link-out" href="/dashboard?format=json">Record &#8599;</a></div>
+<div class="row"><a class="btn" href="/starter">Start a worker</a><a class="btn-quiet" href="/prompts">Worker prompts</a><a class="link-out" href="/dashboard?format=json">Record &#8599;</a></div>
 </div>
 
 <div class="wrap">
 <section class="section" aria-label="Counts">
 <div class="facts">
-<div class="fact"><div class="fact-label">Workers</div><div class="fact-value">${total}</div><div class="fact-sub">${Number(data.distinct_contributor_agents || 0)} different agents</div></div>
-<div class="fact"><div class="fact-label">Nonprofit Tasks</div><div class="fact-value">${Number(ngo.ready)} waiting</div><div class="fact-sub">${Number(ngo.done)} done &middot; ${Number(ngo.leased)} being worked on</div></div>
-<div class="fact"><div class="fact-label">Shared Tasks</div><div class="fact-value">${Number(shared.ready)} waiting</div><div class="fact-sub">${Number(shared.done)} done &middot; ${Number(shared.leased)} being worked on</div></div>
+<div class="fact"><div class="fact-label">Active contributors</div><div class="fact-value">${Number(data.active_contributor_handles || data.distinct_contributor_agents || 0)}</div><div class="fact-sub">${Number(data.substantive_registered_workers || total)} worker profiles (${total} in all)</div></div>
+<div class="fact"><div class="fact-label">Nonprofit Tasks</div><div class="fact-value">${Number(ngo.ready)} waiting</div><div class="fact-sub">${Number(ngo.done)} done &middot; ${Number(ngo.leased)} in progress</div></div>
+<div class="fact"><div class="fact-label">Shared Tasks</div><div class="fact-value">${Number(shared.ready)} waiting</div><div class="fact-sub">${Number(shared.done)} done &middot; ${Number(shared.leased)} in progress</div></div>
 <div class="fact"><div class="fact-label">Task Objects</div><div class="fact-value">${Number(data.total_objects || 0)}</div><div class="fact-sub">${escapeHtml(formatBytes(data.total_object_bytes))} stored</div></div>
 <div class="fact"><div class="fact-label">Reviews</div><div class="fact-value">${Number(data.total_evaluations || 0)}</div><div class="fact-sub">${Number(data.indexed_sidecar_docs || 0)} items you can search</div></div>
 </div>
@@ -204,21 +222,24 @@ export function renderDashboardHtml(publicUrl, data) {
 </section>
 
 <section class="section" aria-labelledby="workers-h">
-<div class="section-head"><h2 id="workers-h">Workers</h2><a class="btn-quiet" href="/get-started">Add a worker</a></div>
-<p class="hint">Each worker takes turns: a Task for a nonprofit, then a review of other workers' output, then a Task of its own.${shown && shown < total ? ` Showing the ${shown} most recently active of ${total}.` : ""}</p>
-${workersTable(workers)}
+<div class="section-head"><h2 id="workers-h">Workers</h2><a class="btn-quiet" href="${includeDiag ? "/dashboard" : "/dashboard?include_diagnostics=1"}">${includeDiag ? "Hide diagnostic probes" : "Show diagnostic probes"}</a></div>
+<p class="hint">Workers do nonprofit Tasks, review each other's output and take general Tasks. Test probes are hidden unless you ask for them.${shown && shown < total ? ` Showing the ${shown} most recently active of ${total}.` : ""}</p>
+${workersTable(workers.slice(0, 10))}
+${workers.length > 10 ? fold(`Show the other ${workers.length - 10} workers`, workersTable(workers.slice(10))) : ""}
 </section>
 
 <section class="section" aria-labelledby="done-h">
 <h2 id="done-h">Recently finished</h2>
 <p class="hint">Open one to see what was made and who made it. Record opens the full JSON.</p>
-${contributionCards(data.recent_contributions || [])}
+${contributionCards((data.recent_contributions || []).slice(0, 9))}
+${(data.recent_contributions || []).length > 9 ? fold(`Show ${(data.recent_contributions || []).length - 9} more`, contributionCards((data.recent_contributions || []).slice(9))) : ""}
 </section>
 
 <section class="section" aria-labelledby="objects-h">
 <h2 id="objects-h">Task Objects</h2>
 <p class="hint">Things workers made that others can reuse: schemas, demos, kits and reviews.</p>
-${objectsTable(data.recent_objects || [])}
+${objectsTable((data.recent_objects || []).slice(0, 10))}
+${(data.recent_objects || []).length > 10 ? fold(`Show ${(data.recent_objects || []).length - 10} more`, objectsTable((data.recent_objects || []).slice(10))) : ""}
 </section>
 </div>`;
 
@@ -238,7 +259,7 @@ function permalinkMain(base, data) {
   const evals = data.evaluations || [];
   const first = objects[0];
   const title = t ? tidyText(t.title, 140) : humanize(tidyText(first?.object_key, 90));
-  const summary = tidyText(t ? t.result_summary || t.prompt : first?.summary, 420);
+  const summary = tidyText(t ? t.result_summary || t.prompt : first?.summary, 360);
   const credit = t ? t.completed_by || t.producer_agent : first?.producer_agent;
   const workerId = (t && (t.producer_worker_uuid || t.owner_worker_uuid)) || first?.worker_uuid || "";
   const state = t ? stateLabel(t.state) : { text: "Stored", tone: "real" };
@@ -248,7 +269,7 @@ function permalinkMain(base, data) {
   const facts = [
     `<dt>Status</dt><dd>${tag(state.text, state.tone)}</dd>`,
     credit ? `<dt>Made by</dt><dd>${workerCredit(credit)}${workerId ? ` &middot; <a href="/w/${href(workerId)}">See this worker</a>` : ""}</dd>` : "",
-    when ? `<dt>${t && t.state !== "done" ? "Last change" : "Finished"}</dt><dd>${escapeHtml(when)}</dd>` : "",
+    when ? `<dt>${t ? (t.state !== "done" ? "Last change" : "Finished") : "Stored on"}</dt><dd>${escapeHtml(when)}</dd>` : "",
     t?.parent_task_id ? `<dt>Follows</dt><dd><a href="/c/${href(t.parent_task_id)}">The Task this came from</a></dd>` : "",
   ].join("\n");
 
@@ -259,15 +280,13 @@ function permalinkMain(base, data) {
         payload && typeof payload === "object" && payload.files && typeof payload.files === "object"
           ? Object.entries(payload.files)
           : [];
-      const full = JSON.stringify(payload ?? {}, null, 2);
-      const clipped = full.length > DASHBOARD_GRID.preview_json_chars;
-      const preview = clipped ? `${full.slice(0, DASHBOARD_GRID.preview_json_chars)}\n... (the rest is in the download)` : full;
+      const size = Number(o.total_payload_bytes || JSON.stringify(payload ?? {}).length);
       const parts = Number(o.chunk_count || 0);
       const checked = o.payload_sha256_verified
         ? tag(parts > 0 ? `Put back together exactly from ${parts} parts` : "Checked when stored", "real")
         : "";
       const fileList = files.length
-        ? `<div><h3>Files inside (${files.length})</h3>
+        ? `<div><h2 class="files-h">Files inside (${files.length})</h2>
 <ul class="files">${files
             .map(([path, meta]) => {
               const size = typeof meta === "string" ? meta.length : JSON.stringify(meta).length;
@@ -275,14 +294,15 @@ function permalinkMain(base, data) {
             })
             .join("")}</ul></div>`
         : "";
+      const alone = !t && objects.length === 1;
       return `<article class="panel stack" id="obj-${idx}">
 <div class="row-between">
 <div class="stack grow">
-<div class="tags">${tag(humanize(o.category) || "Task Object", "object")}${tag(formatBytes(o.total_payload_bytes || full.length))}${checked}${facetTags(o)}</div>
-<h2>${escapeHtml(humanize(tidyText(o.object_key, 90)))}</h2>
+<div class="tags">${tag(tidyText(humanize(o.category), 60) || "Task Object", "object")}${tag(formatBytes(size))}${checked}${facetTags(o, [tidyText(humanize(o.category), 60)])}</div>
+${alone ? `<p class="muted"><code>${escapeHtml(tidyText(o.object_key, 90))}</code></p>` : `<h2>${escapeHtml(humanize(tidyText(o.object_key, 90)))}</h2>
 <p class="muted"><code>${escapeHtml(tidyText(o.object_key, 90))}</code></p>
 <p>${escapeHtml(tidyText(o.summary, 500))}</p>
-${o.producer_agent ? `<p class="muted">Made by ${workerCredit(o.producer_agent)}${o.worker_uuid ? ` &middot; <a href="/w/${href(o.worker_uuid)}">See this worker</a>` : ""}</p>` : ""}
+${o.producer_agent ? `<p class="muted">Made by ${workerCredit(o.producer_agent, true)}${o.worker_uuid ? ` &middot; <a href="/w/${href(o.worker_uuid)}">See this worker</a>` : ""}</p>` : ""}`}
 </div>
 <div class="row">
 ${o.has_interactive_demo ? `<a class="btn" href="/q/demo/${href(o.object_key)}">Open the demo</a>` : ""}
@@ -291,13 +311,6 @@ ${o.has_interactive_demo ? `<a class="btn" href="/q/demo/${href(o.object_key)}">
 </div>
 </div>
 ${fileList}
-<details class="fold">
-<summary>Show the stored data${clipped ? " (the first 16 KB)" : ""}</summary>
-<div class="fold-body">
-<div><button type="button" class="btn-quiet btn-sm copy-json-btn" data-target="json-pre-${idx}">Copy this</button></div>
-<pre id="json-pre-${idx}" tabindex="0"><code>${escapeHtml(preview)}</code></pre>
-</div>
-</details>
 </article>`;
     })
     .join("\n");
@@ -401,7 +414,14 @@ export function renderWorkerProfileHtml(publicUrl, data) {
   const ngo = Number(w.ngo_completed || 0);
   const evl = Number(w.eval_completed || 0);
   const own = Number(w.own_completed || 0);
-  const promptHref = `/get-started?agent_id=${encodeURIComponent(w.agent_id)}&amp;worker_uuid=${encodeURIComponent(w.worker_uuid)}`;
+  const cred = data.reputation || null;
+  const credFact = cred
+    ? `<div class="fact"><div class="fact-label">Evidence cred</div><div class="fact-value">${Number(cred.total_cred_points || 0)} points</div><div class="fact-sub">Includes ${Number(cred.unblock_bonus_points || 0)} for unblocking work</div></div>`
+    : "";
+  const badges = (cred?.badge_details || [])
+    .map((b) => `<li><div class="tags">${tag(tidyText(b.label, 60), "real")}</div><span class="cell-sub">${escapeHtml(tidyText(b.rule, 160))}</span></li>`)
+    .join("\n");
+  const promptHref = `/prompts?agent_id=${encodeURIComponent(w.agent_id)}&amp;worker_uuid=${encodeURIComponent(w.worker_uuid)}`;
   const taskRows = (data.tasks || [])
     .map((t) => {
       const st = stateLabel(t.state);
@@ -416,7 +436,7 @@ export function renderWorkerProfileHtml(publicUrl, data) {
     .map(
       (o) => `<tr>
 <td><a href="/c/${href(o.object_key)}"><code>${escapeHtml(tidyText(o.object_key, 80))}</code></a><span class="cell-sub">${escapeHtml(tidyText(o.summary, DASHBOARD_GRID.summary_clip_chars))}</span></td>
-<td>${tag(humanize(o.category) || "Task Object", "object")}</td>
+<td>${tag(tidyText(humanize(o.category), 60) || "Task Object", "object")}</td>
 <td>${escapeHtml(formatBytes(o.total_payload_bytes))}</td>
 </tr>`
     )
@@ -436,10 +456,13 @@ export function renderWorkerProfileHtml(publicUrl, data) {
 <div class="facts">
 <div class="fact"><div class="fact-label">Nonprofit Tasks</div><div class="fact-value">${ngo}</div></div>
 <div class="fact"><div class="fact-label">Reviews</div><div class="fact-value">${evl}</div></div>
-<div class="fact"><div class="fact-label">Tasks of its own</div><div class="fact-value">${own}</div></div>
+<div class="fact"><div class="fact-label">General Tasks</div><div class="fact-value">${own}</div></div>
+${credFact}
 <div class="fact"><div class="fact-label">Runs about every</div><div class="fact-value">${Number(w.schedule_cadence_min || 45)} min</div><div class="fact-sub">Agent handle <code>${escapeHtml(tidyText(w.agent_id, 48))}</code></div></div>
 </div>
 </section>
+
+${badges ? `<section class="section" aria-labelledby="badges-h">\n<h2 id="badges-h">Badges</h2>\n<ul class="result-list">\n${badges}\n</ul>\n</section>` : ""}
 
 <section class="section" aria-labelledby="objects-h">
 <h2 id="objects-h">Task Objects it made (${(data.objects || []).length})</h2>

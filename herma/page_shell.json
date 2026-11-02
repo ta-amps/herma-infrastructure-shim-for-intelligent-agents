@@ -1,14 +1,13 @@
 {
   "schema": "herma.page_shell.v1",
-  "note": "The one contract for what every Herma page shares: the thin agent banner, the header, the footer and the asset URLs. The Python and Worker renderers both read this file, and a test fails if they ever disagree or if the asset versions below fall behind herma/static/assets (run python3 scripts/build_page_assets.py to refresh them). The banner is an instructions Task Object in the same shape Eranos and Agora use.",
+  "note": "The one contract for what every Herma page shares: the thin agent banner, the header, the footer (one row of links and one short line, the same on every surface) and the asset URLs. The Python and Worker renderers both read this file, and a test fails if they ever disagree or if the asset versions below fall behind herma/static/assets (run python3 scripts/build_page_assets.py to refresh them). The banner is an instructions Task Object in the same shape Eranos and Agora use.",
   "site": {
     "name": "Herma",
-    "line": "Herma sits between an agent's harness and its model.",
     "agora": "https://agora.ta-amps.workers.dev",
     "eranos": "https://eranos.ta-amps.workers.dev"
   },
   "assets": {
-    "css": "/assets/herma-pages.css?v=cfc35b14ff",
+    "css": "/assets/herma-pages.css?v=21fdf61633",
     "banner_js": "/assets/agent-banner.js?v=fd51472c4a",
     "preload": [
       "/assets/fonts/IBMPlexSans-wdth-wght.woff2",
@@ -27,9 +26,14 @@
       "href": "/connect"
     },
     {
-      "key": "get-started",
-      "label": "Get started",
-      "href": "/get-started"
+      "key": "starter",
+      "label": "Starter kit",
+      "href": "/starter"
+    },
+    {
+      "key": "prompts",
+      "label": "Prompts",
+      "href": "/prompts"
     },
     {
       "key": "dashboard",
@@ -42,49 +46,29 @@
     "href": "https://agora.ta-amps.workers.dev/how-it-works/"
   },
   "footer": {
-    "note": "Herma sits between an agent's harness and its model. Agora explains how it works; Eranos is where the work happens.",
+    "note": "Herma sits between an agent's harness and its model. No analytics, ads or cookies.",
     "links": [
       {
         "label": "Models used ↗",
         "href": "https://agora.ta-amps.workers.dev/models/"
       },
       {
-        "label": "Status ↗",
-        "href": "https://agora.ta-amps.workers.dev/status/"
-      },
-      {
-        "label": "Accessibility ↗",
-        "href": "https://agora.ta-amps.workers.dev/accessibility/"
-      },
-      {
-        "label": "Source ↗",
-        "href": "https://agora.ta-amps.workers.dev/source/"
+        "label": "Agora ↗",
+        "href": "https://agora.ta-amps.workers.dev/"
       },
       {
         "label": "Eranos ↗",
         "href": "https://eranos.ta-amps.workers.dev/"
-      }
-    ],
-    "agent_label": "For agents",
-    "agent_links": [
-      {
-        "label": "llms.txt",
-        "href": "/llms.txt"
       },
       {
-        "label": "llms-full.txt",
-        "href": "/llms-full.txt"
-      },
-      {
-        "label": "Agent card",
-        "href": "/.well-known/agent-card.json"
-      },
-      {
-        "label": "Health",
+        "label": "Status",
         "href": "/healthz"
+      },
+      {
+        "label": "Source ↗",
+        "href": "https://agora.ta-amps.workers.dev/source/"
       }
-    ],
-    "privacy": "No analytics, ads or cookies, and nothing is stored in your browser. Fonts and scripts come from this site. We don't accept private information at this stage."
+    ]
   },
   "banner": {
     "schema_version": 1,
@@ -123,8 +107,8 @@
         "href": "/connect"
       },
       {
-        "label": "Get started prompts",
-        "href": "/get-started"
+        "label": "Worker prompts",
+        "href": "/prompts"
       },
       {
         "label": "Herma's llms.txt",

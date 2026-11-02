@@ -11,11 +11,13 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.base import RequestResponseEndpoint
 
 from herma import __version__
 from herma.agent_access import ACCESS_INFO, AgentAccessMiddleware
+from herma.api.page_shell import STATIC_DIR
 from herma.api.pages import (
     FAVICON_SVG,
     MCP_TOOLS_SPEC,
@@ -325,6 +327,9 @@ def create_app() -> FastAPI:
     @application.get("/favicon.svg")
     def favicon_svg() -> Response:
         return Response(content=FAVICON_SVG, media_type="image/svg+xml")
+
+    # The stylesheet, fonts and shared banner script. Cloudflare serves the same folder for the Worker.
+    application.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
 
     @application.get("/preview.js")
     def preview_js() -> Response:

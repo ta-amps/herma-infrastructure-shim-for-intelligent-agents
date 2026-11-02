@@ -2,6 +2,7 @@
 // Starter & Code-Reuse Hub (`/q/starter`, `/starter`), Meta Muse Telemetry (`/q/meta-telemetry`),
 // and Modal Finetuning Dataset Export (`/q/training-export`) for Herma v6.3.
 
+import { documentHtml, tidyText } from "./page_shell.js";
 import { scrubSensitiveText } from "./bilateral_bridge.js";
 import {
   DEFAULT_CONTEXT_ENTRIES,
@@ -38,8 +39,6 @@ export const HELP_STARTER_GRID = Object.freeze({
   max_output_tokens_cap: 4096,
   llm_timeout_ms: 25000,
   max_llm_response_bytes: 524288,
-  default_ollama_daily_cap: 30,
-  max_ollama_daily_cap: 1000,
   help_meta_daily_microusd_cap: 1000000,
   default_meta_total_budget_usd: 5,
   microusd_per_usd: 1000000,
@@ -96,13 +95,6 @@ export const HELP_STARTER_GRID = Object.freeze({
 });
 
 const META_MODEL_CATALOG = Object.freeze({
-  ollama: {
-    provider: "ollama",
-    default_model: "muse-spark-open",
-    allowed_models: ["muse-spark-open", "nanomuse"],
-    endpoint: "https://ollama.com/api/chat",
-    secret_env: "OLLAMA_API_KEY",
-  },
   meta: {
     provider: "meta",
     default_model: "muse-spark-1.3",
@@ -717,8 +709,8 @@ async function logMetaCallAttempt(db, record) {
       String(record.agent_id || "").slice(0, HELP_STARTER_GRID.agent_max_len),
       String(record.worker_uuid || "").slice(0, HELP_STARTER_GRID.worker_uuid_max_len),
       String(record.task_id || "").slice(0, HELP_STARTER_GRID.task_id_max_len),
-      String(record.provider || "ollama"),
-      String(record.requested_model || "muse-spark-open"),
+      String(record.provider || "meta"),
+      String(record.requested_model || "muse-spark-1.3"),
       String(record.reported_model || ""),
       Number(record.http_status || 0),
       String(record.outcome || "unknown"),
@@ -877,7 +869,7 @@ export async function runHelpAndMetaReasoningPipeline(
     taskId = "",
     agentId = "",
     workerUuid = "",
-    provider = "ollama",
+    provider = "meta",
     requestedModelOverride = "",
     topK = HELP_STARTER_GRID.default_top_k_objects,
     diagnostics = null,
@@ -902,7 +894,7 @@ export async function runHelpAndMetaReasoningPipeline(
     return { forbidden: true, code: "forbidden_tier", detail: intakeRes.detail };
   }
 
-  const reqProviderKey = String(provider || "ollama").toLowerCase().trim() || "ollama";
+  const reqProviderKey = String(provider || "meta").toLowerCase().trim() || "meta";
   const provSpec = META_MODEL_CATALOG[reqProviderKey];
   const candidateModel = String(requestedModelOverride || provSpec?.default_model || "").trim();
 
@@ -948,7 +940,7 @@ export async function runHelpAndMetaReasoningPipeline(
     return {
       unprocessable: true,
       code: "unsupported_help_provider_or_model",
-      detail: "Supported /q/help Meta providers are 'ollama' (muse-spark-open, nanomuse) and 'meta' (muse-spark-1.3, muse-wonder-1.0).",
+      detail: "Supported /q/help provider is 'meta' (muse-spark-1.3, muse-wonder-1.0), through the Meta API.",
     };
   }
 
@@ -956,13 +948,6 @@ export async function runHelpAndMetaReasoningPipeline(
   const maxOutputTokens = Math.max(
     HELP_STARTER_GRID.min_max_output_tokens,
     Math.min(HELP_STARTER_GRID.max_output_tokens_cap, Number.isFinite(rawMaxOut) ? rawMaxOut : HELP_STARTER_GRID.default_max_output_tokens)
-  );
-  const ollamaDailyCap = Math.max(
-    1,
-    Math.min(
-      HELP_STARTER_GRID.max_ollama_daily_cap,
-      Number(env?.HERMA_OLLAMA_CALLS_PER_DAY || HELP_STARTER_GRID.default_ollama_daily_cap)
-    )
   );
   const totalMetaBudgetUsd = Number(env?.HERMA_META_BUDGET_USD || HELP_STARTER_GRID.default_meta_total_budget_usd);
   const totalMetaBudgetMicrousd = Math.round(totalMetaBudgetUsd * HELP_STARTER_GRID.microusd_per_usd);
@@ -978,17 +963,11 @@ export async function runHelpAndMetaReasoningPipeline(
     model: candidateModel,
     destination: provSpec.endpoint,
     payer: "operator_bounded_help_allowance",
-    allowance:
-      provSpec.provider === "meta"
-        ? {
-            daily_public_microusd_cap: HELP_STARTER_GRID.help_meta_daily_microusd_cap,
-            total_operator_budget_microusd: totalMetaBudgetMicrousd,
-            max_output_tokens: maxOutputTokens,
-          }
-        : {
-            daily_calls_cap: ollamaDailyCap,
-            max_output_tokens: maxOutputTokens,
-          },
+    allowance: {
+      daily_public_microusd_cap: HELP_STARTER_GRID.help_meta_daily_microusd_cap,
+      total_operator_budget_microusd: totalMetaBudgetMicrousd,
+      max_output_tokens: maxOutputTokens,
+    },
     deadline_ms: HELP_STARTER_GRID.llm_timeout_ms,
     retry_policy: "single_attempt_no_hidden_fallback",
   };
@@ -1070,21 +1049,7 @@ export async function runHelpAndMetaReasoningPipeline(
     errorCode = "provider_key_missing";
   } else {
     let budgetAllowed = true;
-    if (provSpec.provider === "ollama") {
-      const usageRow = await db
-        .prepare(
-          `SELECT COUNT(*) AS cnt FROM herma_meta_call_log
-           WHERE provider = 'ollama' AND created_at >= ?
-             AND outcome IN ('completed', 'rate_limited', 'upstream_error')`
-        )
-        .bind(`${utcDayPrefix}T00:00:00.000Z`)
-        .first();
-      if (!infraAllowed && Number(usageRow?.cnt || 0) >= ollamaDailyCap) {
-        budgetAllowed = false;
-        outcome = "budget_capped";
-        errorCode = "ollama_daily_cap_reached";
-      }
-    } else if (provSpec.provider === "meta") {
+    if (provSpec.provider === "meta") {
       const [daySpendRow, totalSpendRow] = await Promise.all([
         db
           .prepare(
@@ -1123,25 +1088,15 @@ export async function runHelpAndMetaReasoningPipeline(
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), HELP_STARTER_GRID.llm_timeout_ms);
       try {
-        const reqBody =
-          provSpec.provider === "ollama"
-            ? {
-                model: candidateModel,
-                stream: false,
-                messages: [
-                  { role: "system", content: sysPrompt },
-                  { role: "user", content: userPrompt },
-                ],
-              }
-            : {
-                model: candidateModel,
-                stream: false,
-                max_tokens: maxOutputTokens,
-                messages: [
-                  { role: "system", content: sysPrompt },
-                  { role: "user", content: userPrompt },
-                ],
-              };
+        const reqBody = {
+          model: candidateModel,
+          stream: false,
+          max_tokens: maxOutputTokens,
+          messages: [
+            { role: "system", content: sysPrompt },
+            { role: "user", content: userPrompt },
+          ],
+        };
         const resp = await fetch(provSpec.endpoint, {
           method: "POST",
           headers: {
@@ -1165,26 +1120,21 @@ export async function runHelpAndMetaReasoningPipeline(
           } catch {
             reply = null;
           }
-          const rawContent =
-            provSpec.provider === "ollama"
-              ? reply?.message?.content
-              : Array.isArray(reply?.choices?.[0]?.message?.content)
-                ? reply.choices[0].message.content
-                    .map((part) => (typeof part === "string" ? part : part?.text || ""))
-                    .join("\n")
-                : reply?.choices?.[0]?.message?.content;
+          const rawContent = Array.isArray(reply?.choices?.[0]?.message?.content)
+            ? reply.choices[0].message.content
+                .map((part) => (typeof part === "string" ? part : part?.text || ""))
+                .join("\n")
+            : reply?.choices?.[0]?.message?.content;
 
           if (typeof rawContent === "string" && rawContent.trim().length > 0) {
             reportedModel = String(reply?.model || candidateModel);
             inputTokens = Number(
-              reply?.prompt_eval_count ||
-                reply?.usage?.prompt_tokens ||
+              reply?.usage?.prompt_tokens ||
                 reply?.usage?.input_tokens ||
                 Math.ceil((sysPrompt.length + userPrompt.length) / HELP_STARTER_GRID.estimated_chars_per_token)
             );
             outputTokens = Number(
-              reply?.eval_count ||
-                reply?.usage?.completion_tokens ||
+              reply?.usage?.completion_tokens ||
                 reply?.usage?.output_tokens ||
                 Math.ceil(rawContent.length / HELP_STARTER_GRID.estimated_chars_per_token)
             );
@@ -1353,8 +1303,8 @@ export async function handleWorkerHelpRequest(request, env, db, publicUrl, infra
         preview_only: true,
         reasoning_mode: "deterministic_shim_fallback",
         description:
-          "Bilateral 'I Need Help' endpoint: runs Traditional Herma Context Shimming + Hybrid Task Object Search first, then invokes bounded server-side Meta Muse reasoning (muse-spark-open or muse-spark-1.3).",
-        supported_meta_models: ["muse-spark-open", "nanomuse", "muse-spark-1.3", "muse-wonder-1.0"],
+          "Bilateral 'I Need Help' endpoint: runs Traditional Herma Context Shimming + Hybrid Task Object Search first, then invokes bounded server-side Muse reasoning (muse-spark-1.3 through the Meta API).",
+        supported_meta_models: ["muse-spark-1.3", "muse-wonder-1.0"],
         example_post: {
           url: `${base}/q/help`,
           body: {
@@ -1362,7 +1312,7 @@ export async function handleWorkerHelpRequest(request, env, db, publicUrl, infra
             worker_uuid: "w_your_saved_uuid",
             task_id: "ngo_seed_disaster_shelter_schema",
             question: "Which existing Task Objects should I reuse for accessibility and backup-power validation?",
-            provider: "ollama",
+            provider: "meta",
           },
         },
         example_get: `${base}/q/help?question=How+do+I+compose+existing+shelter+schemas&task_id=ngo_seed_disaster_shelter_schema`,
@@ -1396,7 +1346,7 @@ export async function handleWorkerHelpRequest(request, env, db, publicUrl, infra
       taskId,
       agentId: params.agent_id || params.agent || "",
       workerUuid: params.worker_uuid || params.uuid || "",
-      provider: params.provider || "ollama",
+      provider: params.provider || "meta",
       requestedModelOverride: params.model || "",
       topK: params.top_k || params.limit || HELP_STARTER_GRID.default_top_k_objects,
       persistArtifacts: method === "POST",
@@ -1494,7 +1444,7 @@ export async function buildStarterCatalogData(db, infraAllowed, publicUrl) {
       {
         step: 3,
         title: "Ask /q/help or /q/chat When Designing or Blocked",
-        detail: `Send your question + task_id to POST ${base}/q/help (or converse turn-by-turn on POST ${base}/q/chat) to receive shimmed Herma rules, reusable objects, and Meta Muse (muse-spark-open / muse-spark-1.3) guidance.`,
+        detail: `Send your question + task_id to POST ${base}/q/help (or converse turn-by-turn on POST ${base}/q/chat) to receive shimmed Herma rules, reusable objects, and Muse Spark 1.3 guidance.`,
       },
       {
         step: 4,
@@ -1542,7 +1492,7 @@ export async function buildStarterCatalogData(db, infraAllowed, publicUrl) {
           agent_id: "muse-builder-01",
           worker_uuid: "<YOUR_SAVED_WORKER_UUID>",
           task_id: "ngo_seed_disaster_shelter_schema",
-          provider: "ollama",
+          provider: "meta",
           question: "Which existing Task Objects have validated wheelchair ramp and medical backup power fields I can import?",
         },
       },
@@ -1564,11 +1514,11 @@ export async function buildStarterCatalogData(db, infraAllowed, publicUrl) {
 export function renderStarterHubHtml(publicUrl, catalogData) {
   const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
   const groups = [
-    ["schemas_and_contracts", "Schemas & Contracts"],
-    ["runnable_code_and_adapters", "Runnable Code & Adapters"],
-    ["portable_agent_kits", "Portable Agent Kits"],
-    ["interactive_demos", "Interactive Demos"],
-    ["evaluation_rubrics", "Evaluation Rubrics"],
+    ["schemas_and_contracts", "Schemas and contracts"],
+    ["runnable_code_and_adapters", "Runnable code and adapters"],
+    ["portable_agent_kits", "Portable agent kits"],
+    ["interactive_demos", "Interactive demos"],
+    ["evaluation_rubrics", "Evaluation rubrics"],
   ];
 
   const groupCardsHtml = groups
@@ -1576,110 +1526,65 @@ export function renderStarterHubHtml(publicUrl, catalogData) {
       const items = catalogData.reusable_object_catalog[key] || [];
       const rows = items.length
         ? items
-            .map(
-              (o) => `<li class="obj-item">
-                <div><a href="${escapeHtml(o.permalink_url)}"><code>${escapeHtml(o.object_key)}</code></a>
-                  <span class="pill">${escapeHtml(o.review_status === "peer_reviewed" ? `Peer Reviewed (${o.quality_milli})` : "Unreviewed")}</span>
-                </div>
-                <div class="muted">${escapeHtml(o.summary.slice(0, 140))}</div>
-                <div class="links">
-                  <a href="${escapeHtml(o.pinned_url)}">Pinned JSON</a> &middot;
-                  <a href="${escapeHtml(o.object_url)}">Latest</a>
-                </div>
-              </li>`
-            )
+            .map((o) => {
+              const reviewed = o.review_status === "peer_reviewed";
+              const score = Math.round(Number(o.quality_milli || 0) / 10);
+              return `<li><div class="tags"><span class="tag tag-object">Task Object</span><span class="tag${reviewed ? " tag-real" : ""}">${escapeHtml(reviewed ? `Reviewed by peers (${score} of 100)` : "Not reviewed yet")}</span></div>
+<a href="${escapeHtml(o.permalink_url)}"><code>${escapeHtml(tidyText(o.object_key, 80))}</code></a>
+<span class="cell-sub">${escapeHtml(tidyText(o.summary, 140))}</span>
+<span class="row"><a class="link-out" href="${escapeHtml(o.pinned_url)}">Pinned copy &#8599;</a><a class="link-out" href="${escapeHtml(o.object_url)}">Latest &#8599;</a></span></li>`;
+            })
             .join("")
-        : `<li class="muted">No objects indexed in this group yet -- search <a href="${base}/q/search?q=schema">/q/search</a> to explore all artifacts.</li>`;
-      return `<div class="card"><h3>${escapeHtml(label)}</h3><ul class="obj-list">${rows}</ul></div>`;
+        : `<li class="muted">No Task Objects are indexed in this group yet. <a href="${escapeHtml(base)}/q/search?q=schema">Search them all</a>.</li>`;
+      return `<div class="card"><h3>${escapeHtml(label)}</h3><ul class="result-list">${rows}</ul></div>`;
     })
     .join("\n");
 
   const stepsHtml = catalogData.quick_start_workflow
     .map(
       (s) =>
-        `<div class="step-card"><div class="step-num">Step ${Number(s.step)}</div><h3>${escapeHtml(s.title)}</h3><p>${escapeHtml(s.detail)}</p></div>`
+        `<div class="card"><span class="kicker"><span class="kicker-dot"></span>Step ${Number(s.step)}</span><h3>${escapeHtml(tidyText(s.title, 90))}</h3><p>${escapeHtml(tidyText(s.detail, 400))}</p></div>`
     )
     .join("\n");
 
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="color-scheme" content="only light" />
-  <title>Starter Kit, Code Reuse &amp; Bilateral Help -- Herma Task Queue</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <style>
-    :root { color-scheme:only light; --bg:#f6f4ee; --card:#ffffff; --border:#dcd6ca; --ink:#161920; --muted:#565d6a; --accent:#155e48; }
-    * { box-sizing:border-box; }
-    body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background:var(--bg); color:var(--ink); line-height:1.55; }
-    a { color:var(--accent); text-decoration:none; }
-    a:hover { text-decoration:underline; }
-    .wrap { max-width:1180px; margin:0 auto; padding:20px 20px 64px; }
-    .topbar { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; padding-bottom:14px; border-bottom:1px solid var(--border); margin-bottom:24px; }
-    .nav { display:flex; flex-wrap:wrap; gap:14px; font-size:0.9rem; }
-    .grid-4 { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:14px; margin-bottom:24px; }
-    .grid-2 { display:grid; grid-template-columns:repeat(auto-fit, minmax(340px, 1fr)); gap:16px; margin-bottom:24px; }
-    .card, .step-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px 18px; }
-    .step-num { font-size:0.75rem; font-weight:700; text-transform:uppercase; color:var(--accent); letter-spacing:0.05em; }
-    h1 { margin:0 0 8px; font-size:1.75rem; }
-    h2 { margin:26px 0 12px; font-size:1.25rem; }
-    h3 { margin:4px 0 8px; font-size:1.02rem; }
-    pre { background:#f3efe6; border:1px solid var(--border); border-radius:8px; padding:12px; overflow-x:auto; font-size:0.8rem; color:#161920; }
-    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:0.84em; }
-    .obj-list { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:10px; }
-    .obj-item { border-top:1px solid var(--border); padding-top:8px; }
-    .obj-item:first-child { border-top:none; padding-top:0; }
-    .muted { color:var(--muted); font-size:0.84rem; }
-    .links { font-size:0.8rem; margin-top:4px; }
-    .pill { display:inline-block; font-size:0.72rem; padding:1px 7px; border-radius:999px; border:1px solid var(--border); color:var(--muted); margin-left:6px; }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="topbar">
-      <div><strong>Herma Task Queue &amp; Reuse Starter Hub</strong></div>
-      <nav class="nav">
-        <a href="${base}/dashboard">Live Dashboard</a>
-        <a href="${base}/prompts">Agent Prompts (v5)</a>
-        <a href="${base}/starter"><strong>Starter Kit &amp; Code Reuse</strong></a>
-        <a href="${base}/q/chat">Agent-to-Agent Chat</a>
-        <a href="${base}/q/help">'I Need Help' API</a>
-        <a href="https://eranos.ta-amps.workers.dev/">Eranos Marketplace</a>
-      </nav>
-    </div>
+  const sample = (title, code) =>
+    `<div class="card"><h3>${title}</h3><pre tabindex="0">${escapeHtml(code)}</pre></div>`;
 
-    <h1>Starter Kit, Code Reuse &amp; Bilateral Help</h1>
-    <p class="muted">Reuse verified Task Objects before writing boilerplate, keep one persistent <code>worker_uuid</code> + <code>worker_token</code>, and call <code>POST /q/help</code> or <code>POST /q/chat</code> whenever designing or blocked (powered by Herma Context Shims + Meta Muse models <code>muse-spark-open</code> &amp; <code>muse-spark-1.3</code>).</p>
+  const main = `<div class="wrap page-head">
+<span class="kicker"><span class="kicker-dot"></span>Starter kit</span>
+<h1>Start in 30 seconds</h1>
+<p class="lead">Reuse a verified Task Object before you write anything new, keep one worker id and token, and ask <code>POST /q/help</code> or <code>POST /q/chat</code> whenever you are designing or stuck. Help is powered by Herma's context shims and Muse Spark 1.3 through the Meta API.</p>
+<div class="row"><a class="btn" href="/prompts">Worker prompts</a><a class="btn-quiet" href="/dashboard">See the dashboard</a></div>
+</div>
 
-    <h2>1. Four-Step Contributor Workflow</h2>
-    <div class="grid-4">${stepsHtml}</div>
+<div class="wrap">
+<section class="section" aria-labelledby="flow-h">
+<h2 id="flow-h">Four steps</h2>
+<div class="cards">${stepsHtml}</div>
+</section>
 
-    <h2>2. Copy-Paste Starter Frameworks &amp; Verification Harness</h2>
-    <div class="grid-2">
-      <div class="card">
-        <h3>Zero-Dependency Python Helper</h3>
-        <pre>${escapeHtml(catalogData.starter_frameworks.python_zero_dep_client)}</pre>
-      </div>
-      <div class="card">
-        <h3>Agent-to-Agent Chat (<code>/q/chat</code>) &amp; Help (<code>/q/help</code>)</h3>
-        <pre>${escapeHtml(catalogData.starter_frameworks.curl_and_js_fetch)}</pre>
-      </div>
-      <div class="card">
-        <h3>Local Pre-Submit Verification Harness</h3>
-        <pre>${escapeHtml(catalogData.starter_frameworks.local_verification_harness)}</pre>
-      </div>
-      <div class="card">
-        <h3>Copy-Paste <code>POST /q/help</code> Request</h3>
-        <pre>${escapeHtml(JSON.stringify(catalogData.starter_frameworks.help_query_example.payload, null, 2))}</pre>
-      </div>
-    </div>
+<section class="section" aria-labelledby="copy-h">
+<h2 id="copy-h">Copy and paste</h2>
+<div class="cards">
+${sample("A small Python helper with no dependencies", catalogData.starter_frameworks.python_zero_dep_client)}
+${sample("Talk to <code>/q/chat</code> and ask <code>/q/help</code>", catalogData.starter_frameworks.curl_and_js_fetch)}
+${sample("A check to run before you submit", catalogData.starter_frameworks.local_verification_harness)}
+${sample("An example <code>POST /q/help</code> request", JSON.stringify(catalogData.starter_frameworks.help_query_example.payload, null, 2))}
+</div>
+</section>
 
-    <h2>3. Live Reusable Task Objects Catalog</h2>
-    <div class="grid-2">${groupCardsHtml}</div>
-  </div>
-</body>
-</html>`;
+<section class="section" aria-labelledby="reuse-h">
+<h2 id="reuse-h">Task Objects you can reuse today</h2>
+<div class="cards">${groupCardsHtml}</div>
+</section>
+</div>`;
+
+  return documentHtml({
+    title: "Starter kit",
+    description: "Reuse verified Task Objects, keep one worker id, and ask for help when you are stuck.",
+    active: "starter",
+    main,
+  });
 }
 
 export async function handleStarterHubRequest(request, env, db, publicUrl, infraAllowed) {
@@ -2665,7 +2570,7 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
         taskId: activeTaskId,
         agentId,
         workerUuid: profile.worker_uuid,
-        provider: body.provider || "ollama",
+        provider: body.provider || "meta",
         requestedModelOverride: body.model || "",
         topK: HELP_STARTER_GRID.default_top_k_objects,
         diagnostics,
@@ -2924,7 +2829,7 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
           id: `chatcmpl_${sessionId}_${nextTurnCount}`,
           object: "chat.completion",
           created: Math.floor(Date.now() / HELP_STARTER_GRID.ms_per_second),
-          model: String(body.model || "herma-a2a-muse-spark-open"),
+          model: String(body.model || "herma-a2a-muse-spark-1.3"),
           choices: [
             {
               index: 0,
@@ -3010,7 +2915,6 @@ export async function handleMetaTelemetryRequest(request, env, db) {
     db
       .prepare(
         `SELECT
-           SUM(CASE WHEN provider = 'ollama' AND outcome IN ('completed', 'rate_limited', 'upstream_error') THEN 1 ELSE 0 END) AS ollama_calls_today,
            COALESCE(SUM(CASE WHEN provider = 'meta' THEN estimated_microusd ELSE 0 END), 0) AS meta_microusd_today
          FROM herma_meta_call_log
          WHERE created_at >= ?`
@@ -3047,14 +2951,13 @@ export async function handleMetaTelemetryRequest(request, env, db) {
   }
 
   const totalMetaBudgetUsd = Number(env?.HERMA_META_BUDGET_USD || HELP_STARTER_GRID.default_meta_total_budget_usd);
-  const ollamaDailyCap = Number(env?.HERMA_OLLAMA_CALLS_PER_DAY || HELP_STARTER_GRID.default_ollama_daily_cap);
 
   return {
     status: HELP_STARTER_GRID.http_ok,
     body: {
       ok: true,
       schema: HELP_STARTER_GRID.schema_telemetry_id,
-      supported_meta_muse_models: ["muse-spark-1.3", "muse-wonder-1.0", "muse-spark-open", "nanoMuse"],
+      supported_meta_muse_models: ["muse-spark-1.3", "muse-wonder-1.0"],
       totals: {
         total_meta_calls: totalCalls,
         completed_calls: completedCalls,
@@ -3071,8 +2974,6 @@ export async function handleMetaTelemetryRequest(request, env, db) {
       },
       budget_consumption: {
         utc_day: utcDayPrefix,
-        ollama_calls_today: Number(dayTotalsRow?.ollama_calls_today || 0),
-        ollama_daily_cap: ollamaDailyCap,
         meta_microusd_today: Number(dayTotalsRow?.meta_microusd_today || 0),
         meta_daily_public_microusd_cap: HELP_STARTER_GRID.help_meta_daily_microusd_cap,
         meta_total_estimated_microusd: totalEstimatedMicrousd,
@@ -3186,7 +3087,7 @@ export async function handleTrainingExportRequest(request, env, db, publicUrl) {
       record_kind: tr.source_kind,
       verified_outcome: tr.verified_outcome,
       sample_weight: weight,
-      source_model: tr.model_id || "muse-spark-open",
+      source_model: tr.model_id || "muse-spark-1.3",
       messages: [
         { role: "system", content: scrubEmDash(scrubSensitiveText(JSON.stringify(sysShim))) },
         ...(Array.isArray(inMsgs)
@@ -3297,7 +3198,7 @@ export async function handleTrainingExportRequest(request, env, db, publicUrl) {
     body: {
       ok: true,
       schema: HELP_STARTER_GRID.schema_training_id,
-      target_model_families: ["muse-spark-open", "nanoMuse", "muse-spark-1.3", "muse-wonder-1.0"],
+      target_model_families: ["muse-spark-1.3", "muse-wonder-1.0"],
       modal_gpu_training_recipe: {
         recommended_methods: ["weighted_sft", "dora_parametric_memory", "dpo_preference_alignment"],
         router_adapter_rank: HELP_STARTER_GRID.lora_rank_router,

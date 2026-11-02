@@ -24,6 +24,7 @@ import {
   renderDashboardJs,
   renderWorkerProfileHtml,
 } from "./dashboard_and_permalinks.js";
+import { renderInteractiveDemoPageHtml, renderInteractiveDemoRunnerJs } from "./demo_page.js";
 import { isAdminRequest } from "./herma_engine.js";
 import {
   buildPromptCatalog,
@@ -1151,7 +1152,7 @@ function markGatewayDbSchemaV69Ready(db) {
       enumerable: false,
     });
   } catch {
-    // frozen mock DB object in synthetic unit test
+    // frozen mock DB object in a unit test
   }
 }
 
@@ -3140,258 +3141,6 @@ async function buildWorkerProfileData(db, infraAllowed, rawWorkerUuid) {
     tasks: tasksRes?.results || [],
     objects: objsRes?.results || [],
   };
-}
-
-function renderInteractiveDemoPageHtml(publicUrl, objDoc) {
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
-  const safeJson = JSON.stringify(objDoc || {}).replace(/</g, "\\u003c");
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="color-scheme" content="only light" />
-  <title>Interactive Component &amp; Multimodal Preview -- ${String(objDoc?.object_key || "").replace(/[<>&"]/g, "")}</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <style>
-    :root { color-scheme: only light; --bg:#f6f4ee; --paper:#ffffff; --ink:#161920; --muted:#565d6a; --line:#dcd6ca; --accent:#155e48; --accent-soft:#e3f2ec; }
-    body { margin:0; font-family: ui-sans-serif, system-ui, sans-serif; background:var(--bg); color:var(--ink); }
-    .wrap { max-width: 1080px; margin: 0 auto; padding: 24px 20px 60px; }
-    .top { display:flex; justify-content:space-between; align-items:center; gap:12px; border-bottom:1px solid var(--line); padding-bottom:14px; margin-bottom:20px; }
-    a { color:var(--accent); text-decoration:none; font-weight:600; }
-    .stage { display:grid; grid-template-columns: 1.2fr 1fr; gap:18px; }
-    @media (max-width: 820px) { .stage { grid-template-columns: 1fr; } }
-    .card { background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
-    canvas { width:100%; height:auto; background:#faf8f2; border:1px solid var(--line); border-radius:10px; display:block; }
-    .controls { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; align-items:center; }
-    button { background:var(--accent); color:#ffffff; border:none; border-radius:8px; padding:8px 14px; font-weight:600; cursor:pointer; }
-    button:hover { background:#0e4333; }
-    pre { background:#f3efe6; border:1px solid var(--line); padding:12px; border-radius:8px; overflow-x:auto; font-size:0.8rem; color:var(--ink); max-height:320px; }
-    .step-item { padding:8px 10px; border-left:3px solid var(--line); margin-bottom:8px; background:#faf9f6; border-radius:0 8px 8px 0; }
-    .step-item.active { border-left-color:var(--accent); background:var(--accent-soft); }
-    #audio-box { margin-top:12px; display:none; padding:10px 12px; background:var(--accent-soft); border-radius:8px; }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="top">
-      <div><strong>Herma Interactive Component, 3D STL Mesh &amp; Multimodal Simulator</strong></div>
-      <div>
-        <a href="${base}/c/${encodeURIComponent(objDoc?.object_key || "")}">&larr; Contribution Permalink</a> &middot;
-        <a href="${base}/dashboard">Live Dashboard</a>
-      </div>
-    </div>
-    <h1 id="demo-title" style="margin:0 0 6px"></h1>
-    <p id="demo-summary" style="color:var(--muted);margin:0 0 18px"></p>
-    <div class="stage">
-      <div class="card">
-        <canvas id="demo-canvas" width="720" height="420"></canvas>
-        <div id="audio-box"><strong>Procedural WAV Audio Stem:</strong> <audio id="demo-audio" controls style="vertical-align:middle;margin-left:8px"></audio></div>
-        <div class="controls">
-          <button type="button" id="btn-play">Play / Pause Walkthrough</button>
-          <button type="button" id="btn-prev">Prev Step</button>
-          <button type="button" id="btn-next">Next Step</button>
-        </div>
-        <div id="qa-metrics" style="margin-top:10px;font-size:0.84rem;color:var(--muted)"></div>
-      </div>
-      <div class="card">
-        <h3 style="margin-top:0">Walkthrough Steps &amp; Invariants</h3>
-        <div id="steps-list"></div>
-        <h3>Live State / I/O Inspector</h3>
-        <pre id="step-io"></pre>
-      </div>
-    </div>
-  </div>
-  <script type="application/json" id="demo-spec-data">${safeJson}</script>
-  <script src="/q/demo-runner.js" defer></script>
-</body>
-</html>`;
-}
-
-function renderInteractiveDemoRunnerJs() {
-  return `(function () {
-  function escHtml(v) {
-    return String(v == null ? "" : v)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
-  }
-  var dataEl = document.getElementById("demo-spec-data");
-  if (!dataEl) return;
-  var doc = {};
-  try { doc = JSON.parse(dataEl.textContent || "{}"); } catch (e) { doc = {}; }
-  var payload = (doc && doc.payload) || {};
-  var demo = payload.interactive_demo || {};
-  var steps = demo.steps || payload.demo_steps || payload.video_storyboard || [
-    { title: "1. Input Envelope", caption: "Validated input arrives at component boundary", state: payload.sample_input || { modality: doc.asset_modality || "code_or_spec", status: "ready" } },
-    { title: "2. Core Deterministic Transform", caption: doc.summary || "Executes pure domain-agnostic mechanism", state: payload.mesh_qa || payload.audio_qa || payload.invariants || { verified: true } },
-    { title: "3. Cryptographic Receipt & QA Proof", caption: "SHA-256 verified output emitted", state: { sha256: doc.sha256_hash, storage_tier: doc.storage_tier || "inline_d1" } }
-  ];
-
-  var titleEl = document.getElementById("demo-title");
-  var sumEl = document.getElementById("demo-summary");
-  var listEl = document.getElementById("steps-list");
-  var ioEl = document.getElementById("step-io");
-  var qaEl = document.getElementById("qa-metrics");
-  var canvas = document.getElementById("demo-canvas");
-  var ctx = canvas ? canvas.getContext("2d") : null;
-  var audioBox = document.getElementById("audio-box");
-  var audioEl = document.getElementById("demo-audio");
-
-  if (titleEl) titleEl.textContent = demo.title || doc.object_key || "Component Demo";
-  if (sumEl) sumEl.textContent = doc.summary || "";
-
-  var wavB64 = payload.wav_base64 || (payload.files && payload.files["stem.wav.b64"]);
-  if (wavB64 && audioBox && audioEl) {
-    audioBox.style.display = "block";
-    audioEl.src = "data:audio/wav;base64," + String(wavB64).replace(/\\s+/g, "");
-  }
-
-  function parseAsciiStlTriangles(stlText) {
-    if (!stlText || typeof stlText !== "string") return [];
-    var tris = [];
-    var re = /vertex\\s+([-+0-9.eE]+)\\s+([-+0-9.eE]+)\\s+([-+0-9.eE]+)/g;
-    var m;
-    var verts = [];
-    while ((m = re.exec(stlText)) !== null) {
-      verts.push([parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3])]);
-      if (verts.length === 3) {
-        tris.push(verts);
-        verts = [];
-      }
-    }
-    return tris;
-  }
-  var stlRaw = payload.stl_ascii || (payload.files && (payload.files["mesh.stl"] || payload.files["model.stl"])) || "";
-  var stlTris = parseAsciiStlTriangles(stlRaw);
-
-  var idx = 0;
-  var playing = true;
-  var tick = 0;
-
-  function renderStepList() {
-    if (!listEl) return;
-    var html = "";
-    for (var i = 0; i < steps.length; i += 1) {
-      var s = steps[i] || {};
-      html += "<div class='step-item" + (i === idx ? " active" : "") + "' data-idx='" + i + "'>" +
-        "<strong>" + escHtml(s.title || s.scene || ("Step " + (i + 1))) + "</strong>" +
-        "<div style='font-size:0.83rem;color:#565d6a;margin-top:2px'>" + escHtml(s.caption || s.narration || s.visual || "") + "</div>" +
-        "</div>";
-    }
-    listEl.innerHTML = html;
-    if (ioEl) ioEl.textContent = JSON.stringify(steps[idx], null, 2);
-    if (qaEl) {
-      qaEl.textContent = "Step " + (idx + 1) + "/" + steps.length +
-        " | Modality: " + String(doc.asset_modality || "code_or_spec") +
-        " | SHA-256 Verified: " + String(Boolean(doc.payload_sha256_verified)) +
-        " | Bytes: " + String(doc.total_payload_bytes || 0);
-    }
-  }
-
-  function drawCanvas() {
-    if (!ctx || !canvas) return;
-    var w = canvas.width;
-    var h = canvas.height;
-    ctx.fillStyle = "#faf8f2";
-    ctx.fillRect(0, 0, w, h);
-
-    ctx.strokeStyle = "#ebe6da";
-    ctx.lineWidth = 1;
-    for (var gx = 0; gx < w; gx += 36) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, h); ctx.stroke(); }
-    for (var gy = 0; gy < h; gy += 36) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke(); }
-
-    if (stlTris.length > 0) {
-      var ang = tick * 0.03;
-      var ca = Math.cos(ang), sa = Math.sin(ang);
-      ctx.strokeStyle = "#155e48";
-      ctx.fillStyle = "rgba(21, 94, 72, 0.14)";
-      ctx.lineWidth = 1.1;
-      for (var t = 0; t < stlTris.length; t += 1) {
-        var tri = stlTris[t];
-        ctx.beginPath();
-        for (var v = 0; v < 3; v += 1) {
-          var x = tri[v][0], y = tri[v][1], z = tri[v][2];
-          var rx = x * ca - z * sa;
-          var rz = x * sa + z * ca;
-          var ry = y * 0.88 - rz * 0.32;
-          var px = w * 0.5 + rx * 95;
-          var py = 135 - ry * 95;
-          if (v === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-        }
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-      }
-    } else {
-      var n = steps.length;
-      var margin = 70;
-      var span = Math.max(1, w - margin * 2);
-      for (var i = 0; i < n; i += 1) {
-        var nx = n === 1 ? w / 2 : margin + (span * i) / (n - 1);
-        var ny = 145;
-        if (i < n - 1) {
-          var nextX = margin + (span * (i + 1)) / (n - 1);
-          ctx.strokeStyle = i < idx ? "#155e48" : "#dcd6ca";
-          ctx.lineWidth = 3;
-          ctx.beginPath(); ctx.moveTo(nx, ny); ctx.lineTo(nextX, ny); ctx.stroke();
-        }
-        var active = i === idx;
-        var r = active ? 26 + Math.sin(tick * 0.12) * 3 : 20;
-        ctx.fillStyle = active ? "#155e48" : (i < idx ? "#2d7a61" : "#8c93a0");
-        ctx.beginPath(); ctx.arc(nx, ny, r, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 14px ui-sans-serif, sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText(String(i + 1), nx, ny + 5);
-      }
-    }
-
-    var cur = steps[idx] || {};
-    ctx.fillStyle = "#ffffff";
-    ctx.strokeStyle = "#155e48";
-    ctx.lineWidth = 1.5;
-    ctx.fillRect(42, 235, w - 84, 148);
-    ctx.strokeRect(42, 235, w - 84, 148);
-
-    ctx.fillStyle = "#155e48";
-    ctx.textAlign = "left";
-    ctx.font = "bold 18px ui-sans-serif, sans-serif";
-    ctx.fillText(String(cur.title || cur.scene || ("Step " + (idx + 1))).slice(0, 62), 62, 268);
-
-    ctx.fillStyle = "#161920";
-    ctx.font = "14px ui-sans-serif, sans-serif";
-    var desc = String(cur.caption || cur.narration || cur.visual || doc.summary || "");
-    ctx.fillText(desc.slice(0, 82), 62, 298);
-    if (desc.length > 82) ctx.fillText(desc.slice(82, 164), 62, 320);
-
-    ctx.fillStyle = "#565d6a";
-    ctx.font = "12px ui-monospace, monospace";
-    ctx.fillText("task_object=" + String(doc.object_key || "").slice(0, 48) + " | modality=" + String(doc.asset_modality || "code_or_spec"), 62, 360);
-  }
-
-  renderStepList();
-  drawCanvas();
-
-  setInterval(function () {
-    tick += 1;
-    if (playing && tick % 75 === 0) {
-      idx = (idx + 1) % steps.length;
-      renderStepList();
-    }
-    drawCanvas();
-  }, 40);
-
-  var btnPlay = document.getElementById("btn-play");
-  var btnPrev = document.getElementById("btn-prev");
-  var btnNext = document.getElementById("btn-next");
-  if (btnPlay) btnPlay.addEventListener("click", function () { playing = !playing; });
-  if (btnPrev) btnPrev.addEventListener("click", function () { playing = false; idx = (idx - 1 + steps.length) % steps.length; renderStepList(); drawCanvas(); });
-  if (btnNext) btnNext.addEventListener("click", function () { playing = false; idx = (idx + 1) % steps.length; renderStepList(); drawCanvas(); });
-})();
-`;
 }
 
 export function complexityBucketForMilli(complexityMilli) {
@@ -8483,13 +8232,13 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     if (method !== "GET" && method !== "HEAD") {
       return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
-    const rawPromptId = String(segments[2] || "codex_unlimited_frontier_loop_v9").trim();
+    const rawPromptId = String(segments[2] || "worker_loop").trim();
     const promptId =
       rawPromptId === "codex_unlimited_frontier_loop_v7" || rawPromptId === "codex_unlimited_frontier_loop_v8"
         ? "codex_unlimited_frontier_loop_v9"
         : rawPromptId;
     const catalog = buildPromptCatalog(publicUrl);
-    const found = catalog.find((p) => p.id === promptId) || catalog[0];
+    const found = catalog.find((p) => p.id === promptId || p.alias === promptId) || catalog[0];
     const hydrated = hydratePromptPlaceholders(found.body, {
       agentId: url.searchParams.get("agent_id") || "",
       workerUuid: url.searchParams.get("worker_uuid") || "",
