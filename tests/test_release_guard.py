@@ -173,6 +173,7 @@ def test_the_gate_fails_on_every_kind_of_dirty_page_and_passes_a_clean_one() -> 
         "prose": "<main><h1>x</h1><p>Reusable plorps for everyone.</p></main>",
         "hash wording": "<main><h1>x</h1><p>A quux-256 sum.</p></main>",
         "long id": "<main><h1>x</h1><p>Seen as 9699abcdef0123456789.</p></main>",
+        "long id in code": "<main><h1>x</h1><pre>9699abcdef0123456789</pre></main>",
         "label": "<main><h1>x</h1><p>Whim</p></main>",
         "suffix": "<main><h1>x</h1><p>A snarfling pass.</p></main>",
         "private name": f"<main><h1>x</h1><p>Written by {private_name}.</p></main>",
@@ -182,7 +183,7 @@ def test_the_gate_fails_on_every_kind_of_dirty_page_and_passes_a_clean_one() -> 
     clean = {
         "clean": "<main><h1>Tasks and Task Objects</h1><p>Muse Spark 1.3 through the Meta API.</p>"
         '<code>plorp_kind</code> <a href="/c/ab_9f3a2b1c4d5e6f7a">a record</a>'
-        "<pre>plorps, quux256_verified, 9699abcdef0123456789</pre>"
+        "<pre>plorps, quux256_verified, a1b2c3d4e5f</pre>"
         "<p>A whim, not a label. Fnorbletons are not the name.</p></main>",
     }
     found = gate_problems({**dirty, **clean})
