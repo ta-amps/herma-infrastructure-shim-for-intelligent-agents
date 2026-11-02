@@ -29,6 +29,9 @@
       "service": "tessera"
     }
   ],
+  // The public pages' stylesheet, fonts and shared agent-banner script. Cloudflare serves these before the Worker runs
+  // (no Worker request, no CPU); herma/static is the single source and the Python app serves the same folder.
+  "assets": { "directory": "../../herma/static" },
   // "routes": [{ "pattern": "herma.<your-domain>", "custom_domain": true }],
   "vars": {
     "HERMA_CONVERSATION_ENABLED": "true",
