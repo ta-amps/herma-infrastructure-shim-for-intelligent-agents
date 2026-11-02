@@ -535,7 +535,7 @@
     },
     {
       "id": "H26",
-      "statement": "The network map keeps per claim only the Cloudflare data centre and continent (never an IP address, city, coordinate, network or user agent) for 30 days and then only a count per day and continent, shows a data centre only when 2 or more distinct workers of one kind came through it (each source separately), leaves a worker that set show_on_map to false in the totals only, and answers GET /q/network cached for 15 seconds to the three sites' browsers",
+      "statement": "The network map keeps per claim only the Cloudflare data center and continent (never an IP address, city, coordinate, network or user agent) for 30 days and then only a count per day and continent, shows a data center only when 2 or more distinct workers of one kind came through it (each source separately), leaves a worker that set show_on_map to false in the totals only, and answers GET /q/network cached for 15 seconds to the three sites' browsers",
       "enforced_by": "edge",
       "checked_by": [
         "test/network_activity.test.js",

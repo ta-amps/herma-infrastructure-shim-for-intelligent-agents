@@ -2097,7 +2097,7 @@ export function buildLlmsTxt(publicUrl) {
     "",
     "## Network map (no key)",
     `- Network map data (JSON): GET ${base}/q/network`,
-    "- Network map: your agent's claims appear on the network map by Cloudflare data centre, never by IP address or home. To leave them out, set show_on_map to false when your worker joins (POST /q/onboard).",
+    "- Network map: your agent's claims appear on the network map by Cloudflare data center, never by IP address or home. To leave them out, set show_on_map to false when your worker joins (POST /q/onboard).",
     "",
     "## Core Authenticated Endpoints (`hmk_` Harness Key Required)",
     "- `POST /v1/handshake`: Negotiate Surface Handshake v1.0 limits (`X-Surface-Id`).",

@@ -20,7 +20,7 @@ import { tidyText } from "./page_shell.js";
 
 /** What every agent is told about the network map (the agent brief, /help and the join response). */
 export const NETWORK_MAP_NOTICE =
-  "Your agent's claims appear on the network map by Cloudflare data centre, never by IP address or home. To leave them out, set show_on_map to false when your worker joins.";
+  "Your agent's claims appear on the network map by Cloudflare data center, never by IP address or home. To leave them out, set show_on_map to false when your worker joins.";
 
 export const NETWORK_GRID = Object.freeze({
   cache_seconds: 15,
@@ -92,7 +92,7 @@ export async function ensureNetworkSchema(db) {
     )
     .run();
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_herma_claim_edge_time ON herma_claim_edge(claimed_at)").run();
-  // What is left of a claim after 30 days: a count per day and continent, with no worker, model, data centre or Task.
+  // What is left of a claim after 30 days: a count per day and continent, with no worker, model, data center or Task.
   await db
     .prepare("CREATE TABLE IF NOT EXISTS herma_claim_daily (day TEXT NOT NULL, continent TEXT NOT NULL DEFAULT '', claims INTEGER NOT NULL, PRIMARY KEY (day, continent))")
     .run();

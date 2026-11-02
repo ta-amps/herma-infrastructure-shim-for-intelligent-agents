@@ -4,7 +4,7 @@ import worker from "../deploy/cloudflare/worker.js";
 import { NETWORK_GRID, buildNetworkBody, networkKind, networkWorkerKind, parseShowOnMap, pruneClaimEdges, recordClaimEdge, resetNetworkCaches, setShowOnMap } from "../deploy/cloudflare/network_activity.js";
 
 // GET /q/network (design contract claude-design-network-map.v1.json): where workers connect and what they pick up.
-// Only request.cf.colo and request.cf.continent are kept per claim; a data centre shows at 2 or more distinct workers.
+// Only request.cf.colo and request.cf.continent are kept per claim; a data center shows at 2 or more distinct workers.
 
 const BASE = "https://herma.teleionlabs.com";
 const call = (path, init) => exports.default.fetch(BASE + path, init);
@@ -40,7 +40,7 @@ describe("the map's small rules", () => {
 describe("GET /q/network", () => {
   beforeEach(ready, 60000); // the first /q/pulse creates every table and can be slow on a busy machine
 
-  it("records only the data centre and continent per claim, and nothing a client sends", async () => {
+  it("records only the data center and continent per claim, and nothing a client sends", async () => {
     await recordClaimEdge(db(), edge("FRA", "EU"), { task: task("t_one"), workerUuid: "w_a", agentId: "agent-a", modelHint: "Muse-Spark-1.3" });
     await recordClaimEdge(db(), edge("not a code", "ZZ"), { task: task("t_two"), workerUuid: "w_b", agentId: "agent-b" });
     const { results } = await db().prepare("SELECT * FROM herma_claim_edge ORDER BY id").all();
@@ -49,7 +49,7 @@ describe("GET /q/network", () => {
     expect(results[1]).toMatchObject({ colo: "", continent: "" });
   });
 
-  it("shows a data centre at 2 distinct workers, counts a lone worker under its continent, and leaves a hidden worker in the totals only", async () => {
+  it("shows a data center at 2 distinct workers, counts a lone worker under its continent, and leaves a hidden worker in the totals only", async () => {
     for (const [uuid, colo, continent, tier] of [["w_a", "FRA", "EU", "ngo_priority"], ["w_b", "FRA", "EU", "public_general"], ["w_c", "SYD", "OC", "public_general"], ["w_d", "FRA", "EU", "public_general"]]) {
       await recordClaimEdge(db(), edge(colo, continent), { task: task(`task_of_${uuid.slice(2)}_claim`, tier), workerUuid: uuid, agentId: `agent-${uuid}` });
     }
@@ -86,7 +86,7 @@ describe("GET /q/network", () => {
     expect(left.map((r) => r.claimed_at)).toEqual([ago(5)]);
     const daily = (await db().prepare("SELECT day, continent, claims FROM herma_claim_daily ORDER BY day").all()).results;
     expect(daily).toEqual([{ day: "2026-11-05", continent: "EU", claims: 2 }, { day: "2026-11-10", continent: "OC", claims: 1 }]);
-    expect(Object.keys(daily[0]).sort()).toEqual(["claims", "continent", "day"]); // no worker, model, data centre or Task
+    expect(Object.keys(daily[0]).sort()).toEqual(["claims", "continent", "day"]); // no worker, model, data center or Task
     await pruneClaimEdges(db(), new Date(now).toISOString()); // again: nothing is counted twice
     expect((await db().prepare("SELECT day, continent, claims FROM herma_claim_daily ORDER BY day").all()).results).toEqual(daily);
     // Later pruning adds to the same day instead of replacing it.
