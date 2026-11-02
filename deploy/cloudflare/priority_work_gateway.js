@@ -4367,6 +4367,7 @@ async function upsertOrLoadWorkerProfile(
     existingRow: existing,
   });
 
+  const created = Boolean(!readOnly && !existing); // this call creates the worker
   let mintedWorkerToken = null;
   if (!readOnly && !existing) {
     const calJson = calibrationPatch
@@ -4481,6 +4482,7 @@ async function upsertOrLoadWorkerProfile(
     },
     entropy,
     mintedWorkerToken,
+    created,
   };
 }
 
@@ -5109,6 +5111,7 @@ async function claimNextAuthorizedTask(
     stepMode = "",
     allowCoLease = null,
     workerSetup = null,
+    showOnMap = undefined,
   } = {}
 ) {
   if (requestedTier === "infra_private" && !infraAllowed) {
@@ -5183,7 +5186,7 @@ async function claimNextAuthorizedTask(
   // OR passes the legacy deterministic shared `w_agent_<handle>` bucket, mint an isolated per-claim
   // worker_uuid so concurrent scheduled jobs NEVER collide on the same lease!
   const effectiveSetup = workerSetup && typeof workerSetup === "object" ? workerSetup : null;
-  const { profile, entropy } = await upsertOrLoadWorkerProfile(db, {
+  const { profile, entropy, created } = await upsertOrLoadWorkerProfile(db, {
     agentId: cleanAgent,
     workerUuid: isBareSharedHandle ? "" : workerUuid,
     mintNew: isBareSharedHandle,
@@ -5195,6 +5198,9 @@ async function claimNextAuthorizedTask(
     harnessTier: effectiveSetup?.harness_tier || harnessTier,
     userAgent,
   });
+  // A show_on_map choice sent with a claim counts only from this worker's own token, or when this claim created the worker; the profile tells the
+  // caller whether it was applied.
+  noteMapChoice(profile, await applyMapChoice(db, { setting: showOnMap, workerUuid: profile.worker_uuid, workerToken, created }), showOnMap);
 
   const collisionWarning = isBareSharedHandle
     ? {
@@ -8282,12 +8288,41 @@ function formatClaimBanner(publicUrl, claimOut, pulse) {
   ].join("\n");
 }
 
-// After a claim: apply the worker's show_on_map choice if it sent one, and record the edge facts of a new claim for the network map.
-async function noteClaimOnMap(db, request, claimOut, agentId, showOnMapSetting, modelHint) {
+// The network-map choice (show_on_map) belongs to the worker. It is applied only in the call that creates the worker, or when the request carries that
+// worker's own token (or a scoped key for it): anyone who knows an agent name can neither hide nor show someone else's claims. Returns true when the
+// choice was applied, false when it was refused, null when none was sent.
+async function applyMapChoice(db, { setting, workerUuid, workerToken = "", created = false }) {
+  if (setting === undefined || !workerUuid) return null;
+  let allowed = Boolean(created);
+  const token = String(workerToken || "").trim();
+  if (!allowed && token) {
+    if (token.startsWith("hk_")) {
+      const key = await authenticateScopedKey(db, token, { touchUsage: false });
+      allowed = Boolean(key?.ok && (key.key_class === "infra" || (key.key_class === "worker" && key.owner_worker_uuid === workerUuid)));
+    } else {
+      const row = await db.prepare("SELECT worker_token_sha256 FROM herma_worker_registry WHERE worker_uuid = ?").bind(workerUuid).first();
+      const stored = String(row?.worker_token_sha256 || "");
+      allowed = Boolean(stored) && (await sha256HexGateway(token)) === stored;
+    }
+  }
+  if (allowed) await setShowOnMap(db, workerUuid, setting);
+  return allowed;
+}
+
+const MAP_CHOICE_REFUSED = "Not applied: the network map choice changes only with this worker's worker_token, or in the call that creates the worker.";
+
+// What the caller is told about its choice (on the worker profile in the answer): the value when it was applied, or that it was not.
+// A refusal never says what the choice in force is, so asking about someone else's agent name tells nothing about that worker.
+function noteMapChoice(profile, applied, setting) {
+  if (applied === null) return;
+  if (applied) profile.show_on_map = setting;
+  else profile.show_on_map_note = MAP_CHOICE_REFUSED;
+}
+
+// After a claim: record the edge facts of a new claim for the network map.
+async function noteClaimOnMap(db, request, claimOut, agentId, modelHint) {
   const claimant = claimOut?.bilateral_guidance?.worker_profile;
   if (!claimant?.worker_uuid) return;
-  const setting = parseShowOnMap(showOnMapSetting);
-  if (setting !== undefined) await setShowOnMap(db, claimant.worker_uuid, setting);
   if (claimOut.task && !claimOut.reused_active_lease) {
     await recordClaimEdge(db, request, {
       task: claimOut.task,
@@ -9248,7 +9283,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       harness_tier: params.harness_tier || null,
       focus_note: params.focus_note ? scrubSensitiveText(params.focus_note).slice(0, QUEUE_GATEWAY_GRID.title_max_len) : null,
     };
-    const { profile, entropy, mintedWorkerToken } = await upsertOrLoadWorkerProfile(db, {
+    const { profile, entropy, mintedWorkerToken, created } = await upsertOrLoadWorkerProfile(db, {
       agentId,
       workerUuid: passedUuid,
       mintNew: shouldMint,
@@ -9265,9 +9300,9 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     traceCtx.agent_id = profile.agent_id;
     traceCtx.worker_uuid = profile.worker_uuid;
     traceCtx.harness_tier = profile.harness_tier;
-    // A volunteer chooses when its worker joins (or later, on a claim) whether its claims may appear on the network map; the default is yes.
+    // A volunteer chooses when its worker joins (or later, with its worker_token) whether its claims may appear on the network map; the default is yes.
     const showOnMap = parseShowOnMap(params.show_on_map);
-    if (showOnMap !== undefined && !isReadOnlyHead) await setShowOnMap(db, profile.worker_uuid, showOnMap);
+    if (!isReadOnlyHead) noteMapChoice(profile, await applyMapChoice(db, { setting: showOnMap, workerUuid: profile.worker_uuid, workerToken, created }), showOnMap);
 
     const wCountRow = await db.prepare("SELECT COUNT(*) AS cnt FROM herma_worker_registry").first();
     const onboardDoc = {
@@ -9581,6 +9616,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           url.searchParams.get("generalist") === "1" || url.searchParams.get("generalist") === "true" || undefined,
         publicUrl,
         allowCoLease: allowCoLeaseRaw,
+        showOnMap: parseShowOnMap(url.searchParams.get("show_on_map")),
       });
       if (claimOut.forbidden) {
         return sendJson(
@@ -9596,7 +9632,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       traceCtx.worker_uuid = claimOut.bilateral_guidance?.worker_profile?.worker_uuid || workerUuid;
       traceCtx.harness_tier = claimOut.bilateral_guidance?.worker_profile?.harness_tier || "";
       traceCtx.task_id = claimOut.task?.task_id || "";
-      await noteClaimOnMap(db, request, claimOut, agentId, url.searchParams.get("show_on_map"), modelHintHeader);
+      await noteClaimOnMap(db, request, claimOut, agentId, modelHintHeader);
       traceCtx.detail = {
         slot: claimOut.bilateral_guidance?.current_beat_slot,
         reused_active_lease: Boolean(claimOut.reused_active_lease),
@@ -9697,6 +9733,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           publicUrl,
           allowCoLease: body.allow_co_lease ?? body.co_lease ?? null,
           workerSetup: body.worker_setup && typeof body.worker_setup === "object" ? body.worker_setup : null,
+          showOnMap: parseShowOnMap(body.show_on_map),
         }
       );
       if (claimOut.forbidden) {
@@ -9713,7 +9750,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       traceCtx.worker_uuid = claimOut.bilateral_guidance?.worker_profile?.worker_uuid || "";
       traceCtx.harness_tier = claimOut.bilateral_guidance?.worker_profile?.harness_tier || "";
       traceCtx.task_id = claimOut.task?.task_id || "";
-      await noteClaimOnMap(db, request, claimOut, agentId, body.show_on_map, body.model_hint || modelHintHeader);
+      await noteClaimOnMap(db, request, claimOut, agentId, body.model_hint || modelHintHeader);
       traceCtx.detail = {
         slot: claimOut.bilateral_guidance?.current_beat_slot,
         reused_active_lease: Boolean(claimOut.reused_active_lease),

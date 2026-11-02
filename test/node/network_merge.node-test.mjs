@@ -28,17 +28,19 @@ const deepFreeze = (v) => (v && typeof v === "object" ? (Object.values(v).forEac
 test("each source applies the two-worker threshold to its own workers, and a worker that left the map counts in the totals only", () => {
   const own = summarizeOwn(OWN, { now: NOW });
   assert.equal(MIN_WORKERS, 2);
-  // FRA: two shown volunteers; the third (hidden) is not placed. IAD and SYD have one worker each: continents.
-  assert.deepEqual(own.places.map((p) => [p.level, p.code || p.continent, p.workers, p.claims]).sort(), [["colo", "FRA", 2, 2], ["continent", "NA", 1, 1], ["continent", "OC", 1, 1]]);
+  // FRA: the newer claim came with both shown volunteers there (2 workers together); the older one came while
+  // its volunteer was alone, so it counts under Europe. The third (hidden) is not placed. IAD and SYD have one
+  // worker each: continents.
+  assert.deepEqual(own.places.map((p) => [p.level, p.code || p.continent, p.workers, p.claims]).sort(), [["colo", "FRA", 2, 1], ["continent", "EU", 1, 1], ["continent", "NA", 1, 1], ["continent", "OC", 1, 1]]);
   assert.deepEqual(own.totals, { workers: 5, claims: 5, by_class: { nonprofit: 2, shared: 2, check: 1 } });
   assert.ok(own.rows.every((r) => r.shown) && own.rows.length === 4, "the feed holds only shown claims");
 });
 
 test("the merge adds claims, workers and continents of both sources, and totals count everything", () => {
   const body = merge();
-  assert.deepEqual(body.data_centres.map((d) => [d.code, d.city, d.continent, d.workers, d.claims]), [["IAD", "Ashburn", "North America", 3, 9], ["FRA", "Frankfurt", "Europe", 4, 6]]);
-  assert.deepEqual(body.data_centres.find((d) => d.code === "FRA").by_kind, { nonprofit: 2, shared: 4, check: 0, own: 0 });
-  assert.deepEqual(body.continents.map((c) => [c.name, c.workers, c.claims]).sort(), [["Asia", 1, 1], ["North America", 1, 1], ["Oceania", 1, 1]]);
+  assert.deepEqual(body.data_centres.map((d) => [d.code, d.city, d.continent, d.workers, d.claims]), [["IAD", "Ashburn", "North America", 3, 9], ["FRA", "Frankfurt", "Europe", 4, 5]]);
+  assert.deepEqual(body.data_centres.find((d) => d.code === "FRA").by_kind, { nonprofit: 2, shared: 3, check: 0, own: 0 });
+  assert.deepEqual(body.continents.map((c) => [c.name, c.workers, c.claims]).sort(), [["Asia", 1, 1], ["Europe", 1, 1], ["North America", 1, 1], ["Oceania", 1, 1]]);
   assert.deepEqual(body.totals, { workers: 13, data_centres: 2, continents: 4, claims: 21, nonprofit_claims: 8 });
   assert.deepEqual([body.window_hours, body.recent_minutes, body.generated_at], [24, 10, new Date(NOW).toISOString()]);
   // The newest claim at a data center, from either source; lat and lon are the data center's own.
@@ -54,7 +56,9 @@ test("a source that is missing or malformed counts no direct claims, and the res
   }
   assert.equal(fromTessera(null), null);
   const odd = fromTessera({ totals: { workers: -4, claims: "x", by_class: { nonprofit: 2, nope: 9 } }, places: [{ level: "colo", place: "fra", continent: "EU" }, { level: "continent", place: "ZZ" }, null], recent: [{ at: "bad", class: "shared", worker: "volunteer" }] });
-  assert.deepEqual([odd.totals.workers, odd.totals.claims, odd.totals.by_class.nonprofit, odd.places.length, odd.rows.length], [0, 0, 2, 0, 0]);
+  // The data center with a code that is not one counts under its continent; the continent that is not one is dropped.
+  assert.deepEqual([odd.totals.workers, odd.totals.claims, odd.totals.by_class.nonprofit, odd.places.length, odd.rows.length], [0, 0, 2, 1, 0]);
+  assert.deepEqual([odd.places[0].level, odd.places[0].code, odd.places[0].continent], ["continent", null, "EU"]);
   assert.deepEqual(mergeNetwork({ now: NOW }).totals, { workers: 0, data_centres: 0, continents: 0, claims: 0, nonprofit_claims: 0 });
 });
 
@@ -71,7 +75,7 @@ test("the feed is newest first, names where a claim came through by what the thr
   assert.deepEqual(all.recent_claims.map((r) => [r.kind, r.via.type, r.via.code || r.via.continent]), [
     ["nonprofit", "data_centre", "FRA"], // Herma's h-worker-1, 30 s ago
     ["nonprofit", "data_centre", "IAD"], // Tessera, 90 s ago
-    ["shared", "data_centre", "FRA"], // Herma's h-worker-2
+    ["shared", "continent", "Europe"], // Herma's h-worker-2: alone at FRA when it claimed (h-worker-1 came after)
     ["check", "data_centre", "IAD"], // Tessera, 4 min
     ["shared", "continent", "Oceania"], // h-worker-3 alone at SYD
     ["check", "continent", "North America"], // h-worker-4 alone of its kind at IAD (Tessera's IAD does not make it a data center for Herma's worker)
@@ -89,6 +93,46 @@ test("the feed is newest first, names where a claim came through by what the thr
   assert.deepEqual([checks.totals, checks.data_centres], [all.totals, all.data_centres], "a kind filters the feeds, never the counts");
   assert.deepEqual(merge({ kind: "everything" }).recent_claims, all.recent_claims, "an unknown kind means all");
   assert.deepEqual(KINDS, ["nonprofit", "shared", "check", "own"]);
+});
+
+test("a Herma worker alone at a data center is never placed there; one joined within 15 minutes is, in the feed and the replay alike", () => {
+  const rows = [
+    row("lone-earlier", { at: ago(20 * 3600 * 1000) }), // another volunteer through FRA 20 hours ago
+    row("lone-now", { at: ago(5 * MIN) }),
+    row("lone-now", { at: ago(2 * MIN) }),
+  ];
+  let body = mergeNetwork({ now: NOW, own: rows, places: PLACES, replay: true });
+  assert.deepEqual(body.data_centres, []);
+  assert.ok([...body.recent_claims, ...body.replay.claims].every((r) => r.via.type === "continent"));
+  // A second volunteer comes through FRA a minute later: its claim is placed there, the earlier ones are not.
+  rows.push(row("joined", { at: ago(MIN) }));
+  body = mergeNetwork({ now: NOW, own: rows, places: PLACES, replay: true });
+  assert.deepEqual(body.data_centres.map((d) => [d.code, d.workers, d.claims, d.last_claim_at]), [["FRA", 2, 1, ago(MIN)]]);
+  assert.deepEqual(body.recent_claims.map((r) => r.via.type), ["data_centre", "continent", "continent", "continent"]);
+  assert.deepEqual(body.replay.claims.map((r) => r.via.type), ["continent", "continent", "data_centre"]);
+});
+
+test("a Tessera row counts at a data center only when Tessera says it was placed there and lists it with 2 or more workers", () => {
+  const at = ago(MIN);
+  const view = {
+    totals: { workers: 5, claims: 4, by_class: { shared: 4 } },
+    places: [
+      { place: "FRA", level: "colo", continent: "EU", workers: 2, claims: 1, last_claim_at: at, by_class: { shared: 1 } },
+      { place: "IAD", level: "colo", continent: "NA", workers: 1, claims: 1, last_claim_at: at, by_class: { shared: 1 } }, // fewer than 2
+    ],
+    recent: [
+      { at, class: "shared", place: "FRA", level: "colo", placed: "data_center", continent: "EU", worker: "volunteer" },
+      { at, class: "shared", place: "FRA", level: "colo", continent: "EU", worker: "volunteer" }, // no flag (an older Tessera)
+      { at, class: "shared", place: "IAD", level: "colo", placed: "data_center", continent: "NA", worker: "volunteer" }, // not listed with 2
+      { at, class: "shared", place: "SYD", level: "colo", placed: "data_center", continent: "OC", worker: "volunteer" }, // not listed at all
+    ],
+  };
+  const direct = fromTessera(view);
+  assert.deepEqual(direct.places.map((p) => [p.level, p.code, p.continent, p.workers]), [["colo", "FRA", "EU", 2], ["continent", null, "NA", 1]]);
+  assert.deepEqual(direct.rows.map((r) => [r.level, r.code, r.continent]), [["colo", "FRA", "EU"], ["continent", null, "EU"], ["continent", null, "NA"], ["continent", null, "OC"]]);
+  const body = mergeNetwork({ now: NOW, tessera: view, places: PLACES });
+  assert.deepEqual(body.data_centres.map((d) => [d.code, d.workers, d.claims]), [["FRA", 2, 1]]);
+  assert.deepEqual(body.recent_claims.map((r) => r.via.type), ["data_centre", "continent", "continent", "continent"]);
 });
 
 test("the replay is the last hour, oldest first, from both sources, shown claims only", () => {

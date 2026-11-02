@@ -169,7 +169,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/page_interactions.mjs](scripts/page_interactions.mjs) | Clicks through the interactive parts of the redesigned pages (fixture server, the Worker's real page policy)… |
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
 
-## test/ (19)
+## test/ (20)
 
 | File | What it is |
 |---|---|
@@ -182,6 +182,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/node/fixtures/tessera-activity-map.json](test/node/fixtures/tessera-activity-map.json) | JSON object: service, window, window_seconds, as_of, min_workers, places |
 | [test/node/help_burst.node-test.mjs](test/node/help_burst.node-test.mjs) | q/help spends Meta calls only inside its caps, even when many requests arrive at once (owner rule 8: an allow… |
 | [test/node/network_merge.node-test.mjs](test/node/network_merge.node-test.mjs) | Tests of the network map's merge (networkmerge.mjs), with a made-up place table and made-up worker ids. |
+| [test/node/network_merge_hostile.node-test.mjs](test/node/network_merge_hostile.node-test.mjs) |  |
 | [test/on_demand_api_keys_and_nodes.test.js](test/on_demand_api_keys_and_nodes.test.js) |  |
 | [test/priority_work_gateway.test.js](test/priority_work_gateway.test.js) |  |
 | [test/privacy_logs.test.js](test/privacy_logs.test.js) |  |

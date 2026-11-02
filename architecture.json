@@ -535,11 +535,12 @@
     },
     {
       "id": "H26",
-      "statement": "The network map keeps per claim only the Cloudflare data center and continent (never an IP address, city, coordinate, network or user agent) for 30 days and then only a count per day and continent, shows a data center only when 2 or more distinct workers of one kind came through it (each source separately), leaves a worker that set show_on_map to false in the totals only, and answers GET /q/network cached for 15 seconds to the three sites' browsers",
+      "statement": "The network map keeps per claim only the Cloudflare data center and continent (never an IP address, city, coordinate, network or user agent; none at all for a worker that left the map) for 30 days and then only a count per day and continent; it names a claim's data center only when 2 or more workers of its kind made claims there in the 15 minutes up to it, one decision per claim for the feed, the replay and the place list; it shows only claims of public Tasks (any other claim counts in the totals only); it accepts Tessera's data centers and rows only as far as Tessera's own counts and per-row marks show them; a worker's show_on_map changes only with that worker's token or in the call that creates the worker; and it answers GET /q/network cached for 15 seconds to the five contract origins, with a generous cap per address",
       "enforced_by": "edge",
       "checked_by": [
         "test/network_activity.test.js",
-        "test/node/network_merge.node-test.mjs"
+        "test/node/network_merge.node-test.mjs",
+        "test/node/network_merge_hostile.node-test.mjs"
       ]
     }
   ],

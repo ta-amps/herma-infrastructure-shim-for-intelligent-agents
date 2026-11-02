@@ -1,5 +1,6 @@
 // Copied from notes/claude-work-2026-11-01/activity-map/herma-network/network_merge.mjs (the map builder's pure merge, with its tests in
-// test/node/network_merge.node-test.mjs).
+// test/node/network_merge.node-test.mjs), as fixed for the reviewer's N1 (a claim is placed at a data center only by the workers of its own 15 minutes)
+// and N4 (Tessera's places and rows are accepted only as far as the merge can check them).
 // The network map's merge, for Herma's GET /q/network: pure, dependency-free (no imports, no clock, no
 // network, no storage), so it can be copied into any Worker with its test.
 //
@@ -36,6 +37,11 @@
 // pass the shared banned list's display mask (rule 16). Stored rows are never altered.
 
 export const MIN_WORKERS = 2;
+// A claim is placed at its data center only when MIN_WORKERS workers of its kind (the claimer included) made
+// claims there in the PLACE_SPAN_MS before it, as Tessera decides for its own claims. Every place, feed row and
+// last-claim time follows that one decision, so no other window or source can show where a worker that was
+// alone connected.
+export const PLACE_SPAN_MS = 15 * 60 * 1000;
 export const WINDOW_HOURS = 24;
 export const RECENT_MINUTES = 10;
 export const FEED_SIZE = 20;
@@ -93,10 +99,13 @@ export function modelNamesFromCatalog(catalog) {
 
 // Herma's own claims in the window: the source summary every merge step reads.
 //   totals: every claim and distinct worker, those that left the map included;
-//   places: the shown ones, a data center (level "colo") once MIN_WORKERS workers of one kind came through it,
-//           otherwise their continent (level "continent");
+//   places: the shown ones, a data center (level "colo") for each claim placed there (see PLACE_SPAN_MS), whose
+//           workers are the most of each kind that were there together, added up; every other claim under its
+//           continent (level "continent"), with its distinct workers;
 //   rows:   the shown claims, newest first, each with the place it may be named by.
-export function summarizeOwn(rows, { now, windowMs = DAY_MS } = {}) {
+// `known` (optional) says which data centers the place table can show; any other counts under its continent from
+// the start, so its workers are never counted twice when it rolls up.
+export function summarizeOwn(rows, { now, windowMs = DAY_MS, known = () => true } = {}) {
   const since = now - windowMs;
   const claims = [];
   for (const r of Array.isArray(rows) ? rows : []) {
@@ -104,22 +113,16 @@ export function summarizeOwn(rows, { now, windowMs = DAY_MS } = {}) {
     if (t === null || t < since || t > now + 60000 || !KIND_SET.has(r?.class) || typeof r.worker !== "string" || !r.worker) continue;
     claims.push({
       t, klass: r.class, worker: r.worker, worker_kind: WORKER_KINDS.has(r.worker_kind) ? r.worker_kind : "volunteer", // never claim ta-amps runs what it may not
-      shown: r.show_on_map !== false, colo: code3(r.colo), continent: continentCode(r.continent),
+      shown: r.show_on_map !== false, colo: known(code3(r.colo)) ? code3(r.colo) : null, continent: continentCode(r.continent),
       model: string(r.model), declared: r.declared === true, persona: string(r.persona), title: string(r.title), place: string(r.place), object_key: string(r.object_key),
     });
   }
   const totals = { workers: new Set(claims.map((c) => c.worker)).size, claims: claims.length, by_class: {} };
   for (const c of claims) bump(totals.by_class, c.klass);
   const shown = claims.filter((c) => c.shown);
-  const atColo = new Map();
-  for (const c of shown) {
-    if (!c.colo) continue;
-    const key = `${c.colo}|${c.worker_kind}`;
-    if (!atColo.has(key)) atColo.set(key, new Set());
-    atColo.get(key).add(c.worker);
-  }
+  together(shown);
   const placeOf = (c) => {
-    if (c.colo && (atColo.get(`${c.colo}|${c.worker_kind}`)?.size || 0) >= MIN_WORKERS) return { level: "colo", code: c.colo, continent: c.continent };
+    if (c.colo && c.together >= MIN_WORKERS) return { level: "colo", code: c.colo, continent: c.continent };
     if (c.continent) return { level: "continent", code: null, continent: c.continent };
     return { level: "unknown", code: null, continent: null };
   };
@@ -128,36 +131,74 @@ export function summarizeOwn(rows, { now, windowMs = DAY_MS } = {}) {
     const where = placeOf(c);
     if (where.level === "unknown") continue;
     const key = `${where.level}|${where.code || where.continent}`;
-    if (!places.has(key)) places.set(key, { ...where, tags: new Set(), claims: 0, by_class: {}, last_ms: 0 });
+    if (!places.has(key)) places.set(key, { ...where, tags: new Set(), together: {}, claims: 0, by_class: {}, last_ms: 0 });
     const p = places.get(key);
-    p.tags.add(c.worker);
+    if (where.level === "colo") p.together[c.worker_kind] = Math.max(p.together[c.worker_kind] || 0, c.together);
+    else p.tags.add(c.worker);
     p.claims++;
     bump(p.by_class, c.klass);
     p.last_ms = Math.max(p.last_ms, c.t);
   }
-  const out = [...places.values()].map((p) => ({ level: p.level, code: p.code, continent: p.continent, workers: p.tags.size, claims: p.claims, by_class: kindCounts(p.by_class), last_ms: p.last_ms }));
+  const workersAt = (p) => (p.level === "colo" ? Object.values(p.together).reduce((a, b) => a + b, 0) : p.tags.size);
+  const out = [...places.values()].map((p) => ({ level: p.level, code: p.code, continent: p.continent, workers: workersAt(p), claims: p.claims, by_class: kindCounts(p.by_class), last_ms: p.last_ms }));
   const feed = shown.map((c) => ({ ...c, ...placeOf(c) })).sort((a, b) => b.t - a.t);
   return { totals, places: out, rows: feed, replayRows: [] };
 }
 
+// How many workers of each claim's kind made claims at its data center in the PLACE_SPAN_MS up to it (ties
+// included), the claimer counted: written to each claim as `together`, 0 when fewer than MIN_WORKERS.
+function together(shown) {
+  const groups = new Map();
+  for (const c of shown) {
+    c.together = 0;
+    if (!c.colo) continue;
+    const key = `${c.colo}|${c.worker_kind}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(c);
+  }
+  for (const list of groups.values()) {
+    list.sort((a, b) => a.t - b.t);
+    const seen = new Map();
+    let lo = 0;
+    let hi = 0;
+    for (const c of list) {
+      while (hi < list.length && list[hi].t <= c.t) {
+        const w = list[hi++].worker;
+        seen.set(w, (seen.get(w) || 0) + 1);
+      }
+      while (list[lo].t < c.t - PLACE_SPAN_MS) {
+        const w = list[lo++].worker;
+        const n = seen.get(w) - 1;
+        if (n) seen.set(w, n);
+        else seen.delete(w);
+      }
+      c.together = seen.size >= MIN_WORKERS ? seen.size : 0;
+    }
+  }
+}
+
 // Tessera's aggregate as the same summary; null when it is missing or not the shape it should be (the merge
-// then counts no direct claims). Tessera has already applied the threshold to its own workers.
+// then counts no direct claims). Tessera places each claim by its own 15-minute two-worker rule; this takes a
+// data center from it only when Tessera says so plainly: a place at level "colo" with MIN_WORKERS or more
+// workers, and a row with placed "data_center" at such a place. Anything else counts under its continent.
 export function fromTessera(view) {
   if (!view || typeof view !== "object" || !view.totals || typeof view.totals !== "object" || !Array.isArray(view.places)) return null;
   const totals = { workers: count(view.totals.workers), claims: count(view.totals.claims), by_class: kindCounts(view.totals.by_class) };
   const places = [];
+  const centers = new Set();
   for (const p of view.places) {
     if (!p || (p.level !== "colo" && p.level !== "continent")) continue; // "unknown" places count in the totals only
-    const code = p.level === "colo" ? code3(p.place) : null;
+    const center = p.level === "colo" && code3(p.place) && count(p.workers) >= MIN_WORKERS ? code3(p.place) : null;
     const continent = p.level === "colo" ? continentCode(p.continent) : continentCode(p.place);
-    if (!continent || (p.level === "colo" && !code)) continue;
-    places.push({ level: p.level, code, continent, workers: count(p.workers), claims: count(p.claims), by_class: kindCounts(p.by_class), last_ms: millis(p.last_claim_at) });
+    if (!continent) continue;
+    if (center) centers.add(center);
+    places.push({ level: center ? "colo" : "continent", code: center, continent, workers: count(p.workers), claims: count(p.claims), by_class: kindCounts(p.by_class), last_ms: center ? millis(p.last_claim_at) : null });
   }
   const rowsOf = (list) => (Array.isArray(list) ? list : []).flatMap((r) => {
     const t = millis(r?.at);
     const worker_kind = r?.worker;
     if (t === null || !KIND_SET.has(r?.class) || !WORKER_KINDS.has(worker_kind)) return [];
-    const colo = r.level === "colo" ? code3(r.place) : null;
+    const colo = r.placed === "data_center" && r.level === "colo" && centers.has(code3(r.place)) ? code3(r.place) : null;
     const continent = continentCode(r.continent) || (r.level === "continent" ? continentCode(r.place) : null);
     return [{ t, klass: r.class, worker_kind, level: colo ? "colo" : continent ? "continent" : "unknown", code: colo, continent,
       model: string(r.model), declared: worker_kind === "volunteer", persona: null, title: null, place: null, object_key: null }];
@@ -171,8 +212,8 @@ export function fromTessera(view) {
 export function mergeNetwork({ now, own = [], tessera = null, places = {}, modelNames = {}, kind = "all", replay = false, text = (s) => s } = {}) {
   if (!Number.isFinite(now)) throw new TypeError("now (milliseconds since the epoch) is required: the module reads no clock");
   const mask = (value) => (value === null ? null : string(text(value)));
-  const sources = [summarizeOwn(own, { now }), fromTessera(tessera)].filter(Boolean);
   const known = (code) => code !== null && Object.hasOwn(places, code) && Number.isFinite(places[code]?.lat) && Number.isFinite(places[code]?.lon);
+  const sources = [summarizeOwn(own, { now, known }), fromTessera(tessera)].filter(Boolean);
 
   // Data centers the sources show; counts of a data center the table cannot place, and of a continent, roll up.
   const centers = new Map();
@@ -226,7 +267,7 @@ export function mergeNetwork({ now, own = [], tessera = null, places = {}, model
   const body = { generated_at: iso(now), window_hours: WINDOW_HOURS, recent_minutes: RECENT_MINUTES, totals, data_centres, continents, recent_claims };
   if (replay) {
     const from = now - REPLAY_SECONDS * 1000;
-    const own_ = sources[0] === undefined ? [] : summarizeOwn(own, { now, windowMs: REPLAY_SECONDS * 1000 }).rows;
+    const own_ = sources[0].rows; // the same placement as the feed: each claim is placed once, whatever is read
     const direct = fromTessera(tessera)?.replayRows ?? [];
     const claims = [...own_, ...direct].filter((r) => r.t >= from && keep(r)).sort((a, b) => b.t - a.t).slice(0, REPLAY_ROWS).reverse();
     body.replay = { from: iso(from), to: iso(now), claims: claims.map(rowOut) };
