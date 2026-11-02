@@ -1018,10 +1018,35 @@ export async function buildWorkerScoreAndBadges(db, workerUuid) {
   };
 }
 
-export async function handleLeaderboardRequest(url, db) {
+// The standings are kept for 30 seconds in an isolate, per limit and badge, so a page or an agent that asks again does not pay for the scan again.
+const LEADERBOARD_CACHE_MS = 30_000;
+const LEADERBOARD_CACHE_ENTRIES = 40;
+const LEADERBOARD_PARALLEL = 10; // workers scored at once; each score is three small reads
+const leaderboardCache = new Map();
+
+/** For tests: forget the standings an isolate remembers. */
+export function resetLeaderboardCache() {
+  leaderboardCache.clear();
+}
+
+/** ?limit= as a whole number from 1 to the most rows the board ever returns; anything else is the most. */
+export function leaderboardLimit(raw) {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n < 1) return REPUTATION_AND_PROPOSAL_GRID.max_leaderboard_rows;
+  return Math.min(n, REPUTATION_AND_PROPOSAL_GRID.max_leaderboard_rows);
+}
+
+export async function handleLeaderboardRequest(url, db, { nowMs = Date.now() } = {}) {
   await ensureReputationAndProposalsSchema(db);
   const badgeFilter = String(url.searchParams.get("badge") || "").trim().toLowerCase();
   const targetWorker = String(url.searchParams.get("worker_uuid") || "").trim();
+  const limit = leaderboardLimit(url.searchParams.get("limit"));
+  const cacheKey = `${limit}|${badgeFilter}`;
+  const cacheable = !targetWorker && (badgeFilter === "" || Object.hasOwn(BADGE_CATALOG, badgeFilter));
+  if (cacheable) {
+    const hit = leaderboardCache.get(cacheKey);
+    if (hit && nowMs - hit.at < LEADERBOARD_CACHE_MS) return hit.body;
+  }
 
   if (targetWorker) {
     const single = await buildWorkerScoreAndBadges(db, targetWorker);
@@ -1039,22 +1064,42 @@ export async function handleLeaderboardRequest(url, db) {
     };
   }
 
+  // The ranking and the limit are decided in SQL, with the same sum the score uses (the points of its events, or, for a worker with none, the
+  // points its registry counts are worth) and the same tie-breaks (events that unblocked others, then NGO solves), so only the workers that are
+  // returned are scored in detail. A badge needs the detail, so it ranks the most rows the board returns and cuts to the limit afterwards.
+  const sqlLimit = badgeFilter ? REPUTATION_AND_PROPOSAL_GRID.max_leaderboard_rows : limit;
   const workersRes = await db
     .prepare(
-      `SELECT worker_uuid, agent_id, harness_tier, iteration_count, ngo_completed, eval_completed, own_completed,
-              mean_artifact_bytes, COALESCE(is_diagnostic_probe, 0) AS is_diag, updated_at
-       FROM herma_worker_registry
-       WHERE COALESCE(is_diagnostic_probe, 0) = 0
-         AND (iteration_count > 0 OR worker_uuid IN (SELECT DISTINCT worker_uuid FROM herma_worker_cred_events))
-       ORDER BY iteration_count DESC, updated_at DESC
-       LIMIT ?`
+      `SELECT r.worker_uuid, r.agent_id, r.harness_tier, r.iteration_count, r.ngo_completed, r.eval_completed, r.own_completed,
+              r.mean_artifact_bytes, COALESCE(r.is_diagnostic_probe, 0) AS is_diag, r.updated_at
+       FROM herma_worker_registry r
+       WHERE COALESCE(r.is_diagnostic_probe, 0) = 0
+         AND (r.iteration_count > 0 OR r.worker_uuid IN (SELECT DISTINCT worker_uuid FROM herma_worker_cred_events))
+       ORDER BY
+         (COALESCE((SELECT SUM(e.points_awarded) FROM herma_worker_cred_events e WHERE e.worker_uuid = r.worker_uuid), 0)
+          + CASE WHEN EXISTS (SELECT 1 FROM herma_worker_cred_events e WHERE e.worker_uuid = r.worker_uuid) THEN 0
+                 ELSE COALESCE(r.ngo_completed, 0) * (?1 + ?2) + COALESCE(r.own_completed, 0) * ?1 + COALESCE(r.eval_completed, 0) * ?3 END) DESC,
+         (SELECT COUNT(*) FROM herma_worker_cred_events e WHERE e.worker_uuid = r.worker_uuid AND e.prior_failed_workers > 0) DESC,
+         COALESCE(r.ngo_completed, 0) DESC, r.iteration_count DESC, r.updated_at DESC
+       LIMIT ?4`
     )
-    .bind(REPUTATION_AND_PROPOSAL_GRID.max_leaderboard_rows)
+    .bind(
+      REPUTATION_AND_PROPOSAL_GRID.solve_points,
+      REPUTATION_AND_PROPOSAL_GRID.ngo_bonus_points,
+      REPUTATION_AND_PROPOSAL_GRID.verify_points,
+      sqlLimit
+    )
     .all();
 
+  const ranked = workersRes?.results || [];
+  const details = [];
+  for (let i = 0; i < ranked.length; i += LEADERBOARD_PARALLEL) {
+    details.push(...(await Promise.all(ranked.slice(i, i + LEADERBOARD_PARALLEL).map((w) => buildWorkerScoreAndBadges(db, w.worker_uuid)))));
+  }
+
   const standings = [];
-  for (const w of workersRes?.results || []) {
-    const scored = await buildWorkerScoreAndBadges(db, w.worker_uuid);
+  for (const [index, w] of ranked.entries()) {
+    const scored = details[index];
     if (badgeFilter && !scored.badges.includes(badgeFilter)) continue;
     standings.push({
       worker_uuid: w.worker_uuid,
@@ -1079,7 +1124,7 @@ export async function handleLeaderboardRequest(url, db) {
       b.ngo_completed - a.ngo_completed
   );
 
-  return {
+  const body = {
     ok: true,
     schema: REPUTATION_AND_PROPOSAL_GRID.schema_id,
     scoring_policy: {
@@ -1096,9 +1141,15 @@ export async function handleLeaderboardRequest(url, db) {
       high_bandwidth_multiplier: "1.25x",
       badges_available: Object.values(BADGE_CATALOG),
     },
-    total_ranked_workers: standings.length,
-    leaderboard: standings,
+    limit,
+    total_ranked_workers: Math.min(standings.length, limit),
+    leaderboard: standings.slice(0, limit),
   };
+  if (cacheable) {
+    if (leaderboardCache.size >= LEADERBOARD_CACHE_ENTRIES) leaderboardCache.delete(leaderboardCache.keys().next().value);
+    leaderboardCache.set(cacheKey, { at: nowMs, body });
+  }
+  return body;
 }
 
 export async function handleProposalsGovernanceRequest(url, db, publicUrl = "https://herma.teleionlabs.com") {
