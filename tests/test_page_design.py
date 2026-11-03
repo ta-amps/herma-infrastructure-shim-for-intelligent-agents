@@ -70,9 +70,9 @@ def python_pages() -> dict[str, str]:
     return {
         "/": render_home_page(),
         "/shim": render_overview_page(
-            [], [], "https://herma.teleionlabs.com", [], aggregate_counts=None
+            [], [], "https://shim.teleionlabs.com", [], aggregate_counts=None
         ),
-        "/connect": render_connect_page("https://herma.teleionlabs.com"),
+        "/connect": render_connect_page("https://shim.teleionlabs.com"),
         "/get-started": render_get_started_page(),
         "/trust": render_trust_page(),
     }
@@ -169,7 +169,7 @@ def test_footer_is_the_shared_standard_one_row_of_links_and_one_short_line() -> 
     """MUST-FOLLOW rule 13 and footer v2 (claude-design-components.v2.json): the brand and one row of links, then one short line."""
     footer = page_shell.footer_html()
     assert footer.count("<ul>") == 1 and footer.count("<nav") == 1, "never two rows of links"
-    assert footer.count('class="footer-brand"') == 1 and "<span>Herma</span>" in footer
+    assert footer.count('class="footer-brand"') == 1 and "<span>Teleion Fabric</span>" in footer
     assert FOOTER_SPEC["schema"] == "ta-amps.footer/2"
     found = re.findall(r'<li><a href="([^"]+)">([^<]+)</a></li>', footer)
     assert [(label, href) for href, label in found] == [
@@ -223,7 +223,7 @@ def test_every_page_carries_the_shell_and_stays_light(
         assert not inline_scripts, f"{name}: no inline scripts"
         for link in re.findall(r'(?:src|href)="(https?://[^"]+)"', page):
             assert re.match(
-                r"https://(agora\.eranosforgood\.org|eranosforgood\.org|teleionlabs\.com|herma\.teleionlabs\.com)/",
+                r"https://(agora\.eranosforgood\.org|eranosforgood\.org|teleionlabs\.com|shim\.teleionlabs\.com|fabric\.teleionlabs\.com|herma\.teleionlabs\.com)/",
                 link,
             ), (
                 name,
@@ -250,7 +250,7 @@ def test_the_home_says_what_herma_is_and_shows_today_s_numbers(worker_site: dict
     """Design contract: one line, two ways in, the five dashboard totals as plain numbers, no version in the heading."""
     home = worker_site["pages"]["/"]
     text = visible_text(home)
-    assert home.count("<h1>Herma</h1>") == 1
+    assert home.count("<h1>Teleion Fabric</h1>") == 1
     assert (
         "The shim between any agent and its model. It brings the right Task Objects as context, or answers directly."
         in text
@@ -273,7 +273,7 @@ def test_get_started_names_the_canonical_instructions_and_the_map_choice(
 ) -> None:
     page = worker_site["pages"]["/get-started"]
     text = visible_text(page)
-    assert page.count("Step ") == 3 and "https://herma.teleionlabs.com/llms.txt" in text
+    assert page.count("Step ") == 3 and "https://shim.teleionlabs.com/llms.txt" in text
     assert "show_on_map" in text and "never by IP address or home" in text
     assert "We don\u2019t accept private information at this stage." in text
     assert 'href="https://eranosforgood.org/help"' in page and 'href="/prompts"' in page
@@ -286,7 +286,7 @@ def test_get_started_names_the_canonical_instructions_and_the_map_choice(
 def test_every_existing_page_names_the_canonical_host(
     worker_site: dict[str, Any], python_pages: dict[str, str]
 ) -> None:
-    """Design contract of Nov 2: whichever host a page is reached on, rel=canonical names herma.teleionlabs.com."""
+    """Design contract of Nov 2: whichever host a page is reached on, rel=canonical names shim.teleionlabs.com."""
     pages = all_pages(worker_site, python_pages)
     for name, page in pages.items():
         route = name.split(" ", 1)[1]
@@ -294,12 +294,12 @@ def test_every_existing_page_names_the_canonical_host(
         if route in ("/c/nothing_here", "/w/w_missing"):
             assert links == [], f"{name}: a page that was not found has no canonical address"
             continue
-        assert len(links) == 1 and links[0].startswith("https://herma.teleionlabs.com/"), (
+        assert len(links) == 1 and links[0].startswith("https://shim.teleionlabs.com/"), (
             name,
             links,
         )
     contribution = pages["worker /c/verb_evl_d900e706b470"]
-    assert 'rel="canonical" href="https://herma.teleionlabs.com/c/' in contribution
+    assert 'rel="canonical" href="https://shim.teleionlabs.com/c/' in contribution
 
 
 def test_every_page_uses_plain_words(

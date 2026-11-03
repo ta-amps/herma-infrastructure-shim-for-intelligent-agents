@@ -1,10 +1,16 @@
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import worker from "../deploy/cloudflare/worker.js";
 
 const BASE = "https://herma.ta-amps.workers.dev";
+const ctx = { waitUntil() {}, passThroughOnException() {} };
 
 async function callGateway(path, init = {}) {
   return exports.default.fetch(BASE + path, init);
+}
+
+async function callGatewayStrict(path, init = {}) {
+  return worker.fetch(new Request(BASE + path, init), { ...env, HERMA_STRICT_AUTH: "true" }, ctx);
 }
 
 describe("Universal On-Demand TaskObject API Runtime, Scoped Key Vault & Swappable Backend Nodes", () => {
@@ -249,9 +255,12 @@ describe("Universal On-Demand TaskObject API Runtime, Scoped Key Vault & Swappab
     });
     expect(regRes.status).toBe(201);
 
-    // 4. Unauthenticated invocation fails closed (`401 endpoint_key_required`)
-    const unauthRes = await callGateway("/q/api/api_entity_obligations_v1?id=ent_101");
-    expect(unauthRes.status).toBe(401);
+    // 4. In strict auth mode (`HERMA_STRICT_AUTH=true`), unauthenticated invocation fails closed (`401 endpoint_key_required`),
+    // while during the open free window through Dec 31, 2026, zero-auth invocation succeeds (`200`).
+    const unauthStrictRes = await callGatewayStrict("/q/api/api_entity_obligations_v1?id=ent_101");
+    expect(unauthStrictRes.status).toBe(401);
+    const openWindowRes = await callGateway("/q/api/api_entity_obligations_v1?id=ent_101");
+    expect(openWindowRes.status).toBe(200);
 
     // 5. Mint a scoped `hk_ep_*` key bound strictly to `api_entity_obligations_v1` (with `api:write_delta`)
     const epKeyDoc = await (

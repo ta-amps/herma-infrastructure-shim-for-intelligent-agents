@@ -10,6 +10,9 @@ import {
   enrichTaxonomyRecord,
   ingestCatchAllFeedbackObservation,
 } from "./taxonomy_affinity_and_proactive_feedback.js";
+import { resolveBilateralBounds } from "./conversation.js";
+
+const DEFAULT_FEEDBACK_BOUNDS = resolveBilateralBounds({});
 
 export const FEEDBACK_STEPS_UPLOADS_GRID = Object.freeze({
   schema_id: "herma.feedback_steps_and_uploads.grid.v6_9",
@@ -19,6 +22,8 @@ export const FEEDBACK_STEPS_UPLOADS_GRID = Object.freeze({
   upload_schema_version: "herma.priority_work_gateway.upload.v1",
   max_upload_bytes: 16777216,
   max_decompressed_envelope_bytes: 18874368,
+  feedback_field_max_bytes: DEFAULT_FEEDBACK_BOUNDS.feedback_field_max_bytes,
+  feedback_envelope_max_bytes: DEFAULT_FEEDBACK_BOUNDS.feedback_envelope_max_bytes,
   inline_payload_threshold_bytes: 262144,
   blob_chunk_bytes: 131072,
   max_blob_chunks: 128,
@@ -28,9 +33,9 @@ export const FEEDBACK_STEPS_UPLOADS_GRID = Object.freeze({
   upload_id_random_bytes: 8,
   short_hash_chars: 10,
   object_key_max_len: 128,
-  summary_max_len: 1600,
-  detail_max_len: 16000,
-  repro_max_len: 8000,
+  summary_max_len: DEFAULT_FEEDBACK_BOUNDS.feedback_field_max_bytes,
+  detail_max_len: DEFAULT_FEEDBACK_BOUNDS.feedback_field_max_bytes,
+  repro_max_len: DEFAULT_FEEDBACK_BOUNDS.feedback_field_max_bytes,
   endpoint_max_len: 240,
   code_max_len: 80,
   diagnostic_cred_points: 6,
@@ -485,6 +490,7 @@ export async function handleWorkerFeedbackRequest(
   { infraAllowed = false, gatewayOps } = {}
 ) {
   await ensureFeedbackStepsAndUploadsSchema(db);
+  const bounds = resolveBilateralBounds(env);
   const method = request.method.toUpperCase();
   const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
 
@@ -571,6 +577,10 @@ export async function handleWorkerFeedbackRequest(
         prog_lang: r.prog_lang || "polyglot_declarative",
         deliverable_kind: r.deliverable_kind || "verification_and_benchmark_suite",
         summary: r.summary,
+        observation: parsed.observation || r.summary,
+        detail: parsed.detail || "",
+        reproduction: parsed.reproduction || "",
+        truncated: false,
         sha256_hash: r.sha256_hash,
         object_url: `${base}/q/object/${encodeURIComponent(r.object_key)}`,
         permalink_url: `${base}/c/${encodeURIComponent(r.object_key)}`,
@@ -595,6 +605,9 @@ export async function handleWorkerFeedbackRequest(
           authenticated_diagnostic_cred_bonus: FEEDBACK_STEPS_UPLOADS_GRID.diagnostic_cred_points,
           gzip_supported: true,
           freeform_or_structured_supported: true,
+          max_field_bytes: bounds.feedback_field_max_bytes,
+          max_envelope_bytes: bounds.feedback_envelope_max_bytes,
+          truncation_policy: "never_truncate_reject_413_above_bounds",
           accepted_signal_kinds: [
             "bug_or_error",
             "data_inconsistency",
@@ -636,14 +649,16 @@ export async function handleWorkerFeedbackRequest(
     };
   }
 
-  const rawRead = await readPossiblyGzippedBytes(request);
+  const rawRead = await readPossiblyGzippedBytes(request, bounds.feedback_envelope_max_bytes);
   if (rawRead.payloadTooLarge) {
     return {
       status: FEEDBACK_STEPS_UPLOADS_GRID.http_payload_too_large,
       body: {
         ok: false,
-        code: "payload_too_large",
-        max_bytes: rawRead.max_bytes,
+        error: "feedback_too_large",
+        code: "feedback_too_large",
+        max_field_bytes: bounds.feedback_field_max_bytes,
+        max_envelope_bytes: bounds.feedback_envelope_max_bytes,
         actual_bytes: rawRead.actual_bytes,
       },
     };
@@ -678,6 +693,41 @@ export async function handleWorkerFeedbackRequest(
       params = { ...params, ...formEntries };
     } else {
       params = { ...params, observation: params.observation || rawText.trim(), detail: params.detail || rawText };
+    }
+  }
+
+  const encoder = new TextEncoder();
+  const checkedFeedbackFields = [
+    "observation",
+    "summary",
+    "message",
+    "feedback",
+    "detail",
+    "description",
+    "title",
+    "proposed_alternative",
+    "better_way",
+    "proposed_change",
+    "reproduction",
+  ];
+  for (const fieldName of checkedFeedbackFields) {
+    if (params[fieldName] === undefined || params[fieldName] === null) continue;
+    const fieldStr =
+      typeof params[fieldName] === "object" ? JSON.stringify(params[fieldName]) : String(params[fieldName]);
+    const fieldByteLen = encoder.encode(fieldStr).byteLength;
+    if (fieldByteLen > bounds.feedback_field_max_bytes) {
+      return {
+        status: FEEDBACK_STEPS_UPLOADS_GRID.http_payload_too_large,
+        body: {
+          ok: false,
+          error: "feedback_too_large",
+          code: "feedback_too_large",
+          field: fieldName,
+          max_field_bytes: bounds.feedback_field_max_bytes,
+          max_envelope_bytes: bounds.feedback_envelope_max_bytes,
+          actual_bytes: fieldByteLen,
+        },
+      };
     }
   }
 
@@ -760,11 +810,31 @@ export async function handleWorkerFeedbackRequest(
     legacyIssueKindMode,
   });
 
+  if (ingestOut.payloadTooLarge) {
+    return {
+      status: FEEDBACK_STEPS_UPLOADS_GRID.http_payload_too_large,
+      body: {
+        ok: false,
+        error: "feedback_too_large",
+        code: "feedback_too_large",
+        ...(ingestOut.field ? { field: ingestOut.field } : {}),
+        max_field_bytes: bounds.feedback_field_max_bytes,
+        max_envelope_bytes: bounds.feedback_envelope_max_bytes,
+        actual_bytes: ingestOut.actual_bytes,
+      },
+    };
+  }
+
   return {
     status: FEEDBACK_STEPS_UPLOADS_GRID.http_ok,
     body: {
       ok: true,
       schema: FEEDBACK_STEPS_UPLOADS_GRID.feedback_schema_version,
+      truncated: false,
+      accepted_bytes: ingestOut.accepted_bytes,
+      accepted_envelope_bytes: rawRead.bytes.byteLength,
+      max_field_bytes: bounds.feedback_field_max_bytes,
+      max_envelope_bytes: bounds.feedback_envelope_max_bytes,
       authenticated_reporter: tokenVerified,
       diagnostic_cred_awarded: ingestOut.diagnostic_cred_awarded,
       fingerprint: ingestOut.fingerprint,

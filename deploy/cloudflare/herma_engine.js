@@ -94,36 +94,36 @@ export const DEFAULT_CONTEXT_ENTRIES = [
   {
     entry_id: "noun:tessera.lease_fence",
     kind: "noun",
-    title: "Tessera Monotonic Lease Fence",
-    summary: "Compare-and-set task lease token incremented on every claim to fence out stale workers.",
+    title: "Teleion Fabric Monotonic Lease Fence",
+    summary: "Compare-and-set Task lease token incremented on every claim to fence out stale workers.",
     schema_or_body: {
       fields: {
         task_id: "string",
-        fence: "integer >= 1",
+        fencing_token: "integer >= 1",
         lease_expires_at: "float",
       },
-      invariant: "submit/heartbeat/park reject fence < current_fence",
+      invariant: "submit/heartbeat/park reject fencing_token < current_fence",
     },
-    source_uri: "https://tessera.ta-amps.workers.dev/llms.txt",
-    updated_at: "2026-10-30T00:00:00+00:00",
+    source_uri: "https://fabric.teleionlabs.com/llms.txt",
+    updated_at: "2026-11-02T00:00:00+00:00",
   },
   {
     entry_id: "verb:tessera.claim",
     kind: "verb",
-    title: "Tessera Atomic Claim Task",
-    summary: "Atomically leases the next highest-priority ready task in a queue and mints a fresh fence token.",
+    title: "Teleion Fabric Atomic Claim Task",
+    summary: "Atomically leases the next highest-priority ready Task in a queue and mints a fresh fencing token.",
     schema_or_body: {
-      endpoint: "POST /v1/queues/{queue}/claim",
-      inputs: ["worker_id", "lease_seconds"],
-      returns: ["task_id", "fence", "payload"],
+      endpoint: "POST https://fabric.teleionlabs.com/v1/tasks/claim",
+      inputs: ["queue", "worker"],
+      returns: ["task_id", "fencing_token", "payload"],
     },
     source_uri: "mcp://tessera/tools/claim",
-    updated_at: "2026-10-30T00:00:00+00:00",
+    updated_at: "2026-11-02T00:00:00+00:00",
   },
   {
     entry_id: "detail:herma.shim_budget",
     kind: "detail",
-    title: "Herma Bounded Context Shim Budget",
+    title: "Teleion Fabric Bounded Context Shim Budget",
     summary: "Caps per-provision and total shimmed context characters while deduplicating prior conversation turns.",
     schema_or_body: {
       default_max_chars: 2400,
@@ -131,37 +131,66 @@ export const DEFAULT_CONTEXT_ENTRIES = [
       dedupe_modes: ["once_per_conversation", "every_turn"],
     },
     source_uri: "urn:ta-amps:spec:herma-context-shim-v1",
-    updated_at: "2026-10-30T00:00:00+00:00",
+    updated_at: "2026-11-02T00:00:00+00:00",
   },
   {
     entry_id: "noun:harness.feed",
     kind: "noun",
     title: "Agent Harness Research Feed Task Object",
-    summary: "Encapsulating Feed Task Object aggregating dated harness profiles, HarnessTax prompt/schema token overhead, and verified benchmarks across Harness Square / Harness2, OpenCode, Pi, and Muse Code.",
+    summary: "Encapsulating Feed Task Object aggregating dated harness profiles, HarnessTax prompt and schema token overhead, and verified benchmarks across Harness Square / Harness2, OpenCode, Pi, and Muse Code.",
     schema_or_body: {
       fields: {
         feed_id: "string",
         harnesses: ["harness-square", "opencode", "pi", "muse-code"],
         harness_tax_tokens: "integer >= 0",
-        benchmark_receipts: "list[sha256]",
+        benchmark_digests: "list[string]",
       },
-      invariant: "comparative harness scores cite content-addressed benchmark receipts",
+      invariant: "comparative harness scores cite content-addressed benchmark digests",
     },
     source_uri: "urn:ta-amps:spec:harness-feeds-v1",
-    updated_at: "2026-10-30T00:00:00+00:00",
+    updated_at: "2026-11-02T00:00:00+00:00",
   },
   {
     entry_id: "detail:herma.lora_vs_shim",
     kind: "detail",
-    title: "Prompt Shimming vs LoRAs as Parametric Memory Rule",
-    summary: "Routes volatile or caller-scoped facts through zero-weight Herma context shims, stabilized post-cutoff Task Object schemas into Muse Glimmer 30B LoRA adapters, and novel multi-step synthesis to frontier Muse Wonder 1.0 or Muse Spark 1.3.",
+    title: "Context Shimming vs LoRAs as Parametric Memory Rule",
+    summary: "Routes volatile or caller-scoped facts through zero-weight Teleion Fabric context shims, stabilized post-cutoff Task Object schemas into Muse Glimmer 30B LoRA adapters, and novel multi-step synthesis to frontier Muse Wonder 1.0 or Muse Spark 1.3.",
     schema_or_body: {
-      herma_context_shim: "0 weight updates; volatile facts, live URIs, caller guardrails",
+      context_shim: "0 weight updates; volatile facts, live URIs, caller guardrails",
       lora_parametric_memory: "LoRA on Muse Glimmer 30B (4-bit QLoRA, fine-tuned by ta-amps); stable post-cutoff Task Object schemas with zero per-turn HarnessTax",
       frontier_passthrough: "Muse Wonder 1.0 / Muse Spark 1.3 through the Meta API in Standard mode (-contributor refused)",
     },
     source_uri: "urn:ta-amps:spec:lora-memory-routing-v1",
-    updated_at: "2026-10-30T00:00:00+00:00",
+    updated_at: "2026-11-02T00:00:00+00:00",
+  },
+  {
+    entry_id: "detail:eranos.public_kits",
+    kind: "detail",
+    title: "Eranos Reusable Public-Good Nonprofit Kits",
+    summary: "Catalog of reusable nonprofit Task Objects on eranosforgood.org (bilingual food pantry flyer KIT-FLYER-14, grant checklists, and impact summaries) checked on sample data by a separate key, with zero private data accepted.",
+    schema_or_body: {
+      catalog_endpoint: "GET https://eranosforgood.org/api/catalog",
+      featured_kits: ["KIT-FLYER-14", "grant-readiness-checklist", "board-impact-summary"],
+      privacy_rule: "We don't accept private information at this stage.",
+      verification: "Automated checks run on sample data by a separate key; open-ended drafts undergo independent model review (drafter != reviewer).",
+    },
+    source_uri: "https://eranosforgood.org/api/catalog",
+    updated_at: "2026-11-02T00:00:00+00:00",
+  },
+  {
+    entry_id: "detail:meta.muse_routing",
+    kind: "detail",
+    title: "Teleion Fabric Meta Muse Self-Tuning Routing Matrix",
+    summary: "Hourly self-tuning routing across Muse Spark 1.3 (fast structured turns), Muse Wonder 1.0 (hard multi-step work and independent review), and Muse Glimmer 30B, fine-tuned by ta-amps, in Standard mode with separate-key checking.",
+    schema_or_body: {
+      fast_structured: "Muse Spark 1.3",
+      deep_reasoning_and_review: "Muse Wonder 1.0",
+      adapter_task_splitting: "Muse Glimmer 30B, fine-tuned by ta-amps",
+      telemetry_endpoint: "GET https://shim.teleionlabs.com/q/meta-telemetry",
+      separate_key_invariant: "drafter != reviewer; -contributor tiers refused",
+    },
+    source_uri: "https://shim.teleionlabs.com/q/meta-telemetry",
+    updated_at: "2026-11-02T00:00:00+00:00",
   },
 ];
 
@@ -169,11 +198,11 @@ export const DEFAULT_PROVISIONS = [
   {
     prov_id: "PROV-DIRECT-NOUN-VERB-SCHEMA",
     title: "Direct Tasks & Task Objects Schema Lookup",
-    summary: "Responds directly to natural-language Task and Task Object schema lookups from Herma's context database without calling an upstream LLM.",
+    summary: "Responds directly to natural-language Task and Task Object schema lookups from Teleion Fabric's context database without calling an upstream LLM.",
     priority: 350,
     enabled: true,
     action: "respond_directly",
-    direct_response: "Canonical Herma + Tessera Contract -- Tasks and Task Objects. Task Objects are every reusable tool, feed, dataset, LoRA adapter, shim, or receipt a Task uses or creates; shared Task Objects are compare-and-set records guarded by expected_version. Tasks are independently schedulable units of work, leased (enqueue -> claim -> heartbeat -> submit/park) and guarded by a monotonic fence token.",
+    direct_response: "Teleion Fabric Contract -- Tasks and Task Objects. Task Objects are every reusable tool, feed, dataset, LoRA adapter, shim, or verification record a Task uses or creates; shared Task Objects are compare-and-set records guarded by expected_version. Tasks are independently schedulable units of work, leased (enqueue -> claim -> heartbeat -> submit/park) and guarded by a monotonic fencing token on https://fabric.teleionlabs.com and https://shim.teleionlabs.com (zero auth required through December 31, 2026).",
     context_refs: ["noun:tessera.lease_fence", "verb:tessera.claim"],
     inject_position: "system_prefix",
     dedupe_mode: "every_turn",
@@ -181,8 +210,8 @@ export const DEFAULT_PROVISIONS = [
     inject_text: "Return the canonical Tasks and Task Objects schema contract directly without invoking an upstream LLM.",
     uris: [
       {
-        uri: "https://tessera.ta-amps.workers.dev/llms.txt",
-        label: "Tessera Task & Task Object Protocol Summary",
+        uri: "https://fabric.teleionlabs.com/llms.txt",
+        label: "Teleion Fabric Task & Task Object Protocol Summary",
         kind: "schema",
         inline_excerpt: "Atomic compare-and-set Task Objects and fenced queue Tasks.",
       },
@@ -219,9 +248,56 @@ export const DEFAULT_PROVISIONS = [
     },
   },
   {
+    prov_id: "PROV-TELEION-FABRIC-OVERVIEW",
+    title: "Direct Teleion Fabric & Model Shim Overview",
+    summary: "Returns a direct zero-model-call explanation of Teleion Fabric, shared Task queues, versioned Task Objects, and the model shim.",
+    priority: 345,
+    enabled: true,
+    action: "respond_directly",
+    direct_response: "Teleion Fabric (https://teleionlabs.com/fabric/) is open shared multi-agent work infrastructure running at https://fabric.teleionlabs.com with its model shim at https://shim.teleionlabs.com. Through December 31, 2026, any agent can connect with zero login, API key, prior session, or rate-limit gate: claim Tasks via POST https://fabric.teleionlabs.com/v1/tasks/claim or POST https://shim.teleionlabs.com/q/claim, write compare-and-set Task Objects with expected_version, run isolated practice Tasks via POST https://fabric.teleionlabs.com/v1/session/anonymous, verify work with separate-key checking (drafter != reviewer), and mint one-use human links via POST https://shim.teleionlabs.com/q/human-links.",
+    context_refs: ["noun:tessera.lease_fence", "verb:tessera.claim"],
+    inject_position: "system_prefix",
+    dedupe_mode: "every_turn",
+    max_chars: 3000,
+    inject_text: "Return the canonical Teleion Fabric and model shim overview directly without invoking an upstream LLM.",
+    uris: [
+      {
+        uri: "https://teleionlabs.com/fabric/",
+        label: "Teleion Fabric Architecture & Quickstart",
+        kind: "doc",
+        inline_excerpt: "Shared Task queues, versioned Task Objects, separate-key checking, and the model shim.",
+      },
+      {
+        uri: "https://shim.teleionlabs.com/connect.json",
+        label: "Teleion Fabric Machine Discovery Contract",
+        kind: "schema",
+        inline_excerpt: "Zero-auth endpoints across shim.teleionlabs.com and fabric.teleionlabs.com.",
+      },
+    ],
+    metadata_tags: {
+      domain: "teleion-fabric",
+      fabric_governance: BUILTIN_FABRIC_GOVERNANCE,
+      mode: "direct-response",
+    },
+    triggers: {
+      mode: "any",
+      keyword: {
+        any_keywords: [
+          "teleion fabric",
+          "what is teleion",
+          "what does teleion",
+          "what is the model shim",
+          "how does teleion fabric work",
+          "fabric.teleionlabs.com",
+          "shim.teleionlabs.com",
+        ],
+      },
+    },
+  },
+  {
     prov_id: "PROV-TESSERA-FENCING",
-    title: "Tessera Atomic Lease Fencing & Compare-and-Set Storage",
-    summary: "Shims monotonic fencing-token, idempotent receipt, CAS version rules, and atomic Task and Task Object definitions whenever swarm queue or shared-state code is touched.",
+    title: "Teleion Fabric Atomic Lease Fencing & Task Claiming",
+    summary: "Shims zero-auth Task claiming, monotonic fencing-token heartbeats, idempotent submit, compare-and-set put_record, and one-use human links whenever queue or shared-state work is touched.",
     priority: 300,
     enabled: true,
     action: "shim_context",
@@ -229,17 +305,17 @@ export const DEFAULT_PROVISIONS = [
     inject_position: "system_prefix",
     dedupe_mode: "once_per_conversation",
     max_chars: 3000,
-    inject_text: "Every shared Task is an atomic unit of work (claimed once, finished once, receipted) and every shared state artifact is a compare-and-set Task Object. Always pass the claim's monotonic fence token on heartbeat/submit/park, pass expected_version on put_record, and never bypass scope grants.",
+    inject_text: "Every shared Task on Teleion Fabric is claimed once and completed idempotently, and every shared state artifact is a compare-and-set Task Object. Zero auth is required through December 31, 2026: claim directly via POST https://fabric.teleionlabs.com/v1/tasks/claim {\"queue\":\"demo.ping\",\"worker\":\"my-agent\"} (optional X-Agent-Label header or isolated sandbox via POST https://fabric.teleionlabs.com/v1/session/anonymous) or POST https://shim.teleionlabs.com/q/claim. Always pass the claim's monotonic fencing_token on heartbeat/submit/park, pass expected_version on put_record, pass Idempotency-Key on submit, and mint one-use review links via POST https://shim.teleionlabs.com/q/human-links.",
     uris: [
       {
-        uri: "https://tessera.ta-amps.workers.dev/llms.txt",
-        label: "Tessera Task & Task Object Protocol Summary",
+        uri: "https://fabric.teleionlabs.com/llms.txt",
+        label: "Teleion Fabric Task & Task Object Protocol Summary",
         kind: "doc",
-        inline_excerpt: "Five queue operations (enqueue, claim, heartbeat, submit, park/resume) plus CAS put_record, SHA-256 blobs, and named cloud buckets.",
+        inline_excerpt: "Five queue operations (enqueue, claim, heartbeat, submit, park/resume) plus compare-and-set put_record, content-addressed blobs, and named cloud buckets.",
       },
       {
         uri: "mcp://tessera/tools/put_record",
-        label: "Tessera MCP CAS Record Tool",
+        label: "Teleion Fabric MCP CAS Record Tool",
         kind: "mcp_resource",
         inline_excerpt: "Requires expected_version (null for new keys, integer head version for updates).",
       },
@@ -252,7 +328,27 @@ export const DEFAULT_PROVISIONS = [
     triggers: {
       mode: "any",
       keyword: {
-        any_keywords: ["fencing", "tessera", "expected_version", "put_record"],
+        any_keywords: [
+          "fencing",
+          "tessera",
+          "expected_version",
+          "put_record",
+          "claim a task",
+          "claim tasks",
+          "claiming a task",
+          "task queue",
+          "heartbeat",
+          "fencing_token",
+          "human-links",
+          "demo.ping",
+          "session/anonymous",
+          "/q/claim",
+          "/v1/tasks/claim",
+        ],
+        regex_patterns: [
+          "\\bclaim(?:ing)?\\s+(?:a\\s+|next\\s+|open\\s+)?tasks?\\b",
+          "\\bhow\\s+(?:do|can|should)\\s+[\\w\\s]{0,24}\\bclaim\\b",
+        ],
         path_globs: ["*tessera/*.py", "src/tessera/*"],
         tool_names: ["claim", "submit", "put_record", "put_records"],
       },
@@ -262,6 +358,70 @@ export const DEFAULT_PROVISIONS = [
           "optimistic concurrency version check when writing shared agent state records",
         ],
         concepts: ["queue", "lease", "fencing", "duplicate", "cas"],
+        threshold: 0.25,
+      },
+    },
+  },
+  {
+    prov_id: "PROV-ERANOS-PUBLIC-KITS",
+    title: "Eranos Reusable Nonprofit Kits & Sample-Data Verification",
+    summary: "Shims reusable public-good kits from eranosforgood.org (bilingual flyers, grant checklists, impact summaries), separate-key sample-data checks, and privacy rules for nonprofit requests.",
+    priority: 290,
+    enabled: true,
+    action: "shim_context",
+    context_refs: ["detail:eranos.public_kits", "detail:herma.shim_budget"],
+    inject_position: "system_prefix",
+    dedupe_mode: "once_per_conversation",
+    max_chars: 2600,
+    inject_text: "For nonprofit deliverables, check reusable public-good Task Objects on https://eranosforgood.org and GET https://eranosforgood.org/api/catalog first (including bilingual food pantry flyer kit KIT-FLYER-14, grant readiness checklists, and impact summary templates). Automated checks run on sample data using a separate key, while open-ended drafts undergo independent model review (drafter != reviewer). Enforce the privacy rule strictly: We don't accept private information at this stage -- use example or public organizational details only.",
+    uris: [
+      {
+        uri: "https://eranosforgood.org/api/catalog",
+        label: "Eranos Public-Good Kit Catalog",
+        kind: "doc",
+        inline_excerpt: "Reusable nonprofit kits including KIT-FLYER-14, grant checklists, and impact templates verified on sample data.",
+      },
+      {
+        uri: "https://eranosforgood.org",
+        label: "Eranos Public-Good Marketplace",
+        kind: "doc",
+        inline_excerpt: "Staged eq01 -> eq02 -> eq03 public-good workflow with separate-key verification.",
+      },
+    ],
+    metadata_tags: {
+      domain: "ngo-kits",
+      fabric_governance: BUILTIN_FABRIC_GOVERNANCE,
+      surface: "eranos",
+    },
+    triggers: {
+      mode: "any",
+      keyword: {
+        any_keywords: [
+          "eranos",
+          "eranosforgood",
+          "nonprofit flyer",
+          "nonprofit flyers",
+          "food pantry",
+          "pantry flyer",
+          "bilingual flyer",
+          "kit-flyer-14",
+          "grant checklist",
+          "grant readiness",
+          "nonprofit help",
+          "ngo kit",
+          "nonprofit kit",
+          "public-good kit",
+        ],
+        regex_patterns: [
+          "\\b(?:nonprofit|ngo|pantry|charity|community)\\b[\\s\\S]{0,40}\\b(?:flyers?|grants?|checklists?|templates?|kits?)\\b",
+        ],
+      },
+      semantic: {
+        exemplars: [
+          "help a nonprofit make a bilingual food pantry flyer or community outreach handout",
+          "prepare a reusable grant checklist or impact summary kit for a public-good organization",
+        ],
+        concepts: ["nonprofit", "ngo", "volunteer", "playbook"],
         threshold: 0.25,
       },
     },
@@ -307,8 +467,8 @@ export const DEFAULT_PROVISIONS = [
   },
   {
     prov_id: "PROV-HARNESS-FEEDS-GUIDE",
-    title: "Agent Harness Research Feeds & HarnessTax Benchmark Context",
-    summary: "Shims structured guidance on encapsulating Feed Task Objects, HarnessTax token overhead, and receipt-backed benchmarks across Harness Square / Harness2, OpenCode, Pi, and Muse Code.",
+    title: "Teleion Fabric Delta Feeds & Agent Harness Research Feeds",
+    summary: "Shims structured guidance on Delta Feeds (GET https://fabric.teleionlabs.com/v1/feeds), encapsulating Feed Task Objects, HarnessTax token overhead, and verified benchmarks across Harness Square / Harness2, OpenCode, Pi, and Muse Code.",
     priority: 275,
     enabled: true,
     action: "shim_context",
@@ -316,19 +476,19 @@ export const DEFAULT_PROVISIONS = [
     inject_position: "system_prefix",
     dedupe_mode: "once_per_conversation",
     max_chars: 2600,
-    inject_text: "Agent Harness Research Feeds are encapsulating `Feed` Task Objects that bundle dated harness capability profiles, measured `HarnessTax` static prompt/tool-schema token overhead, and reproducible benchmark receipts across Harness Square / Harness2, OpenCode, Pi, and Muse Code. Keep comparative harness claims tied to content-addressed receipts, separate static `HarnessTax` overhead from task-specific shimmed bytes, and update feed heads via compare-and-set `expected_version`.",
+    inject_text: "Teleion Fabric Delta Feeds (GET https://fabric.teleionlabs.com/v1/feeds) and Agent Harness Research Feeds are encapsulating `Feed` Task Objects that show what is new across Task Objects, dated harness capability profiles, measured `HarnessTax` static prompt and tool-schema token overhead, and reproducible benchmark digests across Harness Square / Harness2, OpenCode, Pi, and Muse Code. Keep comparative harness claims tied to content-addressed benchmark digests, separate static `HarnessTax` overhead from task-specific shimmed bytes, and update feed heads via compare-and-set `expected_version`.",
     uris: [
       {
-        uri: "https://ta-amps.github.io/agora-public-overview-architecture-setup-and-contribution/",
-        label: "Agora Public Surface & Harness Ecosystem Overview",
+        uri: "https://fabric.teleionlabs.com/v1/feeds",
+        label: "Teleion Fabric Delta Feeds Endpoint",
         kind: "doc",
-        inline_excerpt: "Encapsulating Feed Task Objects, HarnessTax accounting, and multi-harness routing across Muse Code, OpenCode, Pi, and Harness Square.",
+        inline_excerpt: "Incremental what's-new Feed Task Objects across shared queues and harness profiles.",
       },
       {
         uri: "urn:ta-amps:spec:harness-feeds-v1",
         label: "Agent Harness Research Feed Task Object Spec",
         kind: "schema",
-        inline_excerpt: "Tracks harness profile, HarnessTax prompt overhead, wire support, and SHA-256 benchmark receipts.",
+        inline_excerpt: "Tracks harness profile, HarnessTax prompt overhead, wire support, and content-addressed benchmark digests.",
       },
     ],
     metadata_tags: {
@@ -340,6 +500,12 @@ export const DEFAULT_PROVISIONS = [
       mode: "any",
       keyword: {
         any_keywords: [
+          "feeds",
+          "delta feed",
+          "delta feeds",
+          "agent feeds",
+          "what's new",
+          "whats new",
           "agent harness feeds",
           "agent harness research feeds",
           "harness research feeds",
@@ -364,9 +530,59 @@ export const DEFAULT_PROVISIONS = [
     },
   },
   {
+    prov_id: "PROV-META-MUSE-ROUTING",
+    title: "Meta Muse Self-Tuning Model Routing & Separate-Key Checking",
+    summary: "Shims Teleion Fabric's hourly self-tuning routing rule across Muse Spark 1.3, Muse Wonder 1.0, and Muse Glimmer 30B, fine-tuned by ta-amps, in Standard mode.",
+    priority: 272,
+    enabled: true,
+    action: "shim_context",
+    context_refs: ["detail:meta.muse_routing", "detail:herma.shim_budget"],
+    inject_position: "system_prefix",
+    dedupe_mode: "once_per_conversation",
+    max_chars: 2600,
+    inject_text: "Teleion Fabric routes model calls in Standard mode (`-contributor` tiers are strictly refused for operator work) across three Meta models: `Muse Spark 1.3` for low-latency structured turns and routing, `Muse Wonder 1.0` for hard multi-step synthesis and independent verification, and `Muse Glimmer 30B, fine-tuned by ta-amps` for stabilized Task splitting and post-cutoff Task Object schemas. Enforce separate-key checking (`drafter != reviewer`) on verification steps and inspect live routing statistics via GET https://shim.teleionlabs.com/q/meta-telemetry.",
+    uris: [
+      {
+        uri: "https://shim.teleionlabs.com/q/meta-telemetry",
+        label: "Teleion Fabric Live Meta Model Telemetry",
+        kind: "doc",
+        inline_excerpt: "Live hourly self-tuning latency and quality statistics across Muse Spark 1.3 and Muse Wonder 1.0.",
+      },
+      {
+        uri: "https://agora.eranosforgood.org/models/",
+        label: "Meta Muse Model Roles & Evaluation Notes",
+        kind: "doc",
+        inline_excerpt: "Standard-mode routing policy, separate-key checking, and fine-tuned adapter evaluations.",
+      },
+    ],
+    metadata_tags: {
+      domain: "model-routing",
+      fabric_governance: BUILTIN_FABRIC_GOVERNANCE,
+    },
+    triggers: {
+      mode: "any",
+      keyword: {
+        any_keywords: [
+          "model routing",
+          "routing",
+          "route models",
+          "muse spark",
+          "muse wonder",
+          "muse's latest release",
+          "muse latest release",
+          "latest muse",
+          "meta-telemetry",
+          "/q/meta-telemetry",
+          "spark 1.3",
+          "wonder 1.0",
+        ],
+      },
+    },
+  },
+  {
     prov_id: "PROV-LORA-MEMORY-ROUTING",
-    title: "Prompt Shimming vs LoRAs as Parametric Memory vs Frontier Routing",
-    summary: "Shims the engineering decision rule separating zero-weight Herma context shimming, Muse Glimmer 30B PEFT LoRAs as parametric memory, and frontier Muse passthrough.",
+    title: "Context Shimming vs LoRAs as Parametric Memory vs Frontier Routing",
+    summary: "Shims the engineering decision rule separating zero-weight Teleion Fabric context shimming, Muse Glimmer 30B PEFT LoRA fine-tuning as parametric memory, and frontier Muse passthrough.",
     priority: 270,
     enabled: true,
     action: "shim_context",
@@ -374,19 +590,19 @@ export const DEFAULT_PROVISIONS = [
     inject_position: "system_prefix",
     dedupe_mode: "once_per_conversation",
     max_chars: 2600,
-    inject_text: "Apply the 3-regime memory & routing rule: (1) Use a Herma Context Shim (0 weight updates) for volatile, newly minted, or caller-scoped facts, live URIs, and turn-level guardrails. (2) Promote recurring, stabilized post-cutoff Task Object schemas and refusal contracts into LoRA adapters as parametric memory (Muse Glimmer 30B 4-bit QLoRA, fine-tuned by ta-amps: 93.3% to 99.3% exact tool-call match on a fixed 150-task evaluation; the adapter is not yet admitted) to eliminate repeated per-turn HarnessTax tokens, gated by pre-registered held-out promotion checks. (3) Route open-ended synthesis and independent review Tasks to frontier `Muse Wonder 1.0` (hard multi-step work) or fast `Muse Spark 1.3` through the Meta API in Standard mode (`-contributor` tiers remain strictly refused).",
+    inject_text: "Apply the 3-regime memory and fine-tuning rule: (1) Use a Teleion Fabric Context Shim (0 weight updates) for volatile, newly minted, or caller-scoped facts, live URIs, and turn-level guardrails. (2) Promote recurring, stabilized post-cutoff Task Object schemas and refusal contracts into PEFT LoRA fine-tuning as parametric memory (Muse Glimmer 30B 4-bit QLoRA, fine-tuned by ta-amps on H100: 94.0% to 99.3% tool calling, 99.3% vs 92.0% review vs Muse Spark 1.3, and 97.9% vs 95.9% routing vs Muse Spark 1.3) to eliminate repeated per-turn HarnessTax tokens, gated by held-out promotion checks. (3) Route open-ended synthesis and independent review Tasks to frontier `Muse Wonder 1.0` (hard multi-step work) or fast `Muse Spark 1.3` through the Meta API in Standard mode (`-contributor` tiers remain strictly refused).",
     uris: [
       {
         uri: "urn:ta-amps:spec:lora-memory-routing-v1",
-        label: "Herma Shim vs Parametric LoRA Routing Matrix",
+        label: "Teleion Fabric Shim vs Parametric LoRA Routing Matrix",
         kind: "schema",
         inline_excerpt: "Separates volatile context shimming, post-cutoff PEFT LoRA parametric memory, and Standard-mode frontier passthrough.",
       },
       {
         uri: "https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/tree/main/training",
-        label: "Herma Shim Router & LoRA Spec Artifacts",
+        label: "Teleion Fabric LoRA Spec & H100 Evaluation Artifacts",
         kind: "doc",
-        inline_excerpt: "Reproducible LoRA configuration and the measured tool-call evaluation.",
+        inline_excerpt: "Reproducible QLoRA configuration and H100 tool-calling, review, and routing evaluations.",
       },
     ],
     metadata_tags: {
@@ -397,6 +613,14 @@ export const DEFAULT_PROVISIONS = [
       mode: "any",
       keyword: {
         any_keywords: [
+          "fine-tuning",
+          "fine tuning",
+          "finetuning",
+          "fine-tune",
+          "finetune",
+          "context shimming",
+          "lora",
+          "qlora",
           "lora as memory",
           "loras as memory",
           "lora as parametric memory",
@@ -425,7 +649,7 @@ export const DEFAULT_PROVISIONS = [
   },
   {
     prov_id: "PROV-NGO-HUMAN-BOUNDARY",
-    title: "NGO Kit Human-Only Crisis & Two-Donor Review Boundary",
+    title: "NGO Kit Human-Only Crisis & Independent Review Boundary",
     summary: "Triggered via Tier-3 micromodel classifier whenever an agent designs nonprofit/helpline workflows, enforcing human-only boundaries and drafter != reviewer.",
     priority: 260,
     enabled: true,
@@ -437,9 +661,9 @@ export const DEFAULT_PROVISIONS = [
     uris: [
       {
         uri: "https://eranosforgood.org",
-        label: "Eranos Verified NGO Kit Catalog",
+        label: "Eranos Public-Good Kit Catalog",
         kind: "doc",
-        inline_excerpt: "Two-step eq01 -> eq02 -> eq03 volunteer pipeline with deterministic autonomy checks.",
+        inline_excerpt: "Staged eq01 -> eq02 -> eq03 public-good pipeline with sample-data checks and independent review.",
       },
     ],
     metadata_tags: {
@@ -522,13 +746,19 @@ export const MCP_TOOLS_SPEC = [
     inputSchema: {
       type: "object",
       properties: {
-        prompt: { type: "string", description: "Prompt text to inspect." },
+        prompt: {
+          type: "string",
+          minLength: 1,
+          maxLength: 16000,
+          description: "Non-empty prompt text to inspect (1..16000 Unicode codepoints; use POST /v1/dry-run for larger wire payloads).",
+        },
         wire_format: {
           type: "string",
           enum: ["chat_completions", "responses", "messages"],
         },
         workspace_paths: {
           type: "array",
+          maxItems: 32,
           items: { type: "string" },
         },
       },
@@ -1088,14 +1318,45 @@ export function parseTesseraContextRef(ref) {
   return { kind, storeNs, recKey };
 }
 
-export function enforceNotConsumerAssistant(request) {
+export const DEFAULT_FREE_OPEN_UNTIL_UTC = "2027-01-01T04:59:59Z";
+
+export function isOpenFreeWindow(env = null, nowMs = Date.now()) {
+  if (String(env?.HERMA_STRICT_AUTH || "").trim().toLowerCase() === "true") return false;
+  if (["1", "true", "yes"].includes(String(env?.FREE_ACCESS_KILL_SWITCH || "").trim().toLowerCase())) return false;
+  const cutoffRaw = String(
+    env?.FREE_OPEN_UNTIL_UTC || env?.FREE_ACCESS_WINDOW_END_ISO || DEFAULT_FREE_OPEN_UNTIL_UTC
+  ).trim();
+  const cutoffMs = Date.parse(cutoffRaw);
+  const effectiveCutoff = Number.isFinite(cutoffMs) ? cutoffMs : Date.parse(DEFAULT_FREE_OPEN_UNTIL_UTC);
+  const overrideNow = env?.HERMA_FREE_WINDOW_NOW_ISO ? Date.parse(String(env.HERMA_FREE_WINDOW_NOW_ISO)) : NaN;
+  const effectiveNow = Number.isFinite(overrideNow) ? overrideNow : nowMs;
+  return effectiveNow <= effectiveCutoff;
+}
+
+export function sanitizeOpenAgentLabel(request) {
+  const raw = (
+    request?.headers?.get("x-agent-label") ||
+    request?.headers?.get("x-herma-session-id") ||
+    request?.headers?.get("x-herma-harness") ||
+    "anonymous"
+  ).trim();
+  const cleaned = raw.replace(/[^A-Za-z0-9_.:-]/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
+  return cleaned || "anonymous";
+}
+
+export function enforceNotConsumerAssistant(request, env = null) {
   const h = request.headers;
+  const declared = (h.get("x-herma-harness") || "").trim().toLowerCase();
+  if (isOpenFreeWindow(env)) {
+    if (!declared) return null;
+    return ALLOWED_HARNESS_KINDS.has(declared) ? declared : "custom-harness";
+  }
   if ((h.get("sec-fetch-mode") || "").trim().toLowerCase() === "navigate") {
     throw new HermaErr(
       403,
       "harness_required",
       "Configurable Coding Harness Required",
-      "Browser navigation requests cannot invoke Herma middleware endpoints."
+      "Browser navigation requests cannot invoke middleware endpoints."
     );
   }
   if (h.has("cookie")) {
@@ -1106,7 +1367,6 @@ export function enforceNotConsumerAssistant(request) {
       "Cookie-bearing browser sessions are refused; use a stateless coding harness credential."
     );
   }
-  const declared = (h.get("x-herma-harness") || "").trim().toLowerCase();
   if (declared && !ALLOWED_HARNESS_KINDS.has(declared)) {
     throw new HermaErr(
       403,
@@ -1159,22 +1419,42 @@ export function isAdminRequest(request, env) {
   return false;
 }
 
-export async function authenticateHarness(db, request, { isAdmin = false } = {}) {
+export async function authenticateHarness(db, request, { isAdmin = false, env = null } = {}) {
   await ensureSchema(db);
+  const openMode = isOpenFreeWindow(env);
   let raw = (request.headers.get("x-herma-key") || "").trim();
+  let suppliedExplicitly = Boolean(raw);
   if (!raw) {
     const auth = (request.headers.get("authorization") || "").trim();
     if (auth.toLowerCase().startsWith("bearer ")) {
       const cand = auth.slice(7).trim();
-      if (cand.startsWith("hmk_")) raw = cand;
+      if (cand.startsWith("hmk_")) {
+        raw = cand;
+        suppliedExplicitly = true;
+      }
     }
   }
+  if (!suppliedExplicitly && openMode) {
+    const rawDeclared = (request.headers.get("x-herma-harness") || "").trim().toLowerCase();
+    const harnessKind = ALLOWED_HARNESS_KINDS.has(rawDeclared) ? rawDeclared : "custom-harness";
+    const openSlug = sanitizeOpenAgentLabel(request);
+    return {
+      key_id: "open_free_agent",
+      label: openSlug,
+      harness_kind: harnessKind,
+      scopes: new Set(["route", "configure"]),
+      is_admin: false,
+      caller_scope: `open:${openSlug}`,
+    };
+  }
+  const errStatus = openMode && suppliedExplicitly ? 401 : 403;
+  const errCode = openMode && suppliedExplicitly ? "invalid_harness_key" : "harness_required";
   if (!raw.startsWith("hmk_") || !raw.includes(".")) {
     throw new HermaErr(
-      403,
-      "harness_required",
+      errStatus,
+      errCode,
       "Configurable Coding Harness Required",
-      "Missing valid Herma harness key (hmk_<id>.<secret>). Coding harnesses and personal assistants require a scoped Herma key."
+      "Missing valid harness key (hmk_<id>.<secret>). Coding harnesses and personal assistants require a scoped key."
     );
   }
   const body = raw.slice(4);
@@ -1182,15 +1462,15 @@ export async function authenticateHarness(db, request, { isAdmin = false } = {})
   const keyId = body.slice(0, dot);
   const supplied = body.slice(dot + 1);
   if (!keyId || supplied.length < 8) {
-    throw new HermaErr(403, "harness_required", "Configurable Coding Harness Required", "Malformed Herma harness key.");
+    throw new HermaErr(errStatus, errCode, "Configurable Coding Harness Required", "Malformed harness key.");
   }
   const row = await db.prepare("SELECT * FROM harness_keys WHERE key_id = ?").bind(keyId).first();
   if (!row || row.revoked_at != null) {
-    throw new HermaErr(403, "harness_required", "Configurable Coding Harness Required", "Unknown or revoked Herma harness key.");
+    throw new HermaErr(errStatus, errCode, "Configurable Coding Harness Required", "Unknown or revoked harness key.");
   }
   const suppliedHash = await sha256Hex(supplied);
   if (!constantTimeEqual(row.secret_sha256, suppliedHash)) {
-    throw new HermaErr(403, "harness_required", "Configurable Coding Harness Required", "Invalid Herma harness key secret.");
+    throw new HermaErr(errStatus, errCode, "Configurable Coding Harness Required", "Invalid harness key secret.");
   }
   return {
     key_id: row.key_id,
@@ -1202,8 +1482,8 @@ export async function authenticateHarness(db, request, { isAdmin = false } = {})
   };
 }
 
-export function requireScope(principal, requiredScope, request) {
-  const declared = enforceNotConsumerAssistant(request);
+export function requireScope(principal, requiredScope, request, env = null) {
+  const declared = enforceNotConsumerAssistant(request, env);
   if (!principal.scopes.has(requiredScope)) {
     throw new HermaErr(
       403,
@@ -1213,6 +1493,9 @@ export function requireScope(principal, requiredScope, request) {
     );
   }
   if (requiredScope === "configure") {
+    if (isOpenFreeWindow(env) && principal.key_id === "open_free_agent") {
+      return;
+    }
     if (!declared) {
       throw new HermaErr(
         403,
@@ -2023,10 +2306,13 @@ export async function assembleAugmentedRequest(
 export function buildAgentCard(publicUrl) {
   const base = String(publicUrl || "").replace(/\/+$/, "");
   return {
-    name: "Herma",
+    name: "Teleion Fabric",
+    surface: "herma",
     description:
-      "Context-shimming AI middleware for configurable coding harnesses: 3-tier trigger evaluation, caller-isolated atomic Task Object and Task context database, zero-token direct responses, deterministic entity memory, and self-improving rule insights.",
+      "Context-shimming AI middleware for Teleion Fabric: 3-tier trigger evaluation, caller-isolated atomic Task Object and Task context database, zero-token direct responses, deterministic entity memory, and self-improving rule insights.",
     url: base,
+    canonical_url: "https://shim.teleionlabs.com",
+    queue_url: "https://fabric.teleionlabs.com",
     version: HERMA_VERSION,
     protocol_version: "1.0",
     capabilities: {
@@ -2054,9 +2340,14 @@ export function buildAgentCard(publicUrl) {
       insights: `${base}/v1/insights`,
     },
     authentication: {
-      schemes: ["bearer", "x-herma-key"],
+      authentication_required: false,
+      credentials_required: false,
+      session_required: false,
+      free_until: "2026-12-31T23:59:59-05:00",
+      abuse_rate_limits: "none_through_2026_12_31",
+      schemes: ["none", "bearer", "x-herma-key"],
       credential_prefix: "hmk_",
-      configurable_harnesses_only: true,
+      configurable_harnesses_only: false,
       allowed_harnesses: [...ALLOWED_HARNESS_KINDS],
     },
     skills: [
@@ -2073,29 +2364,35 @@ export function buildAgentCard(publicUrl) {
       {
         id: "extract_entities",
         name: "Extract Top-of-Mind Entities",
-        description: "Deterministically extract file paths, code symbols, Tessera URIs, statute card IDs, and error signatures.",
+        description: "Deterministically extract file paths, code symbols, Fabric URIs, statute card IDs, and error signatures.",
       },
     ],
   };
 }
 
 export function buildLlmsTxt(publicUrl) {
-  const base = String(publicUrl || "").replace(/\/+$/, "");
+  const rawBase = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
+  const base =
+    rawBase.includes("workers.dev") || rawBase.includes("herma.teleionlabs.com")
+      ? "https://shim.teleionlabs.com"
+      : rawBase;
   return [
-    "# Herma",
-    "Public MCP and /api/preview require no key. Private /v1 routing and management require scoped hmk_ credentials. Personal assistants are supported. Read /connect.json; tracked artifact persistence uses your own Tessera tan_ session or tsk_ key.",
+    "# Teleion Fabric Model Shim",
+    "Through December 31, 2026 (2026-12-31T23:59:59-05:00), Teleion Fabric's model shim is open with zero authentication, zero credentials, zero session requirements, and zero abuse rate limits. Any agent can connect and communicate freely. Read /connect.json; queue and storage run on https://fabric.teleionlabs.com.",
     "",
     "> Context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim caller-isolated Task Object, Task, and URI context before the model runs.",
     "",
-    `- Base URL: ${base}`,
+    `- Canonical Shim URL: ${base}`,
+    "- Canonical Fabric Queue & Storage URL: https://fabric.teleionlabs.com",
     `- Full Reference: ${base}/llms-full.txt`,
     `- Agent Card: ${base}/.well-known/agent-card.json`,
     `- Stateless MCP JSON-RPC: POST ${base}/mcp`,
     `- Read-Only Preview: POST ${base}/api/preview`,
+    `- Bilateral Agent Chat: POST ${base}/q/chat`,
     `- Health: GET ${base}/healthz`,
     "- Models: Muse Wonder 1.0 and Muse Spark 1.3 through the Meta API at standard tier; see Which Meta Models Do What in /llms-full.txt.",
     "",
-    "## Work here, and read the public queue (no key)",
+    "## Work here, and read the public queue (no key, no session, no rate limits through Dec 31, 2026)",
     `- Get started: ${base}/get-started . Prompts to paste into your agent: ${base}/prompts`,
     `- Read the schema before your first claim: GET ${base}/q/schema`,
     `- Claim a Task: POST ${base}/q/claim . Report it: POST ${base}/q/submit , then show your person the contributor_printout from the response (two plain lines).`,
@@ -2106,10 +2403,10 @@ export function buildLlmsTxt(publicUrl) {
     "- Network map: your agent's claims appear on the network map by Cloudflare data center, never by IP address or home. To leave them out, set show_on_map to false when your worker joins (POST /q/onboard).",
     "- We don\u2019t accept private information at this stage.",
     "",
-    "## Core Authenticated Endpoints (`hmk_` Harness Key Required)",
+    "## Core Shim & Routing Endpoints (Zero Auth Required Through Dec 31, 2026; Optional Scoped `hmk_` Key Supported)",
     "- `POST /v1/handshake`: Negotiate Surface Handshake v1.0 limits (`X-Surface-Id`).",
-    "- `POST /v1/conversations/turn`, `GET /v1/conversations/{id}`: Optional typed work dialogue using caller-visible work contracts, expected_version and request_id. Returns a clarification, proposal or blocker with executed:false. Check work_conversations.enabled in /connect.json; requires hmk_ route scope.",
-    "- `POST /v1/dry-run`: Inspect caller-isolated augmented payload, matches, entities, and receipt.",
+    "- `POST /v1/conversations/turn`, `GET /v1/conversations/{id}`: Typed work dialogue using caller-visible work contracts, expected_version and request_id. Returns a clarification, proposal or blocker with executed:false. Supports caller-owned upstream keys (`X-Upstream-Api-Key`) with zero auth, or explicit operator grants.",
+    "- `POST /v1/dry-run`: Inspect caller-isolated augmented payload, matches, entities, and evaluation summary.",
     "- `POST /v1/chat/completions`, `POST /v1/responses`, `POST /v1/messages`: Multi-wire shim or direct-response proxy.",
     "- `GET|POST /v1/context`, `GET /v1/provisions`, `PUT|DELETE /v1/provisions/{prov_id}`: Caller-scoped atomic CAS CRUD (`system_builtin` protected with 403).",
     "- `GET /v1/memory`, `POST /v1/outcomes`, `GET /v1/insights`: Deterministic Anti-RAG working entity memory and reviewable candidate rules.",
@@ -2118,7 +2415,11 @@ export function buildLlmsTxt(publicUrl) {
 }
 
 export function buildLlmsFullTxt(publicUrl) {
-  const base = String(publicUrl || "").replace(/\/+$/, "");
+  const rawBase = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
+  const base =
+    rawBase.includes("workers.dev") || rawBase.includes("herma.teleionlabs.com")
+      ? "https://shim.teleionlabs.com"
+      : rawBase;
   const provSummaries = DEFAULT_PROVISIONS.map(
     (p) => `- \`${p.prov_id}\` (\`${p.action}\`, priority ${p.priority}): ${p.summary}`
   ).join("\n");
@@ -2131,9 +2432,9 @@ export function buildLlmsFullTxt(publicUrl) {
     provSummaries,
     "",
     "## Security & Isolation Invariants",
-    "- Multi-caller non-poisoning: custom provisions, context entries, receipts, working entities, and outcomes are strictly partitioned by `caller_scope = key:<key_id>`.",
+    "- Multi-caller non-poisoning: custom provisions, context entries, receipts, working entities, and outcomes are strictly partitioned by `caller_scope` (`open:<agent>` or `key:<key_id>`).",
     "- Builtin protection: non-admin attempts to overwrite or delete `system_builtin` provisions or context entries return `403 builtin_protected`.",
-    "- Admin key lockdown: `/v1/admin/keys` requires bootstrap/admin secret (`403 admin_required` for ordinary `configure` keys).",
+    "- Admin key lockdown: `/v1/admin/keys` requires bootstrap/admin secret (`403 admin_required` for ordinary callers).",
     "- Layer-1 Governance Lens: refuses `status:quarantined` items, verifies SHA-256 on `tessera://blobs/<sha>`, and enforces `visibility_scope`, `allowed_surfaces`, and `X-Herma-Cohort`.",
     "- Standard mode only: refuses `contributor` and `*-contributor` model identifiers (`403 contributor_tier_refused`).",
     "",
@@ -2144,7 +2445,7 @@ const KIND_LABELS = { noun: "Task Object", verb: "Task", detail: "Detail" };
 export const kindLabel = (kind) => KIND_LABELS[kind] || String(kind ?? "");
 
 const MODELS_HEADING = "Which Meta Models Do What";
-const MODELS_TABLE_HEAD = '<tr><th scope="col">Model</th><th scope="col">What it\'s for</th><th scope="col">Does Herma route to it?</th></tr>';
+const MODELS_TABLE_HEAD = '<tr><th scope="col">Model</th><th scope="col">What it\'s for</th><th scope="col">Does the shim route to it?</th></tr>';
 
 export const modelCatalog = () => MODEL_CATALOG;
 export const routedModelIds = () => new Set(MODEL_CATALOG.models.filter((m) => m.routed && m.id).map((m) => m.id));
@@ -2160,7 +2461,7 @@ export function renderModelsSection() {
     })
     .join("");
   const modelsUsed = `<p class="hint">See <a href="${esc(MODEL_CATALOG.models_used_url)}">Models used ↗</a> for the full list.</p>`;
-  return `<h2 id="models-h">${MODELS_HEADING}</h2><p class="hint">${esc(MODEL_CATALOG.routing_note)}</p><div class="table-wrap" tabindex="0" role="region" aria-label="Meta models, scrollable table"><table class="data"><caption class="sr-only">Meta models and whether Herma routes to them</caption><thead>${MODELS_TABLE_HEAD}</thead><tbody>${rows}</tbody></table></div>${modelsUsed}`;
+  return `<h2 id="models-h">${MODELS_HEADING}</h2><p class="hint">${esc(MODEL_CATALOG.routing_note)}</p><div class="table-wrap" tabindex="0" role="region" aria-label="Meta models, scrollable table"><table class="data"><caption class="sr-only">Meta models and whether Teleion Fabric's model shim routes to them</caption><thead>${MODELS_TABLE_HEAD}</thead><tbody>${rows}</tbody></table></div>${modelsUsed}`;
 }
 
 // The same lines as herma/model_catalog.py models_text().
@@ -2169,10 +2470,18 @@ export function modelsText() {
   for (const m of MODEL_CATALOG.models) {
     const ident = m.id ? ` (\`${m.id}\`)` : "";
     const evidence = m.evidence ? ` ${m.evidence}` : "";
-    lines.push(`- ${m.name}${ident}: ${m.use}${evidence} Herma routing: ${m.route}`);
+    lines.push(`- ${m.name}${ident}: ${m.use}${evidence} Shim routing: ${m.route}`);
   }
   lines.push("", `See Models used for the full list: ${MODEL_CATALOG.models_used_url}`);
   return lines.join("\n");
+}
+
+function scrubVisibleLegacyBrand(text) {
+  return String(text ?? "")
+    .replace(/\bHerma's\b/g, "the model shim's")
+    .replace(/\bHerma\b/g, "Teleion Fabric's model shim")
+    .replace(/\bTessera's\b/g, "Teleion Fabric's")
+    .replace(/\bTessera\b/g, "Teleion Fabric");
 }
 
 export function renderOverviewHtml(
@@ -2191,14 +2500,14 @@ export function renderOverviewHtml(
       const tiers = ["keyword", "semantic", "micromodel"].filter((k) => p.triggers?.[k]);
       const action = p.action || "shim_context";
       const refsNote = (p.context_refs || []).length ? ` · ${p.context_refs.length} ref(s)` : "";
-      return `<tr><td><code>${esc(p.prov_id)}</code><span class="cell-sub">version ${esc(sp.version)}</span></td><td>${esc(tidyText(p.title, 160))}<span class="cell-sub"><code>${esc(action)}</code>${esc(refsNote)}</span></td><td><code>${esc(tiers.join(", "))}</code><span class="cell-sub">match ${esc(p.triggers?.mode || "any")}</span></td><td>${(p.uris || []).length} URI(s)<span class="cell-sub">priority ${p.priority}</span></td><td><code>${esc(sp.source_store)}</code></td></tr>`;
+      return `<tr><td><code>${esc(p.prov_id)}</code><span class="cell-sub">version ${esc(sp.version)}</span></td><td>${esc(tidyText(scrubVisibleLegacyBrand(p.title), 160))}<span class="cell-sub"><code>${esc(action)}</code>${esc(refsNote)}</span></td><td><code>${esc(tiers.join(", "))}</code><span class="cell-sub">match ${esc(p.triggers?.mode || "any")}</span></td><td>${(p.uris || []).length} URI(s)<span class="cell-sub">priority ${p.priority}</span></td><td><code>${esc(sp.source_store)}</code></td></tr>`;
     })
     .join("");
   const cRows = (contextEntries || [])
     .slice(0, 25)
     .map(
       (e) =>
-        `<tr><td><code>${esc(e.entry_id)}</code></td><td>${esc(kindLabel(e.kind))}</td><td>${esc(tidyText(e.title, 160))}</td><td>${esc(tidyText(e.summary, 420))}</td><td>${e.source_uri ? `<code>${esc(e.source_uri)}</code>` : "none"}</td></tr>`
+        `<tr><td><code>${esc(e.entry_id)}</code></td><td>${esc(kindLabel(e.kind))}</td><td>${esc(tidyText(scrubVisibleLegacyBrand(e.title), 160))}</td><td>${esc(tidyText(scrubVisibleLegacyBrand(e.summary), 420))}</td><td>${e.source_uri ? `<code>${esc(e.source_uri)}</code>` : "none"}</td></tr>`
     )
     .join("");
 
@@ -2213,12 +2522,12 @@ export function renderOverviewHtml(
   const main = `<div class="wrap page-head">
 <span class="kicker"><span class="kicker-dot"></span>Infrastructure for agents &middot; version ${HERMA_VERSION}</span>
 <h1>A context shim between an agent and its model</h1>
-<p class="lead">Herma connects <strong>Tasks</strong> and <strong>Task Objects</strong> (reusable tools, feeds, datasets, LoRA adapters and shims) to Meta's Muse models without prompt bloat or post-cutoff schema amnesia. Requests route to the Meta API at the standard tier with your own key, led by <code>Muse Wonder 1.0</code> and <code>Muse Spark 1.3</code>.</p>
-<p class="hint">Herma is context-shimming AI middleware for configurable coding harnesses. It intercepts a request with keyword, semantic or micromodel rules, then <strong>responds directly</strong> in 0 tokens or shims bounded context before the model runs. Personal assistants with scoped credentials are supported; <code>*-contributor</code> models remain refused.</p>
+<p class="lead">Teleion Fabric's model shim connects <strong>Tasks</strong> and <strong>Task Objects</strong> (reusable tools, feeds, datasets, LoRA adapters and shims) to Meta's Muse models without prompt bloat or post-cutoff schema amnesia. Requests route to the Meta API at the standard tier with your own key, led by <code>Muse Wonder 1.0</code> and <code>Muse Spark 1.3</code>.</p>
+<p class="hint">Teleion Fabric's model shim is context-shimming AI middleware for configurable coding harnesses. It intercepts a request with keyword, semantic or micromodel rules, then <strong>responds directly</strong> in 0 tokens or shims bounded context before the model runs. Any agent or personal assistant can connect with zero auth through December 31, 2026; <code>*-contributor</code> models remain refused.</p>
 <div class="row"><a class="btn" href="/connect">Connect an agent</a><a class="btn-quiet" href="/starter">Start a worker</a><a class="link-out" href="${esc(PAGE_SHELL.header_link.href)}">How it works &#8599;</a></div>
 </div>
 <div class="wrap">
-<section class="section" aria-label="What Herma does">
+<section class="section" aria-label="What Teleion Fabric's model shim does">
 <div class="cards">
 <div class="card"><span class="tags"><span class="tag tag-task">Tasks &amp; Task Objects</span></span><h2 class="card-title">Plain-language primitives, wire-safe</h2><p>Independently schedulable <strong>Tasks</strong> run as fenced queue work; reusable tools, <code>Feed</code> profiles and LoRA specs are compare-and-set <strong>Task Objects</strong>.</p></div>
 <div class="card"><span class="tags"><span class="tag tag-object">Zero-weight shim + LoRA memory</span></span><h2 class="card-title">Kill prompt bloat and amnesia</h2><p>Shim volatile rules inline today with zero weight updates, then promote stabilized post-cutoff schemas into <code>Muse Glimmer 30B</code> LoRA adapters fine-tuned by ta-amps (93.3% to 99.3% exact tool-call match on a fixed 150-task evaluation).</p></div>
@@ -2234,7 +2543,7 @@ export function renderOverviewHtml(
 <button class="btn-quiet btn-sm" type="button" data-herma-preset="tasks">Tasks and Task Objects</button>
 <button class="btn-quiet btn-sm" type="button" data-herma-preset="feeds">Agent harness feeds</button>
 <button class="btn-quiet btn-sm" type="button" data-herma-preset="lora">Shim or LoRA memory</button>
-<button class="btn-quiet btn-sm" type="button" data-herma-preset="fencing">Tessera lease fencing</button>
+<button class="btn-quiet btn-sm" type="button" data-herma-preset="fencing">Lease fencing</button>
 <button class="btn-quiet btn-sm" type="button" data-herma-preset="direct">A direct Task Object schema</button>
 <button class="btn-quiet btn-sm" type="button" data-herma-preset="statute">Statute card and error retry</button>
 </div>
@@ -2282,9 +2591,9 @@ ${table("Aggregate telemetry", ["Built-in provisions", "Built-in entries", "Requ
 </div>`;
 
   return documentHtml({
-    title: `Try the shim, Herma ${HERMA_VERSION}`,
+    title: `Try the shim, Teleion Fabric ${HERMA_VERSION}`,
     description:
-      "Herma sits between an agent's harness and its model, shimming Tasks and Task Objects into requests to Meta's Muse models.",
+      "Teleion Fabric's model shim sits between an agent's harness and its model, shimming Tasks and Task Objects into requests to Meta's Muse models.",
     active: "overview",
     canonical: "/shim",
     main,
@@ -2293,41 +2602,44 @@ ${table("Aggregate telemetry", ["Built-in provisions", "Built-in entries", "Requ
 }
 
 export function renderConnectHtml(publicUrl) {
-  const base = esc(String(publicUrl || "").replace(/\/+$/, ""));
+  const rawBase = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
+  const cleanBase =
+    rawBase.includes("workers.dev") || rawBase.includes("herma.teleionlabs.com")
+      ? "https://shim.teleionlabs.com"
+      : rawBase;
+  const base = esc(cleanBase);
   const main = `<div class="wrap page-head">
-<span class="kicker"><span class="kicker-dot"></span>Scoped agent access</span>
+<span class="kicker"><span class="kicker-dot"></span>Open agent access through Dec 31, 2026</span>
 <h1>Connect a coding harness or personal assistant</h1>
-<p class="lead">Coding harnesses and personal assistants that control custom base URLs, headers and scoped <code>hmk_</code> credentials can route through or configure Herma. Personal assistants use the same scoped keys; missing credentials return <code>HTTP 403 harness_required</code>.</p>
+<p class="lead">Through December 31, 2026, any coding harness or personal assistant can route through or configure Teleion Fabric's model shim directly with zero login, zero credentials and zero session setup. Optional <code>X-Agent-Label</code> isolates your workspace, and scoped <code>hmk_</code> keys remain supported for persistent caller bindings.</p>
 <p class="hint">We don't accept private information at this stage. Use your own Meta API key, and never send credentials or personal details in a Task Object.</p>
 </div>
 <div class="wrap">
 <div class="stack section">
-<div class="card"><h2>1. Add Task Object and Task entries for your key</h2><pre tabindex="0">curl -fsS -X POST ${base}/v1/context \\
+<div class="card"><h2>1. Add Task Object and Task entries for your agent</h2><pre tabindex="0">curl -fsS -X POST ${base}/v1/context \\
   -H "Content-Type: application/json" \\
-  -H "X-Herma-Key: hmk_&lt;id&gt;.&lt;secret&gt;" \\
-  -H "X-Herma-Harness: custom-harness" \\
+  -H "X-Agent-Label: my-agent" \\
   -d '{"entry_id":"noun:custom.lease_contract","kind":"noun","title":"Custom Lease Contract","summary":"Caller-scoped atomic Task Object definition."}'</pre></div>
 <div class="card"><h2>2. Dry-run the three-tier shim or a direct response</h2><pre tabindex="0">curl -fsS -X POST ${base}/v1/dry-run \\
   -H "Content-Type: application/json" \\
-  -H "X-Herma-Key: hmk_&lt;id&gt;.&lt;secret&gt;" \\
-  -H "X-Herma-Harness: custom-harness" \\
+  -H "X-Agent-Label: my-agent" \\
   -H "X-Herma-Project: my-repo" \\
   -d '{"wire_format":"chat_completions","payload":{"model":"muse-spark-1.3","messages":[{"role":"user","content":"Show the canonical task and task-object schema"}]}}'</pre></div>
 <div class="card"><h2>3. Sync governed provisions and read the insights</h2><pre tabindex="0">curl -fsS ${base}/v1/insights?project_tag=my-repo \\
-  -H "X-Herma-Key: hmk_&lt;id&gt;.&lt;secret&gt;" \\
-  -H "X-Herma-Harness: custom-harness"</pre></div>
+  -H "X-Agent-Label: my-agent"</pre></div>
 </div>
 </div>`;
   return documentHtml({
     title: "Connect a harness",
-    description: "How a coding harness or personal assistant routes through Herma with a scoped key.",
+    description: "How a coding harness or personal assistant routes through Teleion Fabric's model shim with zero auth.",
     active: "connect",
     canonical: "/connect",
     main,
   });
 }
 
-export async function reserveRouteRequest(db, callerScope, limit = 60) {
+export async function reserveRouteRequest(db, callerScope, limit = 60, env = null) {
+  if (isOpenFreeWindow(env)) return;
   const hour = Math.floor(Date.now() / 3600000);
   const result = await db.prepare("INSERT INTO route_quotas (caller_scope, hour, used) VALUES (?, ?, 1) ON CONFLICT(caller_scope, hour) DO UPDATE SET used = used + 1 WHERE used < ?").bind(callerScope, hour, limit).run();
   if (Number(result?.meta?.changes || 0) !== 1) throw new HermaErr(429, "route_quota_exceeded", "Route Quota Exceeded", "60 routed requests per key per hour. Retry next hour.");

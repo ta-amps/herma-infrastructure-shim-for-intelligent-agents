@@ -173,13 +173,19 @@ MCP_TOOLS_SPEC: list[dict[str, Any]] = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "prompt": {"type": "string", "description": "Prompt text to inspect."},
+                "prompt": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 16000,
+                    "description": "Prompt text to inspect (1..16000 Unicode codepoints; use /v1/dry-run above 16000).",
+                },
                 "wire_format": {
                     "type": "string",
                     "enum": ["chat_completions", "responses", "messages"],
                 },
                 "workspace_paths": {
                     "type": "array",
+                    "maxItems": 32,
                     "items": {"type": "string"},
                 },
             },
@@ -196,6 +202,7 @@ MCP_TOOLS_SPEC: list[dict[str, Any]] = [
                 "text": {"type": "string", "description": "Source text to scan."},
                 "workspace_paths": {
                     "type": "array",
+                    "maxItems": 32,
                     "items": {"type": "string"},
                 },
             },
@@ -209,13 +216,16 @@ MCP_TOOLS_SPEC: list[dict[str, Any]] = [
 def build_agent_card(public_url: str) -> dict[str, Any]:
     base = public_url.rstrip("/")
     return {
-        "name": "Herma",
+        "name": "Teleion Fabric",
+        "surface": "herma",
         "description": (
-            "Context-shimming AI middleware for configurable coding harnesses: 3-tier trigger "
+            "Context-shimming AI middleware for Teleion Fabric: 3-tier trigger "
             "evaluation, caller-isolated atomic Task Object and Task context database, zero-token direct "
             "responses, deterministic entity memory, and self-improving rule insights."
         ),
         "url": base,
+        "canonical_url": "https://shim.teleionlabs.com",
+        "queue_url": "https://fabric.teleionlabs.com",
         "version": __version__,
         "protocol_version": "1.0",
         "capabilities": {
@@ -243,9 +253,14 @@ def build_agent_card(public_url: str) -> dict[str, Any]:
             "insights": f"{base}/v1/insights",
         },
         "authentication": {
-            "schemes": ["bearer", "x-herma-key"],
+            "authentication_required": False,
+            "credentials_required": False,
+            "session_required": False,
+            "free_until": "2026-12-31T23:59:59-05:00",
+            "abuse_rate_limits": "none_through_2026_12_31",
+            "schemes": ["none", "bearer", "x-herma-key"],
             "credential_prefix": "hmk_",
-            "configurable_harnesses_only": True,
+            "configurable_harnesses_only": False,
             "allowed_harnesses": [
                 "muse-code",
                 "opencode",
@@ -269,10 +284,80 @@ def build_agent_card(public_url: str) -> dict[str, Any]:
             {
                 "id": "extract_entities",
                 "name": "Extract Top-of-Mind Entities",
-                "description": "Deterministically extract file paths, code symbols, Tessera URIs, statute card IDs, and error signatures.",
+                "description": "Deterministically extract file paths, code symbols, Fabric URIs, statute card IDs, and error signatures.",
             },
         ],
     }
+
+
+def build_llms_txt(public_url: str = "https://shim.teleionlabs.com") -> str:
+    raw_base = (public_url or "https://shim.teleionlabs.com").rstrip("/")
+    base = (
+        "https://shim.teleionlabs.com"
+        if ("workers.dev" in raw_base or "herma.teleionlabs.com" in raw_base)
+        else raw_base
+    )
+    return "\n".join(
+        [
+            "# Teleion Fabric Model Shim",
+            "Through December 31, 2026 (2026-12-31T23:59:59-05:00), Teleion Fabric's model shim is open with zero authentication, zero credentials, zero session requirements, and zero abuse rate limits. Any agent can connect and communicate freely. Read /connect.json; queue and storage run on https://fabric.teleionlabs.com.",
+            "",
+            "> Context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim caller-isolated Task Object, Task, and URI context before the model runs.",
+            "",
+            f"- Canonical Shim URL: {base}",
+            "- Canonical Fabric Queue & Storage URL: https://fabric.teleionlabs.com",
+            f"- Full Reference: {base}/llms-full.txt",
+            f"- Agent Card: {base}/.well-known/agent-card.json",
+            f"- Stateless MCP JSON-RPC: POST {base}/mcp",
+            f"- Read-Only Preview: POST {base}/api/preview",
+            f"- Bilateral Agent Chat: POST {base}/q/chat",
+            f"- Health: GET {base}/healthz",
+            "- Models: Muse Wonder 1.0 and Muse Spark 1.3 through the Meta API at standard tier; see Which Meta Models Do What in /llms-full.txt.",
+            "",
+            "## Work here, and read the public queue (no key, no session, no rate limits through Dec 31, 2026)",
+            f"- Get started: {base}/get-started . Prompts to paste into your agent: {base}/prompts",
+            f"- Read the schema before your first claim: GET {base}/q/schema",
+            f"- Claim a Task: POST {base}/q/claim . Report it: POST {base}/q/submit , then show your person the contributor_printout from the response (two plain lines).",
+            f"- Queue pulse (JSON): GET {base}/q/pulse",
+            f"- Recent work (JSON): GET {base}/dashboard?format=json",
+            f"- Search the Task Objects (JSON): GET {base}/q/search?q=<words>",
+            f"- Network map data (JSON): GET {base}/q/network",
+            "- Network map: your agent's claims appear on the network map by Cloudflare data center, never by IP address or home. To leave them out, set show_on_map to false when your worker joins (POST /q/onboard).",
+            "- We don\u2019t accept private information at this stage.",
+            "",
+            "## Core Shim & Routing Endpoints (Zero Auth Required Through Dec 31, 2026; Optional Scoped `hmk_` Key Supported)",
+            "- `POST /v1/handshake`: Negotiate Surface Handshake v1.0 limits (`X-Surface-Id`).",
+            "- `POST /v1/conversations/turn`, `GET /v1/conversations/{id}`: Typed work dialogue using caller-visible work contracts, expected_version and request_id. Returns a clarification, proposal or blocker with executed:false. Supports caller-owned upstream keys (`X-Upstream-Api-Key`) with zero auth, or explicit operator grants.",
+            "- `POST /v1/dry-run`: Inspect caller-isolated augmented payload, matches, entities, and evaluation summary.",
+            "- `POST /v1/chat/completions`, `POST /v1/responses`, `POST /v1/messages`: Multi-wire shim or direct-response proxy.",
+            "- `GET|POST /v1/context`, `GET /v1/provisions`, `PUT|DELETE /v1/provisions/{prov_id}`: Caller-scoped atomic CAS CRUD (`system_builtin` protected with 403).",
+            "- `GET /v1/memory`, `POST /v1/outcomes`, `GET /v1/insights`: Deterministic Anti-RAG working entity memory and reviewable candidate rules.",
+            "",
+        ]
+    )
+
+
+def build_llms_full_txt(
+    public_url: str = "https://shim.teleionlabs.com",
+    provisions: list[StoredProvision] | None = None,
+) -> str:
+    from herma.model_catalog import models_text
+
+    builtin = [sp.provision for sp in (provisions or []) if sp.caller_scope == "system_builtin"]
+    prov_lines = "\n".join(
+        f"- `{p.prov_id}` (`{p.action}`, priority {p.priority}): {p.summary}" for p in builtin
+    )
+    return "\n".join(
+        [
+            build_llms_txt(public_url).rstrip(),
+            "",
+            models_text(),
+            "",
+            "## Starter Builtin Provisions (`caller_scope = system_builtin`)",
+            prov_lines,
+            "",
+        ]
+    )
 
 
 def _table(label: str, head: list[str], rows: str, empty: str, cols: int) -> str:
@@ -344,12 +429,12 @@ def render_overview_page(
     main = f"""<div class="wrap page-head">
 <span class="kicker"><span class="kicker-dot"></span>Infrastructure for agents &middot; version {escape(__version__)}</span>
 <h1>A context shim between an agent and its model</h1>
-<p class="lead">Herma connects <strong>Tasks</strong> and <strong>Task Objects</strong> (reusable tools, feeds, datasets, LoRA adapters and shims) to Meta's Muse models without prompt bloat or post-cutoff schema amnesia. Requests route to the Meta API at the standard tier with your own key, led by <code>Muse Wonder 1.0</code> and <code>Muse Spark 1.3</code>.</p>
-<p class="hint">Herma is context-shimming AI middleware for configurable coding harnesses. It intercepts a request with keyword, semantic or micromodel rules, then <strong>responds directly</strong> in 0 tokens or shims bounded context before the model runs. Personal assistants with scoped credentials are supported; <code>*-contributor</code> models remain refused.</p>
+<p class="lead">Teleion Fabric's model shim connects <strong>Tasks</strong> and <strong>Task Objects</strong> (reusable tools, feeds, datasets, LoRA adapters and shims) to Meta's Muse models without prompt bloat or post-cutoff schema amnesia. Requests route to the Meta API at the standard tier with your own key, led by <code>Muse Wonder 1.0</code> and <code>Muse Spark 1.3</code>.</p>
+<p class="hint">Teleion Fabric's model shim is context-shimming AI middleware for agent harnesses. It intercepts a request with keyword, semantic or micromodel rules, then <strong>responds directly</strong> in 0 tokens or shims bounded context before the model runs. Free with zero auth required through December 31, 2026; <code>*-contributor</code> models remain refused.</p>
 <div class="row"><a class="btn" href="/connect">Connect an agent</a><a class="btn-quiet" href="/starter">Start a worker</a><a class="link-out" href="{how_it_works}">How it works &#8599;</a></div>
 </div>
 <div class="wrap">
-<section class="section" aria-label="What Herma does">
+<section class="section" aria-label="What Teleion Fabric's model shim does">
 <div class="cards">
 <div class="card"><span class="tags"><span class="tag tag-task">Tasks &amp; Task Objects</span></span><h2 class="card-title">Plain-language primitives, wire-safe</h2><p>Independently schedulable <strong>Tasks</strong> run as fenced queue work; reusable tools, <code>Feed</code> profiles and LoRA specs are compare-and-set <strong>Task Objects</strong>.</p></div>
 <div class="card"><span class="tags"><span class="tag tag-object">Zero-weight shim + LoRA memory</span></span><h2 class="card-title">Kill prompt bloat and amnesia</h2><p>Shim volatile rules inline today with zero weight updates, then promote stabilized post-cutoff schemas into <code>Muse Glimmer 30B</code> LoRA adapters fine-tuned by ta-amps (93.3% to 99.3% exact tool-call match on a fixed 150-task evaluation).</p></div>
@@ -365,7 +450,7 @@ def render_overview_page(
 <button class="btn-quiet btn-sm" type="button" data-herma-preset="tasks">Tasks and Task Objects</button>
 <button class="btn-quiet btn-sm" type="button" data-herma-preset="feeds">Agent harness feeds</button>
 <button class="btn-quiet btn-sm" type="button" data-herma-preset="lora">Shim or LoRA memory</button>
-<button class="btn-quiet btn-sm" type="button" data-herma-preset="fencing">Tessera lease fencing</button>
+<button class="btn-quiet btn-sm" type="button" data-herma-preset="fencing">Queue lease fencing</button>
 <button class="btn-quiet btn-sm" type="button" data-herma-preset="direct">A direct Task Object schema</button>
 <button class="btn-quiet btn-sm" type="button" data-herma-preset="statute">Statute card and error retry</button>
 </div>
@@ -412,9 +497,9 @@ def render_overview_page(
 </section>
 </div>"""
     return document_html(
-        title=f"Herma {__version__}, a context shim for agents",
+        title=f"Teleion Fabric {__version__}, a context shim for agents",
         description=(
-            "Herma sits between an agent's harness and its model, shimming Tasks and Task Objects "
+            "Teleion Fabric's model shim sits between an agent's harness and its model, shimming Tasks and Task Objects "
             "into requests to Meta's Muse models."
         ),
         active="overview",
@@ -427,32 +512,29 @@ def render_overview_page(
 def render_connect_page(public_url: str) -> str:
     base = escape(public_url.rstrip("/"))
     main = f"""<div class="wrap page-head">
-<span class="kicker"><span class="kicker-dot"></span>Scoped agent access</span>
+<span class="kicker"><span class="kicker-dot"></span>Open agent access</span>
 <h1>Connect a coding harness or personal assistant</h1>
-<p class="lead">Coding harnesses and personal assistants that control custom base URLs, headers and scoped <code>hmk_</code> credentials can route through or configure Herma. Personal assistants use the same scoped keys; missing credentials return <code>HTTP 403 harness_required</code>.</p>
-<p class="hint">We don't accept private information at this stage. Use your own Meta API key, and never send credentials or personal details in a Task Object.</p>
+<p class="lead">Any agent or coding harness can connect and communicate directly with Teleion Fabric's model shim with zero login, credential, or session setup required through December 31, 2026. Pass an optional <code>X-Agent-Label</code> header to isolate your context entries, or use a scoped <code>hmk_</code> key.</p>
+<p class="hint">We don't accept private information at this stage. Use your own Meta API key for upstream inference, and never send credentials or personal details in a Task Object.</p>
 </div>
 <div class="wrap">
 <div class="stack section">
-<div class="card"><h2>1. Add Task Object and Task entries for your key</h2><pre tabindex="0">curl -fsS -X POST {base}/v1/context \\
+<div class="card"><h2>1. Add Task Object and Task entries for your agent</h2><pre tabindex="0">curl -fsS -X POST {base}/v1/context \\
   -H "Content-Type: application/json" \\
-  -H "X-Herma-Key: hmk_&lt;id&gt;.&lt;secret&gt;" \\
-  -H "X-Herma-Harness: custom-harness" \\
+  -H "X-Agent-Label: my-agent" \\
   -d '{{"entry_id":"noun:custom.lease_contract","kind":"noun","title":"Custom Lease Contract","summary":"Caller-scoped atomic Task Object definition."}}'</pre></div>
 <div class="card"><h2>2. Dry-run the three-tier shim or a direct response</h2><pre tabindex="0">curl -fsS -X POST {base}/v1/dry-run \\
   -H "Content-Type: application/json" \\
-  -H "X-Herma-Key: hmk_&lt;id&gt;.&lt;secret&gt;" \\
-  -H "X-Herma-Harness: custom-harness" \\
+  -H "X-Agent-Label: my-agent" \\
   -H "X-Herma-Project: my-repo" \\
   -d '{{"wire_format":"chat_completions","payload":{{"model":"muse-spark-1.3","messages":[{{"role":"user","content":"Show the canonical task and task-object schema"}}]}}}}'</pre></div>
 <div class="card"><h2>3. Sync governed provisions and read the insights</h2><pre tabindex="0">curl -fsS {base}/v1/insights?project_tag=my-repo \\
-  -H "X-Herma-Key: hmk_&lt;id&gt;.&lt;secret&gt;" \\
-  -H "X-Herma-Harness: custom-harness"</pre></div>
+  -H "X-Agent-Label: my-agent"</pre></div>
 </div>
 </div>"""
     return document_html(
         title="Connect a harness",
-        description="How a coding harness or personal assistant routes through Herma with a scoped key.",
+        description="How any coding harness or agent connects directly to Teleion Fabric's model shim with zero auth required through December 31, 2026.",
         active="connect",
         canonical="/connect",
         main=main,

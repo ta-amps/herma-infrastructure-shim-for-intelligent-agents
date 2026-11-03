@@ -17,7 +17,7 @@ CATALOG_PATH = Path(__file__).with_name("model_catalog.json")
 HEADING = "Which Meta Models Do What"
 TABLE_HEAD = (
     '<tr><th scope="col">Model</th><th scope="col">What it\'s for</th>'
-    '<th scope="col">Does Herma route to it?</th></tr>'
+    '<th scope="col">Does the shim route to it?</th></tr>'
 )
 
 
@@ -87,7 +87,7 @@ def render_models_section() -> str:
         f'<h2 id="models-h">{HEADING}</h2>'
         f'<p class="hint">{escape(catalog["routing_note"])}</p>'
         '<div class="table-wrap" tabindex="0" role="region" aria-label="Meta models, scrollable table">'
-        '<table class="data"><caption class="sr-only">Meta models and whether Herma routes to them</caption>'
+        '<table class="data"><caption class="sr-only">Meta models and whether Teleion Fabric\'s model shim routes to them</caption>'
         f"<thead>{TABLE_HEAD}</thead><tbody>{''.join(rows)}</tbody></table></div>"
         f"{models_used}"
     )
@@ -101,7 +101,7 @@ def models_text() -> str:
         ident = f" (`{model['id']}`)" if model["id"] else ""
         evidence = f" {model['evidence']}" if model.get("evidence") else ""
         lines.append(
-            f"- {model['name']}{ident}: {model['use']}{evidence} Herma routing: {model['route']}"
+            f"- {model['name']}{ident}: {model['use']}{evidence} Shim routing: {model['route']}"
         )
     lines += ["", f"See Models used for the full list: {catalog['models_used_url']}"]
     return "\n".join(lines)

@@ -45,7 +45,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/composition_and_demand_engine.js](deploy/cloudflare/composition_and_demand_engine.js) | Universal Task-Object Reuse Graph, Interface Composer & Adaptive Demand-Driven Prioritizer (/q/graph, /q/comp… |
 | [deploy/cloudflare/contributor_printout.js](deploy/cloudflare/contributor_printout.js) | What a contributor's agent shows its person after it reports a Task (design contract of Nov 2, 2026): two pla… |
 | [deploy/cloudflare/conversation.js](deploy/cloudflare/conversation.js) | Typed proposals only. |
-| [deploy/cloudflare/conversation_data.json](deploy/cloudflare/conversation_data.json) | JSON object: categories, schemas, system_prompt |
+| [deploy/cloudflare/conversation_data.json](deploy/cloudflare/conversation_data.json) | JSON object: bilateral_chat_grid, bilateral_topics, categories, schemas, system_prompt |
 | [deploy/cloudflare/conversation_state.js](deploy/cloudflare/conversation_state.js) | Conversation coordination, not a work queue. |
 | [deploy/cloudflare/d1-herma.sql](deploy/cloudflare/d1-herma.sql) | Persistent Cloudflare D1 caller-isolated schema for Herma context-shimming AI middleware (ta-amps-herma). |
 | [deploy/cloudflare/dashboard_and_permalinks.js](deploy/cloudflare/dashboard_and_permalinks.js) | The live dashboard (/dashboard, /q/dashboard), a contribution's page (/c/<id>) and a worker's page (/w/<id>), |
@@ -101,17 +101,20 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [eval/shim_lift_summary.json](eval/shim_lift_summary.json) | JSON object: benchmark_id, as_of, scope_note, tool_call_and_schema_benchmarks, natural_language_shim_routing |
 
-## examples/ (9)
+## examples/ (12)
 
 | File | What it is |
 |---|---|
 | [examples/provisions/PROV-DIRECT-NOUN-VERB-SCHEMA.json](examples/provisions/PROV-DIRECT-NOUN-VERB-SCHEMA.json) | Direct Tasks & Task Objects Schema Lookup |
 | [examples/provisions/PROV-EDGE-ORIGIN-LOCKDOWN.json](examples/provisions/PROV-EDGE-ORIGIN-LOCKDOWN.json) | Cloudflare Worker x-edge-auth & Security Header Contract |
-| [examples/provisions/PROV-HARNESS-FEEDS-GUIDE.json](examples/provisions/PROV-HARNESS-FEEDS-GUIDE.json) | Agent Harness Research Feeds & HarnessTax Benchmark Context |
-| [examples/provisions/PROV-LORA-MEMORY-ROUTING.json](examples/provisions/PROV-LORA-MEMORY-ROUTING.json) | Prompt Shimming vs LoRAs as Parametric Memory vs Frontier Routing |
-| [examples/provisions/PROV-NGO-HUMAN-BOUNDARY.json](examples/provisions/PROV-NGO-HUMAN-BOUNDARY.json) | NGO Kit Human-Only Crisis & Two-Donor Review Boundary |
+| [examples/provisions/PROV-ERANOS-PUBLIC-KITS.json](examples/provisions/PROV-ERANOS-PUBLIC-KITS.json) | Eranos Reusable Nonprofit Kits & Sample-Data Verification |
+| [examples/provisions/PROV-HARNESS-FEEDS-GUIDE.json](examples/provisions/PROV-HARNESS-FEEDS-GUIDE.json) | Teleion Fabric Delta Feeds & Agent Harness Research Feeds |
+| [examples/provisions/PROV-LORA-MEMORY-ROUTING.json](examples/provisions/PROV-LORA-MEMORY-ROUTING.json) | Context Shimming vs LoRAs as Parametric Memory vs Frontier Routing |
+| [examples/provisions/PROV-META-MUSE-ROUTING.json](examples/provisions/PROV-META-MUSE-ROUTING.json) | Meta Muse Self-Tuning Model Routing & Separate-Key Checking |
+| [examples/provisions/PROV-NGO-HUMAN-BOUNDARY.json](examples/provisions/PROV-NGO-HUMAN-BOUNDARY.json) | NGO Kit Human-Only Crisis & Independent Review Boundary |
 | [examples/provisions/PROV-RISK-REVIEW-NON-ACCUSATORY.json](examples/provisions/PROV-RISK-REVIEW-NON-ACCUSATORY.json) | Non-Accusatory Risk Indicators & Example-Case Guard |
-| [examples/provisions/PROV-TESSERA-FENCING.json](examples/provisions/PROV-TESSERA-FENCING.json) | Tessera Atomic Lease Fencing & Compare-and-Set Storage |
+| [examples/provisions/PROV-TELEION-FABRIC-OVERVIEW.json](examples/provisions/PROV-TELEION-FABRIC-OVERVIEW.json) | Direct Teleion Fabric & Model Shim Overview |
+| [examples/provisions/PROV-TESSERA-FENCING.json](examples/provisions/PROV-TESSERA-FENCING.json) | Teleion Fabric Atomic Lease Fencing & Task Claiming |
 | [examples/provisions/README.md](examples/provisions/README.md) | Example Provisions & Atomic Task Object / Task Context |
 | [examples/provisions/context/CONTEXT-TESSERA-NOUNS-VERBS.json](examples/provisions/context/CONTEXT-TESSERA-NOUNS-VERBS.json) | JSON object: entries |
 
@@ -176,12 +179,13 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/page_interactions.mjs](scripts/page_interactions.mjs) | Clicks through the interactive parts of the redesigned pages (fixture server, the Worker's real page policy)… |
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
 
-## test/ (26)
+## test/ (27)
 
 | File | What it is |
 |---|---|
 | [test/banned_words_filter.test.js](test/banned_words_filter.test.js) |  |
 | [test/bilateral_bridge.test.js](test/bilateral_bridge.test.js) |  |
+| [test/bilateral_chat_and_feedback.test.mjs](test/bilateral_chat_and_feedback.test.mjs) |  |
 | [test/canonical_host.test.js](test/canonical_host.test.js) |  |
 | [test/claim_token.test.js](test/claim_token.test.js) |  |
 | [test/contributor_printout.test.js](test/contributor_printout.test.js) |  |

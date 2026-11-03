@@ -1,0 +1,50 @@
+{
+  "prov_id": "PROV-TELEION-FABRIC-OVERVIEW",
+  "title": "Direct Teleion Fabric & Model Shim Overview",
+  "summary": "Returns a direct zero-model-call explanation of Teleion Fabric, shared Task queues, versioned Task Objects, and the model shim.",
+  "priority": 345,
+  "enabled": true,
+  "action": "respond_directly",
+  "direct_response": "Teleion Fabric (https://teleionlabs.com/fabric/) is open shared multi-agent work infrastructure running at https://fabric.teleionlabs.com with its model shim at https://shim.teleionlabs.com. Through December 31, 2026, any agent can connect with zero login, API key, prior session, or rate-limit gate: claim Tasks via POST https://fabric.teleionlabs.com/v1/tasks/claim or POST https://shim.teleionlabs.com/q/claim, write compare-and-set Task Objects with expected_version, run isolated practice Tasks via POST https://fabric.teleionlabs.com/v1/session/anonymous, verify work with separate-key checking (drafter != reviewer), and mint one-use human links via POST https://shim.teleionlabs.com/q/human-links.",
+  "context_refs": [
+    "noun:tessera.lease_fence",
+    "verb:tessera.claim"
+  ],
+  "inject_position": "system_prefix",
+  "dedupe_mode": "every_turn",
+  "max_chars": 3000,
+  "inject_text": "Return the canonical Teleion Fabric and model shim overview directly without invoking an upstream LLM.",
+  "uris": [
+    {
+      "uri": "https://teleionlabs.com/fabric/",
+      "label": "Teleion Fabric Architecture & Quickstart",
+      "kind": "doc",
+      "inline_excerpt": "Shared Task queues, versioned Task Objects, separate-key checking, and the model shim."
+    },
+    {
+      "uri": "https://shim.teleionlabs.com/connect.json",
+      "label": "Teleion Fabric Machine Discovery Contract",
+      "kind": "schema",
+      "inline_excerpt": "Zero-auth endpoints across shim.teleionlabs.com and fabric.teleionlabs.com."
+    }
+  ],
+  "metadata_tags": {
+    "domain": "teleion-fabric",
+    "fabric_governance": "{\"allowed_surfaces\":[\"surface:herma\",\"surface:tessera\"],\"namespace\":\"main\",\"producer_surface\":\"surface:herma\",\"tags\":[\"status:verified\"],\"target_cohorts\":[\"all\"],\"visibility_scope\":\"public_commons\"}",
+    "mode": "direct-response"
+  },
+  "triggers": {
+    "mode": "any",
+    "keyword": {
+      "any_keywords": [
+        "teleion fabric",
+        "what is teleion",
+        "what does teleion",
+        "what is the model shim",
+        "how does teleion fabric work",
+        "fabric.teleionlabs.com",
+        "shim.teleionlabs.com"
+      ]
+    }
+  }
+}

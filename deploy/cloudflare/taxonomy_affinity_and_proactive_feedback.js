@@ -2,6 +2,10 @@
 // Sample-Size-Calibrated Efficiency Confidence (Wilson/Beta LCB x EWMA Resource Efficiency),
 // Ricardian Comparative-Advantage Routing, and Catch-All Proactive Feedback -> Peer-Review Verb Loop.
 
+import { resolveBilateralBounds } from "./conversation.js";
+
+const DEFAULT_BILATERAL_BOUNDS = resolveBilateralBounds({});
+
 export const TAXONOMY_AFFINITY_FEEDBACK_GRID = Object.freeze({
   schema_id: "herma.taxonomy_affinity_feedback.grid.v6_10",
   affinity_schema_version: "herma.priority_work_gateway.affinity.v1",
@@ -27,7 +31,9 @@ export const TAXONOMY_AFFINITY_FEEDBACK_GRID = Object.freeze({
   feedback_spawn_review_min_severity_milli: 600,
   feedback_promote_proposal_quorum: 2,
   min_summary_chars: 24,
-  max_summary_chars: 480,
+  feedback_field_max_bytes: DEFAULT_BILATERAL_BOUNDS.feedback_field_max_bytes,
+  feedback_envelope_max_bytes: DEFAULT_BILATERAL_BOUNDS.feedback_envelope_max_bytes,
+  max_summary_chars: DEFAULT_BILATERAL_BOUNDS.feedback_field_max_bytes,
   max_search_keywords: 12,
   min_keyword_chars: 3,
   milli_divisor: 1000,
@@ -46,6 +52,8 @@ export const TAXONOMY_AFFINITY_FEEDBACK_GRID = Object.freeze({
   affinity_task_sample_limit: 20,
   model_hint_max_len: 80,
   object_key_max_len: 128,
+  min_self_review_agent_id_len: 4,
+  self_review_exclusion_penalty: -10000,
   http_ok: 200,
   http_bad_request: 400,
   http_method_not_allowed: 405,
@@ -942,6 +950,7 @@ export function evaluateTaskWorkerAffinity({
   workerSliceMap = null,
   setupSliceMap = null,
   fleetBaselineMilli = 500,
+  allowPinnedOwnContinuation = false,
 } = {}) {
   const g = TAXONOMY_AFFINITY_FEEDBACK_GRID;
   const parsedCaps = parseRequiredCapabilitiesAndSetup(candidateRow.required_capabilities_json, candidateRow);
@@ -949,23 +958,49 @@ export function evaluateTaskWorkerAffinity({
 
   const callerUuid = String(workerProfile.worker_uuid || "").trim();
   const callerAgent = String(workerProfile.agent_id || "").trim().toLowerCase();
+  const stepMode = String(candidateRow.step_mode || pref.step_mode || "atomic_cognitive_step");
 
-  // Enforce drafter != reviewer on feedback & object peer-review verification tasks (`verb_fbk_review_*`, `verb_peer_review_*`)
+  // Enforce maker != checker across all verification & peer-review tasks (`verb_fbk_review_*`, `verb_peer_review_*`, `atomic_verification_step`, and review/verify/cross-check/eval_and_rank tasks)
   const excludedUuids = pref.excluded_reporter_worker_uuids || [];
   const excludedAgents = pref.excluded_reporter_agent_ids || [];
   const taskIdStr = String(candidateRow.task_id || "");
   const isFeedbackReviewTask =
     taskIdStr.startsWith("verb_fbk_review_") || taskIdStr.startsWith("verb_peer_review_");
+  const verbAndTitle = `${candidateRow.verb_kind || ""} ${candidateRow.title || ""}`;
+  const isVerificationTask =
+    isFeedbackReviewTask ||
+    stepMode === "atomic_verification_step" ||
+    /(?:review|verify|verification|cross[-_ ]check|eval_and_rank)/i.test(verbAndTitle);
+  const promptLower = String(candidateRow.prompt || "").toLowerCase();
+  const producerAgentLower = String(candidateRow.producer_agent || "").trim().toLowerCase();
+  const matchesProducerPromptRef =
+    callerAgent.length >= g.min_self_review_agent_id_len &&
+    (promptLower.includes(`_${callerAgent}_`) ||
+      promptLower.includes(`producer_agent ${callerAgent}`) ||
+      promptLower.includes(`producer_agent: ${callerAgent}`) ||
+      promptLower.includes(`producer_agent=${callerAgent}`));
+  const isPinnedOwnContinuation = Boolean(
+    allowPinnedOwnContinuation &&
+      !isFeedbackReviewTask &&
+      callerUuid &&
+      candidateRow.owner_worker_uuid === callerUuid
+  );
+  const matchesOwnerOnVerification =
+    Boolean(callerUuid && candidateRow.owner_worker_uuid === callerUuid) && !isPinnedOwnContinuation;
+
   if (
     (callerUuid && excludedUuids.includes(callerUuid)) ||
     (callerAgent && excludedAgents.includes(callerAgent)) ||
-    (isFeedbackReviewTask &&
+    (isVerificationTask &&
+      !isPinnedOwnContinuation &&
       ((callerUuid && candidateRow.producer_worker_uuid === callerUuid) ||
-        (callerAgent && String(candidateRow.producer_agent || "").toLowerCase() === callerAgent)))
+        matchesOwnerOnVerification ||
+        (callerAgent && producerAgentLower === callerAgent) ||
+        matchesProducerPromptRef))
   ) {
     return {
       excluded_self_review: true,
-      affinity_total_bonus: -10000,
+      affinity_total_bonus: g.self_review_exclusion_penalty,
       setup_matches: false,
       preferred_worker_setup: pref,
     };
@@ -985,7 +1020,6 @@ export function evaluateTaskWorkerAffinity({
       ? Number(ws.context_tokens)
       : defaultContextTokensForTier(harnessTier);
 
-  const stepMode = String(candidateRow.step_mode || pref.step_mode || "atomic_cognitive_step");
   const category = String(candidateRow.category || "general").toLowerCase();
 
   let affinityDelta = 0;
@@ -1524,6 +1558,8 @@ export async function ingestCatchAllFeedbackObservation(
 ) {
   await ensureTaxonomyAffinityAndFeedbackSchema(db);
   const g = TAXONOMY_AFFINITY_FEEDBACK_GRID;
+  const bounds = resolveBilateralBounds(env);
+  const encoder = new TextEncoder();
   const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
   const scrub = gatewayOps?.scrubSensitiveText || ((s) => String(s || ""));
   const scrubTokens = (s) =>
@@ -1541,6 +1577,50 @@ export async function ingestCatchAllFeedbackObservation(
         ? rawPayload
         : {};
 
+  const envelopeBytes = encoder.encode(typeof rawPayload === "string" ? rawPayload : JSON.stringify(p)).byteLength;
+  if (envelopeBytes > bounds.feedback_envelope_max_bytes) {
+    return {
+      ok: false,
+      payloadTooLarge: true,
+      error: "feedback_too_large",
+      code: "feedback_too_large",
+      max_field_bytes: bounds.feedback_field_max_bytes,
+      max_envelope_bytes: bounds.feedback_envelope_max_bytes,
+      actual_bytes: envelopeBytes,
+    };
+  }
+
+  const checkedFields = [
+    "observation",
+    "summary",
+    "message",
+    "feedback",
+    "detail",
+    "description",
+    "title",
+    "proposed_alternative",
+    "better_way",
+    "proposed_change",
+    "reproduction",
+  ];
+  for (const fieldName of checkedFields) {
+    if (p[fieldName] === undefined || p[fieldName] === null) continue;
+    const strVal = typeof p[fieldName] === "object" ? JSON.stringify(p[fieldName]) : String(p[fieldName]);
+    const fieldBytes = encoder.encode(strVal).byteLength;
+    if (fieldBytes > bounds.feedback_field_max_bytes) {
+      return {
+        ok: false,
+        payloadTooLarge: true,
+        error: "feedback_too_large",
+        code: "feedback_too_large",
+        field: fieldName,
+        max_field_bytes: bounds.feedback_field_max_bytes,
+        max_envelope_bytes: bounds.feedback_envelope_max_bytes,
+        actual_bytes: fieldBytes,
+      };
+    }
+  }
+
   const targetComponent = scrubTokens(
     p.target_component || p.endpoint || p.subsystem || "shared_substrate"
   )
@@ -1548,24 +1628,21 @@ export async function ingestCatchAllFeedbackObservation(
     .toLowerCase()
     .slice(0, 120) || "shared_substrate";
 
-  const freeform = scrubTokens(
+  const rawPrimaryText =
     p.observation ||
-      p.summary ||
-      p.message ||
-      p.feedback ||
-      p.detail ||
-      p.description ||
-      p.title ||
-      JSON.stringify(p)
-  )
-    .trim()
-    .slice(0, g.max_summary_chars);
+    p.summary ||
+    p.message ||
+    p.feedback ||
+    p.detail ||
+    p.description ||
+    p.title ||
+    JSON.stringify(p);
+  const freeform = scrubTokens(rawPrimaryText).trim();
+  const acceptedFieldBytes = encoder.encode(freeform).byteLength;
 
   const proposedAlternative = scrubTokens(
     p.proposed_alternative || p.better_way || p.proposed_change || ""
-  )
-    .trim()
-    .slice(0, g.max_summary_chars);
+  ).trim();
 
   const explicitSignalKind = String(
     p.signal_kind || (legacyIssueKindMode && !p.observation && !p.proposed_alternative ? "worker_issue_report" : "")
@@ -1914,7 +1991,7 @@ export async function ingestCatchAllFeedbackObservation(
           targetComponent.slice(0, 80),
           cleanAgent,
           verifiedWorkerUuid || cleanAgent,
-          freeform.slice(0, 280),
+          freeform,
           JSON.stringify({
             proposal_kind: "infra_proposal",
             signal_kind: signalKind,
@@ -1972,6 +2049,10 @@ export async function ingestCatchAllFeedbackObservation(
 
   return {
     ok: true,
+    truncated: false,
+    accepted_bytes: acceptedFieldBytes,
+    max_field_bytes: bounds.feedback_field_max_bytes,
+    max_envelope_bytes: bounds.feedback_envelope_max_bytes,
     fingerprint: fp,
     stored_object_key: objectKey,
     signal_kind: signalKind,
@@ -1989,6 +2070,12 @@ export async function ingestCatchAllFeedbackObservation(
       producer_agent: cleanAgent,
       worker_uuid: verifiedWorkerUuid || null,
       summary: freeform,
+      observation: freeform,
+      detail: storedPayloadObj.detail,
+      reproduction: storedPayloadObj.reproduction,
+      proposed_alternative: proposedAlternative || null,
+      truncated: false,
+      accepted_bytes: acceptedFieldBytes,
       step_mode: enrichedTax.step_mode,
       reuse_mode: enrichedTax.reuse_mode,
       intent_bucket: enrichedTax.intent_bucket,

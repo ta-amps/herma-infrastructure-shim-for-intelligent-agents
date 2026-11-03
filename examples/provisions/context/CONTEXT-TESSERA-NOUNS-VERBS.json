@@ -3,74 +3,122 @@
     {
       "entry_id": "noun:tessera.lease_fence",
       "kind": "noun",
-      "title": "Tessera Monotonic Lease Fence",
-      "summary": "Compare-and-set task lease token incremented on every claim to fence out stale workers.",
+      "title": "Teleion Fabric Monotonic Lease Fence",
+      "summary": "Compare-and-set Task lease token incremented on every claim to fence out stale workers.",
       "schema_or_body": {
         "fields": {
           "task_id": "string",
-          "fence": "integer >= 1",
+          "fencing_token": "integer >= 1",
           "lease_expires_at": "float"
         },
-        "invariant": "submit/heartbeat/park reject fence < current_fence"
+        "invariant": "submit/heartbeat/park reject fencing_token < current_fence"
       },
-      "source_uri": "https://tessera.ta-amps.workers.dev/llms.txt",
-      "updated_at": "2026-10-30T00:00:00+00:00"
+      "source_uri": "https://fabric.teleionlabs.com/llms.txt",
+      "updated_at": "2026-11-02T00:00:00+00:00"
     },
     {
       "entry_id": "verb:tessera.claim",
       "kind": "verb",
-      "title": "Tessera Atomic Claim Task",
-      "summary": "Atomically leases the next highest-priority ready task in a queue and mints a fresh fence token.",
+      "title": "Teleion Fabric Atomic Claim Task",
+      "summary": "Atomically leases the next highest-priority ready Task in a queue and mints a fresh fencing token.",
       "schema_or_body": {
-        "endpoint": "POST /v1/queues/{queue}/claim",
-        "inputs": ["worker_id", "lease_seconds"],
-        "returns": ["task_id", "fence", "payload"]
+        "endpoint": "POST https://fabric.teleionlabs.com/v1/tasks/claim",
+        "inputs": [
+          "queue",
+          "worker"
+        ],
+        "returns": [
+          "task_id",
+          "fencing_token",
+          "payload"
+        ]
       },
       "source_uri": "mcp://tessera/tools/claim",
-      "updated_at": "2026-10-30T00:00:00+00:00"
+      "updated_at": "2026-11-02T00:00:00+00:00"
     },
     {
       "entry_id": "detail:herma.shim_budget",
       "kind": "detail",
-      "title": "Herma Bounded Context Shim Budget",
+      "title": "Teleion Fabric Bounded Context Shim Budget",
       "summary": "Caps per-provision and total shimmed context characters while deduplicating prior conversation turns.",
       "schema_or_body": {
         "default_max_chars": 2400,
         "default_max_total_chars": 8000,
-        "dedupe_modes": ["once_per_conversation", "every_turn"]
+        "dedupe_modes": [
+          "once_per_conversation",
+          "every_turn"
+        ]
       },
       "source_uri": "urn:ta-amps:spec:herma-context-shim-v1",
-      "updated_at": "2026-10-30T00:00:00+00:00"
+      "updated_at": "2026-11-02T00:00:00+00:00"
     },
     {
       "entry_id": "noun:harness.feed",
       "kind": "noun",
       "title": "Agent Harness Research Feed Task Object",
-      "summary": "Encapsulating Feed Task Object aggregating dated harness profiles, HarnessTax prompt/schema token overhead, and verified benchmarks across Harness Square / Harness2, OpenCode, Pi, and Muse Code.",
+      "summary": "Encapsulating Feed Task Object aggregating dated harness profiles, HarnessTax prompt and schema token overhead, and verified benchmarks across Harness Square / Harness2, OpenCode, Pi, and Muse Code.",
       "schema_or_body": {
         "fields": {
           "feed_id": "string",
-          "harnesses": ["harness-square", "opencode", "pi", "muse-code"],
+          "harnesses": [
+            "harness-square",
+            "opencode",
+            "pi",
+            "muse-code"
+          ],
           "harness_tax_tokens": "integer >= 0",
-          "benchmark_receipts": "list[sha256]"
+          "benchmark_digests": "list[string]"
         },
-        "invariant": "comparative harness scores cite content-addressed benchmark receipts"
+        "invariant": "comparative harness scores cite content-addressed benchmark digests"
       },
       "source_uri": "urn:ta-amps:spec:harness-feeds-v1",
-      "updated_at": "2026-10-30T00:00:00+00:00"
+      "updated_at": "2026-11-02T00:00:00+00:00"
     },
     {
       "entry_id": "detail:herma.lora_vs_shim",
       "kind": "detail",
-      "title": "Prompt Shimming vs LoRAs as Parametric Memory Rule",
-      "summary": "Routes volatile or caller-scoped facts through zero-weight Herma context shims, stabilized post-cutoff Task Object schemas into Muse Glimmer 30B LoRA adapters, and novel multi-step synthesis to frontier Muse Wonder 1.0 or Muse Spark 1.3.",
+      "title": "Context Shimming vs LoRAs as Parametric Memory Rule",
+      "summary": "Routes volatile or caller-scoped facts through zero-weight Teleion Fabric context shims, stabilized post-cutoff Task Object schemas into Muse Glimmer 30B LoRA adapters, and novel multi-step synthesis to frontier Muse Wonder 1.0 or Muse Spark 1.3.",
       "schema_or_body": {
-        "herma_context_shim": "0 weight updates; volatile facts, live URIs, caller guardrails",
+        "context_shim": "0 weight updates; volatile facts, live URIs, caller guardrails",
         "lora_parametric_memory": "LoRA on Muse Glimmer 30B (4-bit QLoRA, fine-tuned by ta-amps); stable post-cutoff Task Object schemas with zero per-turn HarnessTax",
         "frontier_passthrough": "Muse Wonder 1.0 / Muse Spark 1.3 through the Meta API in Standard mode (-contributor refused)"
       },
       "source_uri": "urn:ta-amps:spec:lora-memory-routing-v1",
-      "updated_at": "2026-10-30T00:00:00+00:00"
+      "updated_at": "2026-11-02T00:00:00+00:00"
+    },
+    {
+      "entry_id": "detail:eranos.public_kits",
+      "kind": "detail",
+      "title": "Eranos Reusable Public-Good Nonprofit Kits",
+      "summary": "Catalog of reusable nonprofit Task Objects on eranosforgood.org (bilingual food pantry flyer KIT-FLYER-14, grant checklists, and impact summaries) checked on sample data by a separate key, with zero private data accepted.",
+      "schema_or_body": {
+        "catalog_endpoint": "GET https://eranosforgood.org/api/catalog",
+        "featured_kits": [
+          "KIT-FLYER-14",
+          "grant-readiness-checklist",
+          "board-impact-summary"
+        ],
+        "privacy_rule": "We don't accept private information at this stage.",
+        "verification": "Automated checks run on sample data by a separate key; open-ended drafts undergo independent model review (drafter != reviewer)."
+      },
+      "source_uri": "https://eranosforgood.org/api/catalog",
+      "updated_at": "2026-11-02T00:00:00+00:00"
+    },
+    {
+      "entry_id": "detail:meta.muse_routing",
+      "kind": "detail",
+      "title": "Teleion Fabric Meta Muse Self-Tuning Routing Matrix",
+      "summary": "Hourly self-tuning routing across Muse Spark 1.3 (fast structured turns), Muse Wonder 1.0 (hard multi-step work and independent review), and Muse Glimmer 30B, fine-tuned by ta-amps, in Standard mode with separate-key checking.",
+      "schema_or_body": {
+        "fast_structured": "Muse Spark 1.3",
+        "deep_reasoning_and_review": "Muse Wonder 1.0",
+        "adapter_task_splitting": "Muse Glimmer 30B, fine-tuned by ta-amps",
+        "telemetry_endpoint": "GET https://shim.teleionlabs.com/q/meta-telemetry",
+        "separate_key_invariant": "drafter != reviewer; -contributor tiers refused"
+      },
+      "source_uri": "https://shim.teleionlabs.com/q/meta-telemetry",
+      "updated_at": "2026-11-02T00:00:00+00:00"
     }
   ]
 }

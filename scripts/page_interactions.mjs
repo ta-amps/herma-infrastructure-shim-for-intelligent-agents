@@ -71,7 +71,7 @@ async function open(route) {
 }
 { // the home: one line, two ways in, today's numbers, and the banner above the header
   const { page, errors } = await open("/");
-  check((await page.locator("h1").innerText()) === "Herma", "the home heading is Herma");
+  check((await page.locator("h1").innerText()) === "Teleion Fabric", "the home heading is Teleion Fabric");
   check((await page.locator(".facts .fact").count()) === 5, "the home shows the five totals");
   check(await page.getByRole("link", { name: "Try the shim" }).isVisible(), "the home links the shim page");
   check(errors.length === 0, `the home has no console errors ${errors.join(" | ")}`);

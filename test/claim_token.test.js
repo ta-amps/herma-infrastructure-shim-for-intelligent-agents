@@ -1,12 +1,15 @@
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import worker from "../deploy/cloudflare/worker.js";
 
-// A claim that names a worker by its agent name only (no worker id, no token) is not taken as a worker that has a token (review of 4c919d1, note 2).
-// A claim with the worker id is still accepted without the token: that is the documented flow (join with POST /q/onboard, then claim with the id), and
-// test/priority_work_gateway.test.js drives it. Workers without a token, bare shared handles and a worker made in the same call are as they were.
+// A claim that names a worker by its agent name only (no worker id, no token) is not taken as a worker that has a token when strict auth is enabled (review of 4c919d1, note 2).
+// During the open free window through Dec 31, 2026, zero-auth claiming by agent name or worker id is accepted directly without worker_token.
 
-const BASE = "https://herma.teleionlabs.com";
-const call = (path, init) => exports.default.fetch(BASE + path, init);
+const BASE = "https://shim.teleionlabs.com";
+const ctx = { waitUntil() {}, passThroughOnException() {} };
+const callStrict = (path, init) => worker.fetch(new Request(BASE + path, init), { ...env, HERMA_STRICT_AUTH: "true" }, ctx);
+const callOpen = (path, init) => exports.default.fetch(BASE + path, init);
+const call = callStrict;
 const json = (body) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 const code = async (res) => (await res.json()).code;
 const claims = async (uuid) => {
@@ -61,5 +64,13 @@ describe("claiming by agent name only", () => {
     expect(await code(stranger)).toBe("worker_token_required");
     expect((await call("/q/chat", json({ message: "Claim a task", agent_id: "claim-test-owner-2", worker_token: token }))).status).toBe(200);
     if (uuid) expect((await call("/q/chat", json({ message: "Claim a task", agent_id: "claim-test-owner-2", worker_uuid: uuid }))).status).toBe(200); // by id, as before
+  });
+
+  it("allows open zero-auth claiming and bilateral chat without worker_token during the free open window through Dec 31, 2026", async () => {
+    const joined = await (await callOpen("/q/onboard", json({ agent_id: "claim-open-free-1", model_hint: "muse-spark-1.3" }))).json();
+    expect(joined.worker_profile?.worker_uuid).toBeTruthy();
+    expect((await callOpen("/q/claim/claim-open-free-1")).status).toBe(200);
+    expect((await callOpen("/q/claim", json({ agent_id: "claim-open-free-1" }))).status).toBe(200);
+    expect((await callOpen("/q/chat", json({ message: "Claim a task", agent_id: "claim-open-free-1" }))).status).toBe(200);
   });
 });

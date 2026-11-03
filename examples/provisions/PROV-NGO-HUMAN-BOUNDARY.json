@@ -1,9 +1,10 @@
 {
   "prov_id": "PROV-NGO-HUMAN-BOUNDARY",
-  "title": "NGO Kit Human-Only Crisis & Two-Donor Review Boundary",
+  "title": "NGO Kit Human-Only Crisis & Independent Review Boundary",
   "summary": "Triggered via Tier-3 micromodel classifier whenever an agent designs nonprofit/helpline workflows, enforcing human-only boundaries and drafter != reviewer.",
   "priority": 260,
   "enabled": true,
+  "action": "shim_context",
   "inject_position": "system_suffix",
   "dedupe_mode": "once_per_conversation",
   "max_chars": 2000,
@@ -11,9 +12,9 @@
   "uris": [
     {
       "uri": "https://eranosforgood.org",
-      "label": "Eranos Verified NGO Kit Catalog",
+      "label": "Eranos Public-Good Kit Catalog",
       "kind": "doc",
-      "inline_excerpt": "Two-step eq01 -> eq02 -> eq03 volunteer pipeline with deterministic autonomy checks."
+      "inline_excerpt": "Staged eq01 -> eq02 -> eq03 public-good pipeline with sample-data checks and independent review."
     }
   ],
   "metadata_tags": {
@@ -25,9 +26,21 @@
     "mode": "any",
     "micromodel": {
       "intent_question": "Is the user asking to design, automate, or modify a nonprofit, NGO, shelter, crisis helpline, or humanitarian intake workflow?",
-      "positive_labels": ["apply", "yes", "true"],
+      "positive_labels": [
+        "apply",
+        "yes",
+        "true"
+      ],
       "min_confidence": 0.6,
-      "fallback_keywords": ["shelter", "helpline", "hotline", "crisis", "nonprofit", "ngo", "intake"]
+      "fallback_keywords": [
+        "shelter",
+        "helpline",
+        "hotline",
+        "crisis",
+        "nonprofit",
+        "ngo",
+        "intake"
+      ]
     }
   }
 }

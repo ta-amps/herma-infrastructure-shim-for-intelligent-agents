@@ -89,15 +89,17 @@ describe("GET /q/leaderboard", () => {
     expect(JSON.stringify(full)).not.toContain("lb_g"); // the probe
   });
 
-  it("reads ?limit= as 1 to 100 and anything else as the most", () => {
+  it("reads ?limit= with default 25 when omitted/invalid and clamps up to 100", () => {
     expect(leaderboardLimit("3")).toBe(3);
     expect(leaderboardLimit("100")).toBe(100);
-    for (const bad of [null, undefined, "", "0", "-4", "abc", "NaN"]) expect(leaderboardLimit(bad)).toBe(GRID.max_leaderboard_rows);
+    for (const bad of [null, undefined, "", "0", "-4", "abc", "NaN"]) {
+      expect(leaderboardLimit(bad)).toBe(GRID.default_leaderboard_rows);
+    }
     expect(leaderboardLimit("5000")).toBe(GRID.max_leaderboard_rows);
     expect(leaderboardLimit("2.9")).toBe(2);
   });
 
-  it("scores only the workers it returns: ?limit=3 reads three workers' details, not all of them", async () => {
+  it("batches worker cred events and client-index flags into <= 3 D1 queries total regardless of limit", async () => {
     await seed();
     let statements = 0;
     const counting = new Proxy(db(), { get: (target, prop) => (prop === "prepare" ? (sql) => (statements++, target.prepare(sql)) : typeof target[prop] === "function" ? target[prop].bind(target) : target[prop]) });
@@ -105,11 +107,11 @@ describe("GET /q/leaderboard", () => {
     statements = 0;
     const body = await handleLeaderboardRequest(url("?limit=3"), counting);
     expect(body.leaderboard).toHaveLength(3);
-    expect(statements).toBe(1 + 3 * 3); // one ranking query, then three reads for each of the three workers
+    expect(statements).toBeLessThanOrEqual(3);
     resetLeaderboardCache();
     statements = 0;
     await handleLeaderboardRequest(url(), counting);
-    expect(statements).toBe(1 + 6 * 3); // the unlimited board has six ranked workers
+    expect(statements).toBeLessThanOrEqual(3);
   });
 
   it("keeps the standings for 30 seconds per limit and badge, and then reads them again", async () => {

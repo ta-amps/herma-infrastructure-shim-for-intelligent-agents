@@ -22,7 +22,7 @@ import { compileList, ensureGenerated, privateTokens, unreadGroups } from "./ban
 import { inMemoryD1 } from "./memory_d1.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const BASE = "https://herma.teleionlabs.com";
+const BASE = "https://shim.teleionlabs.com";
 const EM_DASH = String.fromCharCode(0x2014);
 // Owner, Nov 2: a hash or fingerprint is not shown anywhere on a page, code included. The shared list's `fingerprints` group decides what
 // counts (it is read like the other groups and checked on all visible text); this built-in floor says the same thing for 12 hex digits or more, so a

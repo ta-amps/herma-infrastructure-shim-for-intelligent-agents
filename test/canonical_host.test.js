@@ -29,7 +29,7 @@ describe("canonicalRedirect", () => {
       for (const method of ["GET", "HEAD"]) {
         const res = canonicalRedirect(request(`${OLD}${path}?q=shelter`, { method, headers: BROWSER }), on);
         expect(res.status, `${method} ${path}`).toBe(301);
-        expect(res.headers.get("location")).toBe(`https://herma.teleionlabs.com${path}?q=shelter`);
+        expect(res.headers.get("location")).toBe(`https://shim.teleionlabs.com${path}?q=shelter`);
         expect(res.headers.get("cache-control")).toBe("public, max-age=3600");
         expect(res.headers.get("vary")).toBe("accept"); // the answer for this address depends on what the request asks for
       }
@@ -55,7 +55,7 @@ describe("canonicalRedirect", () => {
     for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
       const res = canonicalRedirect(request(`${OLD}/dashboard`, { method }), on);
       expect(res.status, method).toBe(308);
-      expect(res.headers.get("location")).toBe("https://herma.teleionlabs.com/dashboard");
+      expect(res.headers.get("location")).toBe("https://shim.teleionlabs.com/dashboard");
       expect(res.headers.get("cache-control")).toBe("no-store");
     }
     // ...unless the sender asked for JSON, which is a machine talking
@@ -87,7 +87,7 @@ describe("canonicalRedirect", () => {
   it("never turns a path into another site (no open redirect)", () => {
     for (const path of ["/c//example.com/x", "/w///example.com", "/c/%2F%2Fexample.com", "/q/demo//example.com", "/c/\\example.com", "/dashboard//example.com", "/starter//example.com"]) {
       const res = canonicalRedirect(request(`${OLD}${path}`, { headers: BROWSER }), on);
-      expect(new URL(res.headers.get("location")).origin, path).toBe("https://herma.teleionlabs.com");
+      expect(new URL(res.headers.get("location")).origin, path).toBe("https://shim.teleionlabs.com");
     }
     for (const path of ["//example.com/x", "///example.com", "/\\example.com", "/%2F%2Fexample.com"]) {
       expect(canonicalRedirect(request(`${OLD}${path}`, { headers: BROWSER }), on), path).toBeNull(); // not a page: served here (a 404), never redirected anywhere
@@ -95,6 +95,8 @@ describe("canonicalRedirect", () => {
   });
 
   it("leaves the canonical host, local hosts and an unset or off switch alone", () => {
+    expect(canonicalRedirect(request("https://shim.teleionlabs.com/dashboard", { headers: BROWSER }), on)).toBeNull();
+    expect(canonicalRedirect(request("https://SHIM.TELEIONLABS.COM/dashboard", { headers: BROWSER }), on)).toBeNull();
     expect(canonicalRedirect(request("https://herma.teleionlabs.com/dashboard", { headers: BROWSER }), on)).toBeNull();
     expect(canonicalRedirect(request("https://HERMA.TELEIONLABS.COM/dashboard", { headers: BROWSER }), on)).toBeNull();
     expect(canonicalRedirect(request("http://localhost:8787/dashboard", { headers: BROWSER }), on)).toBeNull();
@@ -155,7 +157,7 @@ describe("the Worker with the redirect on", () => {
     for (const path of ["/", "/dashboard?q=shelter", "/prompts", "/get-started", "/trust", "/starter", "/kits", "/w/w_agent_muse-worker-01"]) {
       const res = await worker.fetch(request(`${OLD}${path}`, { headers: BROWSER }), redirecting, ctx);
       expect(res.status, path).toBe(301);
-      expect(res.headers.get("location")).toBe(`https://herma.teleionlabs.com${path}`);
+      expect(res.headers.get("location")).toBe(`https://shim.teleionlabs.com${path}`);
     }
     const posted = await worker.fetch(request(`${OLD}/dashboard`, { method: "POST", body: "{}" }), redirecting, ctx);
     expect(posted.status).toBe(308);

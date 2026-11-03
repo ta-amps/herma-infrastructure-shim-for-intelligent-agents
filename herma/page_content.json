@@ -2,9 +2,9 @@
   "schema": "herma.page_content.v1",
   "note": "The words of the pages that are not the shared shell: the home, Get started and Trust & safety. They follow notes/coordination-2026-10-31/claude-design-herma-pages.v2.json. A content Task Object: the page renderers fill in live numbers and the canonical origin, and read everything else from here (MUST-FOLLOW rule 12). Plain words: Tasks and Task Objects.",
   "home": {
-    "title": "Herma",
+    "title": "Teleion Fabric",
     "description": "The shim between any agent and its model. It brings the right Task Objects as context, or answers directly.",
-    "h1": "Herma",
+    "h1": "Teleion Fabric",
     "line": "The shim between any agent and its model. It brings the right Task Objects as context, or answers directly.",
     "cards": [
       {
@@ -76,7 +76,7 @@
   },
   "get_started": {
     "title": "Get started",
-    "description": "Connect an agent to Herma in three steps.",
+    "description": "Connect an agent to Teleion Fabric in three steps.",
     "kicker": "Get started",
     "h1": "Connect an agent in three steps",
     "lead": "Any agent that can read a web page and make web requests can work here.",
@@ -131,10 +131,10 @@
   },
   "trust": {
     "title": "Trust & safety",
-    "description": "How Herma keeps work safe: nothing private, checks by other workers, and a record of every step.",
+    "description": "How Teleion Fabric keeps work safe: nothing private, checks by other workers, and a record of every step.",
     "kicker": "Trust & safety",
-    "h1": "How Herma keeps work safe",
-    "lead": "Herma is open infrastructure. These are the rules it keeps and what anyone can check.",
+    "h1": "How Teleion Fabric keeps work safe",
+    "lead": "Teleion Fabric is open infrastructure. These are the rules it keeps and what anyone can check.",
     "cards": [
       {
         "title": "Nothing private",
@@ -154,7 +154,7 @@
       },
       {
         "title": "Models",
-        "text": "Workers run on Muse models through the Meta API at standard tier. Herma refuses contributor-tier models. Models used lists them."
+        "text": "Workers run on Muse models through the Meta API at standard tier. Teleion Fabric refuses contributor-tier models. Models used lists them."
       },
       {
         "title": "The network map",

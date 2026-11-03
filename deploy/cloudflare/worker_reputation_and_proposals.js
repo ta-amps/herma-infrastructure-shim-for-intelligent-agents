@@ -14,8 +14,12 @@ export const REPUTATION_AND_PROPOSAL_GRID = Object.freeze({
   max_prior_attempts_returned: 12,
   max_capabilities_per_task: 12,
   max_routes_per_task: 12,
+  default_leaderboard_rows: 25,
   max_leaderboard_rows: 100,
   max_proposals_rows: 100,
+  max_recent_cred_events_per_worker: 15,
+  leaderboard_cache_ms: 30000,
+  leaderboard_cache_entries: 40,
   summary_clip_chars: 500,
 
   // Evidence-backed scoring parameters (never self-claimed; 0 without verified receipt/object/task link)
@@ -672,7 +676,8 @@ export async function recordVerifiedSubmissionCredAndProposals(db, ctx = {}) {
     const isSelfEval =
       (ownerUuid && ownerUuid === workerUuid) || (ownerAgent && ownerAgent === agentId);
     if (!isSelfEval) {
-      const caughtDefect = Boolean(ev.defect_caught || Number(ev.quality_milli ?? 500) <= 300);
+      const evQualMilli = Number(ev.quality_milli ?? ev.updated_quality_milli ?? 500);
+      const caughtDefect = Boolean(ev.defect_caught || evQualMilli <= 300);
       const pts = caughtDefect
         ? REPUTATION_AND_PROPOSAL_GRID.eagle_eye_defect_catch_points
         : REPUTATION_AND_PROPOSAL_GRID.verify_points;
@@ -684,7 +689,7 @@ export async function recordVerifiedSubmissionCredAndProposals(db, ctx = {}) {
         0,
         receiptHash,
         ev.target_kind === "object" ? targetId : "",
-        { target_kind: ev.target_kind, target_id: targetId, quality_milli: ev.quality_milli }
+        { target_kind: ev.target_kind, target_id: targetId, quality_milli: evQualMilli }
       );
 
       // Update proposal governance status if evaluating an `infra_proposal` / `retraining_request`!
@@ -697,7 +702,8 @@ export async function recordVerifiedSubmissionCredAndProposals(db, ctx = {}) {
           const prevCnt = Number(propRow.independent_eval_count || 0);
           const prevMean = Number(propRow.mean_eval_quality_milli || 0);
           const nextCnt = prevCnt + 1;
-          const nextMean = Math.round((prevMean * prevCnt + Number(ev.quality_milli || 0)) / nextCnt);
+          const evalQualForMean = Number(ev.quality_milli ?? ev.updated_quality_milli ?? 0);
+          const nextMean = Math.round((prevMean * prevCnt + evalQualForMean) / nextCnt);
           const nextStatus =
             nextCnt >= REPUTATION_AND_PROPOSAL_GRID.proposal_admin_ready_min_evals &&
             nextMean >= REPUTATION_AND_PROPOSAL_GRID.proposal_admin_ready_min_quality_milli
@@ -879,25 +885,7 @@ export async function recordVerifiedSubmissionCredAndProposals(db, ctx = {}) {
   };
 }
 
-export async function buildWorkerScoreAndBadges(db, workerUuid) {
-  await ensureReputationAndProposalsSchema(db);
-  const wRow = await db
-    .prepare("SELECT * FROM herma_worker_registry WHERE worker_uuid = ?")
-    .bind(String(workerUuid))
-    .first();
-  const evRes = await db
-    .prepare(
-      `SELECT event_kind, points_awarded, unblock_bonus, prior_failed_workers, multiplier_milli,
-              evidence_ref, task_id, object_key, detail_json, ip_fingerprint, created_at
-       FROM herma_worker_cred_events
-       WHERE worker_uuid = ?
-       ORDER BY id DESC`
-    )
-    .bind(String(workerUuid))
-    .all();
-  const events = evRes?.results || [];
-
-  // Baseline historical solves in herma_worker_registry also contribute deterministic baseline cred
+function scoreWorkerFromRows(wRow, workerUuid, events, clientIdxBadgeRow) {
   const regNgo = Number(wRow?.ngo_completed || 0);
   const regEval = Number(wRow?.eval_completed || 0);
   const regOwn = Number(wRow?.own_completed || 0);
@@ -915,7 +903,6 @@ export async function buildWorkerScoreAndBadges(db, workerUuid) {
   let vectorSmithCount = 0;
   let cartographerCount = 0;
   let leafCutterCount = 0;
-  let latestIpFingerprint = "";
 
   for (const ev of events) {
     ledgerPoints += Number(ev.points_awarded || 0);
@@ -931,8 +918,9 @@ export async function buildWorkerScoreAndBadges(db, workerUuid) {
     if (ev.event_kind === "indexer_block_leaf") {
       leafCutterCount += 1;
     }
-    if (Number(ev.multiplier_milli || 1000) > REPUTATION_AND_PROPOSAL_GRID.milli_scale) heavyEventCount += 1;
-    if (!latestIpFingerprint && ev.ip_fingerprint) latestIpFingerprint = ev.ip_fingerprint;
+    if (Number(ev.multiplier_milli || REPUTATION_AND_PROPOSAL_GRID.milli_scale) > REPUTATION_AND_PROPOSAL_GRID.milli_scale) {
+      heavyEventCount += 1;
+    }
     try {
       const det = JSON.parse(ev.detail_json || "{}");
       if (det.alternative_route_used) bridgeBuilderCount += 1;
@@ -943,17 +931,6 @@ export async function buildWorkerScoreAndBadges(db, workerUuid) {
     }
   }
 
-  const clientIdxBadgeRow = await db
-    .prepare(
-      `SELECT COALESCE(MAX(has_verified_dense), 0) AS has_dense,
-              COALESCE(MAX(has_verified_lsh), 0) AS has_lsh,
-              COALESCE(MAX(has_verified_blocks_and_leafs), 0) AS has_bl
-       FROM herma_object_client_index
-       WHERE indexer_worker_uuid = ?`
-    )
-    .bind(String(workerUuid))
-    .first()
-    .catch(() => null);
   if (Number(clientIdxBadgeRow?.has_dense || 0) > 0) vectorSmithCount += 1;
   if (Number(clientIdxBadgeRow?.has_lsh || 0) > 0) cartographerCount += 1;
   if (Number(clientIdxBadgeRow?.has_bl || 0) > 0) leafCutterCount += 1;
@@ -1014,14 +991,43 @@ export async function buildWorkerScoreAndBadges(db, workerUuid) {
     tasks_unblocked: unblockedTasks,
     badges: badges.map((b) => b.id),
     badge_details: badges,
-    recent_cred_events: events.slice(0, 15),
+    recent_cred_events: events.slice(0, REPUTATION_AND_PROPOSAL_GRID.max_recent_cred_events_per_worker),
   };
 }
 
+export async function buildWorkerScoreAndBadges(db, workerUuid) {
+  await ensureReputationAndProposalsSchema(db);
+  const wRow = await db
+    .prepare("SELECT * FROM herma_worker_registry WHERE worker_uuid = ?")
+    .bind(String(workerUuid))
+    .first();
+  const evRes = await db
+    .prepare(
+      `SELECT event_kind, points_awarded, unblock_bonus, prior_failed_workers, multiplier_milli,
+              evidence_ref, task_id, object_key, detail_json, ip_fingerprint, created_at
+       FROM herma_worker_cred_events
+       WHERE worker_uuid = ?
+       ORDER BY id DESC`
+    )
+    .bind(String(workerUuid))
+    .all();
+  const events = evRes?.results || [];
+  const clientIdxBadgeRow = await db
+    .prepare(
+      `SELECT COALESCE(MAX(has_verified_dense), 0) AS has_dense,
+              COALESCE(MAX(has_verified_lsh), 0) AS has_lsh,
+              COALESCE(MAX(has_verified_blocks_and_leafs), 0) AS has_bl
+       FROM herma_object_client_index
+       WHERE indexer_worker_uuid = ?`
+    )
+    .bind(String(workerUuid))
+    .first()
+    .catch(() => null);
+
+  return scoreWorkerFromRows(wRow, workerUuid, events, clientIdxBadgeRow);
+}
+
 // The standings are kept for 30 seconds in an isolate, per limit and badge, so a page or an agent that asks again does not pay for the scan again.
-const LEADERBOARD_CACHE_MS = 30_000;
-const LEADERBOARD_CACHE_ENTRIES = 40;
-const LEADERBOARD_PARALLEL = 10; // workers scored at once; each score is three small reads
 const leaderboardCache = new Map();
 
 /** For tests: forget the standings an isolate remembers. */
@@ -1029,10 +1035,13 @@ export function resetLeaderboardCache() {
   leaderboardCache.clear();
 }
 
-/** ?limit= as a whole number from 1 to the most rows the board ever returns; anything else is the most. */
+/** ?limit= defaults to default_leaderboard_rows (25) when omitted/invalid, clamped to max_leaderboard_rows (100). */
 export function leaderboardLimit(raw) {
+  if (raw === null || raw === undefined || String(raw).trim() === "") {
+    return REPUTATION_AND_PROPOSAL_GRID.default_leaderboard_rows;
+  }
   const n = Math.floor(Number(raw));
-  if (!Number.isFinite(n) || n < 1) return REPUTATION_AND_PROPOSAL_GRID.max_leaderboard_rows;
+  if (!Number.isFinite(n) || n < 1) return REPUTATION_AND_PROPOSAL_GRID.default_leaderboard_rows;
   return Math.min(n, REPUTATION_AND_PROPOSAL_GRID.max_leaderboard_rows);
 }
 
@@ -1045,7 +1054,7 @@ export async function handleLeaderboardRequest(url, db, { nowMs = Date.now() } =
   const cacheable = !targetWorker && (badgeFilter === "" || Object.hasOwn(BADGE_CATALOG, badgeFilter));
   if (cacheable) {
     const hit = leaderboardCache.get(cacheKey);
-    if (hit && nowMs - hit.at < LEADERBOARD_CACHE_MS) return hit.body;
+    if (hit && nowMs - hit.at < REPUTATION_AND_PROPOSAL_GRID.leaderboard_cache_ms) return hit.body;
   }
 
   if (targetWorker) {
@@ -1064,9 +1073,10 @@ export async function handleLeaderboardRequest(url, db, { nowMs = Date.now() } =
     };
   }
 
-  // The ranking and the limit are decided in SQL, with the same sum the score uses (the points of its events, or, for a worker with none, the
-  // points its registry counts are worth) and the same tie-breaks (events that unblocked others, then NGO solves), so only the workers that are
-  // returned are scored in detail. A badge needs the detail, so it ranks the most rows the board returns and cuts to the limit afterwards.
+  // Execute in <= 3 batch D1 queries total:
+  //   1. Rank candidate workers in SQL up to sqlLimit;
+  //   2. Fetch all cred events for those workers in one WHERE worker_uuid IN (...) query;
+  //   3. Fetch client-index badge flags for those workers in one WHERE indexer_worker_uuid IN (...) query.
   const sqlLimit = badgeFilter ? REPUTATION_AND_PROPOSAL_GRID.max_leaderboard_rows : limit;
   const workersRes = await db
     .prepare(
@@ -1092,14 +1102,56 @@ export async function handleLeaderboardRequest(url, db, { nowMs = Date.now() } =
     .all();
 
   const ranked = workersRes?.results || [];
-  const details = [];
-  for (let i = 0; i < ranked.length; i += LEADERBOARD_PARALLEL) {
-    details.push(...(await Promise.all(ranked.slice(i, i + LEADERBOARD_PARALLEL).map((w) => buildWorkerScoreAndBadges(db, w.worker_uuid)))));
+  const eventsByWorker = new Map();
+  const clientIdxByWorker = new Map();
+
+  if (ranked.length > 0) {
+    const uuids = ranked.map((w) => String(w.worker_uuid));
+    const placeholders = uuids.map(() => "?").join(",");
+    const [batchEventsRes, batchClientIdxRes] = await Promise.all([
+      db
+        .prepare(
+          `SELECT worker_uuid, agent_id, event_kind, points_awarded, unblock_bonus, prior_failed_workers, multiplier_milli,
+                  evidence_ref, task_id, object_key, detail_json, ip_fingerprint, created_at
+           FROM herma_worker_cred_events
+           WHERE worker_uuid IN (${placeholders})
+           ORDER BY id DESC`
+        )
+        .bind(...uuids)
+        .all(),
+      db
+        .prepare(
+          `SELECT indexer_worker_uuid,
+                  COALESCE(MAX(has_verified_dense), 0) AS has_dense,
+                  COALESCE(MAX(has_verified_lsh), 0) AS has_lsh,
+                  COALESCE(MAX(has_verified_blocks_and_leafs), 0) AS has_bl
+           FROM herma_object_client_index
+           WHERE indexer_worker_uuid IN (${placeholders})
+           GROUP BY indexer_worker_uuid`
+        )
+        .bind(...uuids)
+        .all()
+        .catch(() => ({ results: [] })),
+    ]);
+
+    for (const ev of batchEventsRes?.results || []) {
+      const key = String(ev.worker_uuid || "");
+      let arr = eventsByWorker.get(key);
+      if (!arr) {
+        arr = [];
+        eventsByWorker.set(key, arr);
+      }
+      arr.push(ev);
+    }
+    for (const row of batchClientIdxRes?.results || []) {
+      clientIdxByWorker.set(String(row.indexer_worker_uuid || ""), row);
+    }
   }
 
   const standings = [];
-  for (const [index, w] of ranked.entries()) {
-    const scored = details[index];
+  for (const w of ranked) {
+    const uid = String(w.worker_uuid);
+    const scored = scoreWorkerFromRows(w, uid, eventsByWorker.get(uid) || [], clientIdxByWorker.get(uid) || null);
     if (badgeFilter && !scored.badges.includes(badgeFilter)) continue;
     standings.push({
       worker_uuid: w.worker_uuid,
@@ -1146,7 +1198,9 @@ export async function handleLeaderboardRequest(url, db, { nowMs = Date.now() } =
     leaderboard: standings.slice(0, limit),
   };
   if (cacheable) {
-    if (leaderboardCache.size >= LEADERBOARD_CACHE_ENTRIES) leaderboardCache.delete(leaderboardCache.keys().next().value);
+    if (leaderboardCache.size >= REPUTATION_AND_PROPOSAL_GRID.leaderboard_cache_entries) {
+      leaderboardCache.delete(leaderboardCache.keys().next().value);
+    }
     leaderboardCache.set(cacheKey, { at: nowMs, body });
   }
   return body;

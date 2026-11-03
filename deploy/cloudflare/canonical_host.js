@@ -13,6 +13,7 @@
 import SHELL from "../../herma/page_shell.json" with { type: "json" };
 
 const LOCAL_HOST = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\]|[^.]+\.localhost)$/i;
+const SERVED_HOSTS = new Set([SHELL.site.host, "herma.teleionlabs.com"]);
 
 // The pages people open in a browser: the paths the Worker answers with HTML (release gate: tests/fixtures/pages).
 const PAGE_PATHS = new Set(["/", "/shim", "/console", "/connect", "/starter", "/prompts", "/get-started", "/trust", "/dashboard", "/kits"]);
@@ -41,7 +42,7 @@ export function canonicalRedirect(request, env = {}) {
   if (String(env?.CANONICAL_REDIRECT ?? "off").toLowerCase() !== "on") return null;
   const url = new URL(request.url);
   const host = url.hostname.toLowerCase();
-  if (host === SHELL.site.host || LOCAL_HOST.test(host)) return null;
+  if (SERVED_HOSTS.has(host) || LOCAL_HOST.test(host)) return null;
   if (!isPageNavigation(request)) return null;
   // Joined as text, never resolved as a URL: a path such as //example.com/x must stay a path on our host, not become another site.
   const target = `${SHELL.site.origin}${url.pathname}${url.search}`;

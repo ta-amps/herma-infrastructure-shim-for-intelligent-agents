@@ -83,6 +83,12 @@ const queries = [
   "Show the canonical noun/verb schema",
   "herma direct schema",
   "/herma-schema",
+  "What is Teleion Fabric?",
+  "How should my agent claim a Task?",
+  "Help a nonprofit make a bilingual food pantry flyer",
+  "How do feeds show what's new?",
+  "How does model routing pick between Muse Spark 1.3 and Muse Wonder 1.0?",
+  "When should we use fine-tuning vs context shimming?",
   "agent harness feeds",
   "Compare HarnessTax across Harness Square, OpenCode, Pi, and Muse Code",
   "When should we use prompt shimming vs LoRA as parametric memory on Muse Glimmer?",
@@ -180,7 +186,7 @@ def test_all_builtin_starters_and_natural_language_queries_match_across_python_a
     assert "Which Meta Models Do What" in home_html
     assert "Muse Glimmer 30B, fine-tuned by ta-amps" in home_html
     assert "Muse Wonder 1.0" in home_html and "Muse Spark 1.3" in home_html
-    assert "context-shimming AI middleware for configurable coding harnesses" in home_html
+    assert "Teleion Fabric" in home_html and "model shim" in home_html.lower()
 
     worker_out = _run_worker_node_script(WORKER_PARITY)
     assert worker_out["lensBuiltin"] is True
@@ -213,9 +219,33 @@ def test_all_builtin_starters_and_natural_language_queries_match_across_python_a
         assert "PROV-DIRECT-NOUN-VERB-SCHEMA" in py_ids, q
         assert py_data["responded_directly"] is True and wk_data["responded_directly"] is True, q
         for text in (py_data["direct_response_text"], wk_data["direct_response_text"]):
-            assert "Canonical Herma + Tessera Contract -- Tasks and Task Objects" in text
+            assert "Teleion Fabric Contract -- Tasks and Task Objects" in text
             assert "Task Objects are every reusable tool" in text
             assert "Tasks are independently schedulable units of work" in text
+
+    realistic_expectations = {
+        "What is Teleion Fabric?": ("PROV-TELEION-FABRIC-OVERVIEW", True),
+        "How should my agent claim a Task?": ("PROV-TESSERA-FENCING", False),
+        "Help a nonprofit make a bilingual food pantry flyer": ("PROV-ERANOS-PUBLIC-KITS", False),
+        "How do feeds show what's new?": ("PROV-HARNESS-FEEDS-GUIDE", False),
+        "How does model routing pick between Muse Spark 1.3 and Muse Wonder 1.0?": (
+            "PROV-META-MUSE-ROUTING",
+            False,
+        ),
+        "When should we use fine-tuning vs context shimming?": ("PROV-LORA-MEMORY-ROUTING", False),
+    }
+    for rq, (expected_prov, expected_direct) in realistic_expectations.items():
+        py_r = client.post(
+            "/api/preview", json={"prompt": rq, "wire_format": "chat_completions"}
+        ).json()
+        wk_r = worker_out["previews"][rq]
+        assert [m["prov_id"] for m in py_r["matches"]] == wk_r["matched"], rq
+        assert expected_prov in wk_r["matched"], rq
+        assert (
+            py_r["responded_directly"] is expected_direct
+            and wk_r["responded_directly"] is expected_direct
+        ), rq
+        assert len(wk_r["shimmed_refs"]) >= 1 or wk_r["responded_directly"] is True, rq
 
     for feed_q in (
         "agent harness feeds",

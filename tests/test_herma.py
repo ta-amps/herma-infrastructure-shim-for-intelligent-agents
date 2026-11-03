@@ -557,9 +557,7 @@ def test_direct_response_short_circuits_upstream_across_all_protocols(
     assert r_resp.headers["x-herma-direct-response"] == "true"
     assert HEX64_RE.match(r_resp.headers["x-herma-receipt-sha256"])
     resp_body = r_resp.json()
-    assert (
-        "Canonical Herma + Tessera Contract -- Tasks and Task Objects" in resp_body["output_text"]
-    )
+    assert "Teleion Fabric Contract -- Tasks and Task Objects" in resp_body["output_text"]
     assert "[NOUN] noun:tessera.lease_fence" in resp_body["output_text"]
     assert "[VERB] verb:tessera.claim" in resp_body["output_text"]
     assert resp_body["output"][0]["content"][0]["text"] == resp_body["output_text"]
@@ -680,15 +678,11 @@ console.log(JSON.stringify({
     assert HEX64_RE.match(out["chatReceiptSha"])
     assert out["chatBody"]["object"] == "chat.completion"
     assert out["chatBody"]["usage"]["total_tokens"] == 0
-    assert (
-        "Canonical Herma + Tessera Contract -- Tasks and Task Objects"
-        in out["respBody"]["output_text"]
-    )
+    assert "Teleion Fabric Contract -- Tasks and Task Objects" in out["respBody"]["output_text"]
     assert out["respBody"]["output"][0]["content"][0]["text"] == out["respBody"]["output_text"]
     assert out["msgBody"]["content"][0]["type"] == "text"
     assert (
-        "Canonical Herma + Tessera Contract -- Tasks and Task Objects"
-        in out["msgBody"]["content"][0]["text"]
+        "Teleion Fabric Contract -- Tasks and Task Objects" in out["msgBody"]["content"][0]["text"]
     )
     assert out["homeHasFraming"] is True
 
@@ -1818,10 +1812,10 @@ def test_public_preview_svg_brand_chrome_discovery_and_stateless_mcp_parity(
         .startswith("application/javascript")
     )
     assert "Disallow: /v1/" in client.get("/robots.txt", headers=edge_hdr).text
-    assert "# Herma" in client.get("/llms.txt", headers=edge_hdr).text
+    assert "# Teleion Fabric Model Shim" in client.get("/llms.txt", headers=edge_hdr).text
     assert "PROV-TESSERA-FENCING" in client.get("/llms-full.txt", headers=edge_hdr).text
     card = client.get("/.well-known/agent-card.json", headers=edge_hdr).json()
-    assert card["name"] == "Herma"
+    assert card["name"] == "Teleion Fabric"
     assert card["endpoints"]["mcp"].endswith("/mcp")
 
     # 4. Read-only POST /api/preview (persisted=False, 0 DB side effects):
@@ -1946,7 +1940,7 @@ console.log(JSON.stringify({
     assert cf["hzOk"] is True
     assert cf["robOk"] is True
     assert cf["llmsOk"] is True
-    assert cf["cardName"] == "Herma"
+    assert cf["cardName"] == "Teleion Fabric"
     assert cf["hasSvgHeader"] is True
     assert cf["prevPersisted"] is False and cf["prevMatches"] >= 1
     # The console's statute preset fires the plain-named starter through its path trigger, and

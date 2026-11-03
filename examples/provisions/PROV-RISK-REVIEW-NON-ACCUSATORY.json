@@ -4,6 +4,7 @@
   "summary": "Ensures fraud/harm analysis stays strictly non-accusatory, verifies example-case markers, and routes T3/T4 decisions to human reviewers.",
   "priority": 280,
   "enabled": true,
+  "action": "shim_context",
   "inject_position": "system_suffix",
   "dedupe_mode": "once_per_conversation",
   "max_chars": 2000,
@@ -23,15 +24,30 @@
   "triggers": {
     "mode": "any",
     "keyword": {
-      "any_keywords": ["statute card", "exploitation evidence", "t4 referral", "advance_to_payout", "payee_mismatch"],
-      "path_globs": ["*exploitation_evidence/*.py", "areas/*", "cards/*.json"]
+      "any_keywords": [
+        "statute card",
+        "exploitation evidence",
+        "t4 referral",
+        "advance_to_payout",
+        "payee_mismatch"
+      ],
+      "path_globs": [
+        "*exploitation_evidence/*.py",
+        "areas/*",
+        "cards/*.json"
+      ]
     },
     "semantic": {
       "exemplars": [
         "evaluate suspicious payment fee extraction and coercive messages against regulatory caps",
         "clear legitimate look-alike invoice twin while holding mismatched beneficiary account"
       ],
-      "concepts": ["scam", "fraud", "statute", "payee"],
+      "concepts": [
+        "scam",
+        "fraud",
+        "statute",
+        "payee"
+      ],
       "threshold": 0.26
     }
   }

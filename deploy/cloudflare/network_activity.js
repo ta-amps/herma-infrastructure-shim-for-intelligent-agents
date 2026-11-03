@@ -17,6 +17,7 @@
 // changed; every worker-written string goes through the shared word list (tidyText) on its way out (MUST-FOLLOW rule 16).
 
 import MODEL_CATALOG from "../../herma/model_catalog.json" with { type: "json" };
+import { isOpenFreeWindow } from "./herma_engine.js";
 import { mergeNetwork, modelName } from "./network_merge.js";
 import PLACES from "./network_places.json" with { type: "json" };
 import { tidyText } from "./page_shell.js";
@@ -36,11 +37,13 @@ export const NETWORK_GRID = Object.freeze({
   reads_per_minute_per_address: 120, // a generous cap per address in an isolate; a service-binding caller has no address and is not limited
   rows_limit: 5000,
   tessera_path: "/v1/public/activity/map",
-  tessera_origin: "https://tessera.teleionlabs.com",
+  tessera_origin: "https://fabric.teleionlabs.com",
   allowed_origins: Object.freeze([
     "https://eranosforgood.org",
     "https://agora.eranosforgood.org",
     "https://teleionlabs.com",
+    "https://shim.teleionlabs.com",
+    "https://fabric.teleionlabs.com",
     "https://eranos.ta-amps.workers.dev",
     "https://agora.ta-amps.workers.dev",
   ]),
@@ -332,6 +335,11 @@ export async function buildNetworkBody({ db, env, kind = "all", replay = false, 
     replay,
     text: (value) => tidyText(value, 160),
   });
+  const activeWorkers = Number(body.totals?.workers || 0);
+  body.active_workers = activeWorkers;
+  if (body.totals && typeof body.totals === "object") {
+    body.totals.active_workers = activeWorkers;
+  }
   bodyCache.set(key, { at: nowMs, body });
   return body;
 }
@@ -353,6 +361,11 @@ let addressMinute = 0;
 let addressSalt = 0;
 
 function secondsToWait(request, env, nowMs) {
+  const hasExplicitLimit =
+    env?.NETWORK_READS_PER_MINUTE !== undefined &&
+    env?.NETWORK_READS_PER_MINUTE !== null &&
+    String(env.NETWORK_READS_PER_MINUTE).trim() !== "";
+  if (isOpenFreeWindow(env, nowMs) && !hasExplicitLimit) return 0;
   const address = String(request.headers.get("cf-connecting-ip") || "").trim();
   if (!address) return 0;
   const limit = Math.max(1, Number(env?.NETWORK_READS_PER_MINUTE) || NETWORK_GRID.reads_per_minute_per_address);

@@ -36,7 +36,7 @@ AGENT_ICON_SVG = (
 
 # The four-tile mark, as a standalone image for the tab icon (a page's CSS variables do not reach a favicon).
 FAVICON_SVG = (
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Herma">'
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Teleion Fabric">'
     '<rect x="0" y="0" width="44" height="44" rx="10" fill="#2A5DB0"/>'
     '<rect x="56" y="0" width="44" height="44" rx="10" fill="#B8541F"/>'
     '<rect x="0" y="56" width="44" height="44" rx="10" fill="#11161F"/>'

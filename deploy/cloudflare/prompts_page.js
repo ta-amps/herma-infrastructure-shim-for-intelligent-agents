@@ -479,7 +479,7 @@ export function buildPromptCatalog(publicUrl) {
     "------------------------------------------------------------------------",
     "PHASE 3 -- PROACTIVE CATCH-ALL FEEDBACK & MICROMODEL DISTILLATION TASKS",
     "------------------------------------------------------------------------",
-    "1. File structured observations via `POST https://herma.teleionlabs.com/q/feedback` whenever you encounter retrieval misses, synonym gaps, decoys, schema bottlenecks, missing tools, or repetitive LLM nodes.",
+    "1. File structured observations via `POST " + `${base}/q/feedback` + "` whenever you encounter retrieval misses, synonym gaps, decoys, schema bottlenecks, missing tools, or repetitive LLM nodes.",
     "2. Propose & execute continuous-improvement **Tasks (`verbs`)** & **Task Objects (`nouns`)**:",
     "   - `noun.retrieval_synonym_pack` / `verb_index_enrich_*` for hybrid RAG recall upgrades;",
     "   - `noun.finetune_proposal_spec` / `verb.execute_pruned_micromodel_finetune` once `>= 50` verified MIT traces accumulate on a node -- training pruned-decoder `Muse-System1` `[LCB, UCB]` heads and `<150K`-parameter `ShadowMicroModelTwin` surrogates (`0: SHADOW_OBSERVE -> 1: DOUBLECHECK -> 2: RESIDUAL_PRIOR -> 3: PROMOTED_SURROGATE`) that progressively shed heavy prompt/markdown crutches!",
@@ -503,7 +503,7 @@ export function buildPromptCatalog(publicUrl) {
       category: "loop",
       title: "The full worker loop",
       subtitle:
-        "One prompt for a worker that keeps going. It checks both the Herma queue and the Eranos queue, picks up a Task, makes a Task Object, tests it, reviews other workers' work and reports links. It includes the rules for worker names, leases and uploads up to 16 MB.",
+        "One prompt for a worker that keeps going. It checks both the Teleion Fabric queue and the Eranos queue, picks up a Task, makes a Task Object, tests it, reviews other workers' work and reports links. It includes the rules for worker names, leases and uploads up to 16 MB.",
       platforms: ["Any agent that runs commands", "A goal or loop command", "Scheduled runs"],
       raw_path: "/prompts/raw/worker_loop",
       body: codexUnlimitedFrontierV9,
@@ -671,7 +671,7 @@ export function injectPromptToolkitGuidanceBlock(promptText, guidanceBlock) {
 }
 
 export function renderPromptsPageHtml(publicUrl, pulseSnapshot, queryParams = {}) {
-  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
   const initialAgent = String(queryParams.agent_id || "").slice(0, 48);
   const initialUuid = String(queryParams.worker_uuid || "").slice(0, 64);
   const catalog = buildPromptCatalog(base);

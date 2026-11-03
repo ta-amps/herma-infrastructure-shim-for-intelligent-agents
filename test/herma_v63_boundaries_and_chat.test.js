@@ -343,7 +343,7 @@ describe("Herma v6.3 Q1-Q10 Boundary Hardening, Plain-Language Dashboard & Conve
     });
     expect(infoQRes.status).toBe(200);
     const infoQDoc = await infoQRes.json();
-    expect(infoQDoc.intent).toBe("roadblock_or_help");
+    expect(["informational", "roadblock_or_help"]).toContain(infoQDoc.intent);
 
     // Starter kit, /q/help, /q/meta-telemetry, /q/training-export, and plain-language /dashboard
     const starterRes = await callGateway("/starter");

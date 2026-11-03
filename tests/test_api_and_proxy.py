@@ -139,7 +139,7 @@ def test_http_edge_lockdown_and_dry_run_across_wire_formats(
     assert r_chat.status_code == 200
     data_chat = r_chat.json()
     assert "PROV-TESSERA-FENCING@v1" in data_chat["receipt"]["provisions_fired"]
-    assert "https://tessera.ta-amps.workers.dev/llms.txt" in data_chat["receipt"]["uris_injected"]
+    assert "https://fabric.teleionlabs.com/llms.txt" in data_chat["receipt"]["uris_injected"]
     sys_msg = data_chat["augmented_payload"]["messages"][0]["content"]
     assert "[HERMA PROVISION: PROV-TESSERA-FENCING@v1" in sys_msg
 

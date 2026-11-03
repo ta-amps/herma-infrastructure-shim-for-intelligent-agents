@@ -100,5 +100,5 @@ export default defineConfig({
       }
     }
   })],
-  test: { include: ["test/*.test.js"], testTimeout: 20000 }
+  test: { include: ["test/*.test.js", "test/*.test.mjs"], testTimeout: 20000 }
 });

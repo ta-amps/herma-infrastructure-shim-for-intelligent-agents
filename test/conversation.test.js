@@ -2,6 +2,7 @@ import { env, exports } from "cloudflare:workers";
 import { runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { WorkConversation } from "../deploy/cloudflare/conversation_state.js";
+import worker from "../deploy/cloudflare/worker.js";
 import { hash, checkSchema, parseProposal, providerConfig, strictJson, buildRequest, loadProviderPlan } from "../deploy/cloudflare/conversation.js";
 import { ensureSchema, sha256Hex } from "../deploy/cloudflare/herma_engine.js";
 
@@ -80,7 +81,8 @@ describe("typed conversation in the Workers runtime", () => {
     expect((await res.json()).proposal.status).toBe("ready");
     const other = await http("/v1/conversations/conversation-one", undefined, b);
     expect((await other.json()).history).toEqual([]);
-    expect((await http("/v1/conversations/turn", turn(), { ...a, Cookie: "session=fixture" })).status).toBe(403);
+    const strictCookie = await worker.fetch(new Request("https://example.com/v1/conversations/turn", { method: "POST", headers: { "Content-Type": "application/json", ...a, Cookie: "session=fixture" }, body: JSON.stringify(turn()) }), { ...env, HERMA_STRICT_AUTH: "true" }, { waitUntil() {}, passThroughOnException() {} });
+    expect(strictCookie.status).toBe(403);
   });
 
   it.each(["meta", "openai", "anthropic", "openrouter"])("clarifies then proposes typed data with %s and replays exactly", async provider => {

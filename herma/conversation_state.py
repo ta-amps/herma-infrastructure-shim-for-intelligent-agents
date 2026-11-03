@@ -506,7 +506,7 @@ class ConversationState:
             history = json.loads(row["history"])
             history.extend(
                 [
-                    {"role": "user", "content": message[:2000]},
+                    {"role": "user", "content": message},
                     {
                         "role": "assistant",
                         "content": json.dumps(response["proposal"], ensure_ascii=True)[:6000],

@@ -40,7 +40,7 @@ const AGENT_ICON_SVG =
 
 // The four-tile mark, as a standalone image for the tab icon (a page's CSS variables do not reach a favicon).
 export const FAVICON_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Herma">' +
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Teleion Fabric">' +
   '<rect x="0" y="0" width="44" height="44" rx="10" fill="#2A5DB0"/>' +
   '<rect x="56" y="0" width="44" height="44" rx="10" fill="#B8541F"/>' +
   '<rect x="0" y="56" width="44" height="44" rx="10" fill="#11161F"/>' +
@@ -187,11 +187,36 @@ export function buildTidy(config) {
   };
 }
 
+export function buildBannedScrubber(config) {
+  const rules = (config.displayRules || []).map((rule) => {
+    const flags = rule.flags.includes("g") ? rule.flags : `${rule.flags}g`;
+    const to = typeof rule.to === "string" ? rule.to : (match) => rule.to[match.toLowerCase()] ?? ELLIPSIS;
+    return { re: new RegExp(rule.re, flags), to };
+  });
+  const hashes = new Set((config.privateSha256 || []).map((hash) => String(hash).toLowerCase()));
+  const remembered = new Map();
+  const isPrivateName = (word) => {
+    if (!remembered.has(word)) {
+      if (remembered.size >= MAX_REMEMBERED_WORDS) remembered.clear();
+      remembered.set(word, hashes.has(sha256Hex(word)));
+    }
+    return remembered.get(word);
+  };
+  return function scrub(value) {
+    let text = String(value ?? "");
+    for (const rule of rules) text = text.replace(rule.re, rule.to);
+    if (hashes.size) text = text.replace(/[A-Za-z0-9]+/g, (word) => (isPrivateName(word.toLowerCase()) ? ELLIPSIS : word));
+    for (const rule of CLEANUP_RULES) text = text.replace(rule.re, rule.to);
+    return text.trim();
+  };
+}
+
 /**
  * Text that workers wrote (titles, summaries, labels), made fit to show: long ids and hashes are dropped, every word on
  * the shared banned-word list is replaced by its plain description, and nothing is longer than `max` characters.
  */
 export const tidyText = buildTidy(BANNED);
+export const scrubBannedWords = buildBannedScrubber(BANNED);
 
 /** `runs_on_small_4gb_laptop` becomes "Runs on small 4gb laptop". */
 export function humanize(id) {

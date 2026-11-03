@@ -4,6 +4,7 @@
   "summary": "Injects constant-time x-edge-auth origin verification, cookie stripping, and strict HSTS/CSP rules when editing deployment or Worker edge code.",
   "priority": 240,
   "enabled": true,
+  "action": "shim_context",
   "inject_position": "developer_context",
   "dedupe_mode": "once_per_conversation",
   "max_chars": 1800,
@@ -23,8 +24,15 @@
   "triggers": {
     "mode": "any",
     "keyword": {
-      "any_keywords": ["x-edge-auth", "EDGE_SECRET", "wrangler.jsonc"],
-      "path_globs": ["deploy/cloudflare/*", "*worker.js"]
+      "any_keywords": [
+        "x-edge-auth",
+        "EDGE_SECRET",
+        "wrangler.jsonc"
+      ],
+      "path_globs": [
+        "deploy/cloudflare/*",
+        "*worker.js"
+      ]
     }
   }
 }
