@@ -31,7 +31,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) |  |
 
-## deploy/ (43)
+## deploy/ (44)
 
 | File | What it is |
 |---|---|
