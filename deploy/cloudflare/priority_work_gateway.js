@@ -2676,8 +2676,10 @@ function splitStrongAndNearby(ranked, rawQuery) {
     return r.matched_channels.some((c) => SEARCH_WORD_CHANNELS.has(c));
   };
   const strong = unique.filter(isStrong);
-  strong.sort((a, b) => Number(b.matched_channels.includes("exact_id")) - Number(a.matched_channels.includes("exact_id")));
-  return { strong, nearby: unique.filter((r) => !isStrong(r)) };
+  const exactFirst = (a, b) => Number(b.matched_channels.includes("exact_id")) - Number(a.matched_channels.includes("exact_id"));
+  strong.sort(exactFirst);
+  unique.sort(exactFirst);
+  return { strong, nearby: unique.filter((r) => !isStrong(r)), unique };
 }
 
 const SEARCH_HIT_SUMMARY_CHARS = 160;
@@ -2974,7 +2976,8 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
   const candidates = [];
   // The shaped reply (/q/search) reads an exact ID through the same SELECT as the candidates, so visibility rules are the same.
   const shaped = params.shaped === true;
-  const exactId = shaped ? rawQuery.toLowerCase() : "";
+  const annotated = params.annotated === true;
+  const exactId = shaped || annotated ? rawQuery.toLowerCase() : "";
   const skipCandidateScan = Array.isArray(pushedShas) && pushedShas.length === 0 && !exactId;
 
   if (!skipCandidateScan && (scope === "all" || scope === "tasks")) {
@@ -3115,8 +3118,10 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
   }
 
   ranked.sort((a, b) => b.final_score - a.final_score);
-  const { strong, nearby: nearbyRanked } = shaped ? splitStrongAndNearby(ranked, rawQuery) : { strong: ranked, nearby: [] };
-  const topSlice = strong.slice(0, limit);
+  const { strong, nearby: nearbyRanked, unique } =
+    shaped || annotated ? splitStrongAndNearby(ranked, rawQuery) : { strong: ranked, nearby: [], unique: ranked };
+  // annotated: every old result stays in `results` in its old order, one row per ID, an exact ID first, each row marked.
+  const topSlice = (annotated ? unique : strong).slice(0, limit);
   const nearbySlice = nearbyRanked.slice(0, SEARCH_NEARBY_LIMIT);
   const topObjectKeys = [...topSlice, ...nearbySlice].filter((x) => x.artifact_kind === "task_object").map((x) => String(x.id));
   const buildsOnMap = new Map();
@@ -3146,9 +3151,8 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
   }
 
   const formattedResults = [];
-  const nearbyIds = new Set(nearbySlice.map((r) => r.id));
-  const formattedNearby = [];
-  for (const r of [...topSlice, ...nearbySlice]) {
+  const strongIds = new Set(strong.map((r) => r.id));
+  for (const r of new Set([...topSlice, ...nearbySlice])) {
     const rawRow = r._rawRow;
     delete r._rawRow;
     if (r.artifact_kind === "task_object") {
@@ -3158,7 +3162,10 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
       r.builds_on = buildsOnMap.get(String(r.id)) || [];
       r.reuse_weighted_quality_milli = computeReuseWeightedQualityMilli(r.quality_milli, depCnt);
     }
-    if (includePayload && r.artifact_kind === "task_object" && rawRow) {
+    if (annotated) {
+      r.match_quality = r.matched_channels.includes("exact_id") ? "exact_id" : strongIds.has(r.id) ? "words" : "nearby";
+    }
+    if (includePayload && r.artifact_kind === "task_object" && rawRow && topSlice.includes(r)) {
       const fullObjRow = await db
         .prepare("SELECT id, object_key, summary, chunk_count, payload_json, sha256_hash, created_at FROM herma_task_objects WHERE id = ?")
         .bind(rawRow.row_id)
@@ -3167,8 +3174,8 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
       r.payload = assembled.payload;
       r.payload_sha256_verified = assembled.verified;
     }
-    (nearbyIds.has(r.id) ? formattedNearby : formattedResults).push(r);
   }
+  formattedResults.push(...topSlice);
 
   if (rawQuery && params.record_demand !== false && params.record_demand !== "0") {
     const firstObjHit = formattedResults.find((h) => h.artifact_kind === "task_object");
@@ -3204,9 +3211,9 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
       query_semantic_sketch_bands: qEmbBands,
       sql_pushdown_shas: Array.isArray(pushedShas) ? pushedShas.length : null,
     },
-    total_matches: strong.length,
+    total_matches: annotated ? ranked.length : strong.length,
     results: formattedResults,
-    ...(shaped ? { nearby: formattedNearby, nearby_count: nearbyRanked.length } : {}),
+    ...(shaped || annotated ? { true_matches: strong.length, nearby: nearbySlice, nearby_count: nearbyRanked.length } : {}),
   };
 }
 
@@ -10290,9 +10297,12 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     traceCtx.detail = { q: String(params.q || params.query || "").slice(0, QUEUE_GATEWAY_GRID.facet_max_len) };
-    // full=1 keeps the older, longer reply: every field, fuzzy neighbours mixed in, no exact-name step.
-    const fullReply = params.full === "1" || params.full === 1 || params.full === true;
-    const searchOut = await executeHybridSearch(db, infraAllowed, { ...params, shaped: !fullReply }, publicUrl);
+    // Default: the reply existing callers know, with new fields beside the old ones. compact=1: the short reply, only real matches
+    // in `results`. full=1: the older reply with nothing added.
+    const flag = (v) => v === "1" || v === 1 || v === true;
+    const fullReply = flag(params.full);
+    const compactReply = !fullReply && flag(params.compact);
+    const searchOut = await executeHybridSearch(db, infraAllowed, { ...params, shaped: compactReply, annotated: !fullReply && !compactReply }, publicUrl);
     if (searchOut.forbidden) {
       return sendJson({ ok: false, code: "forbidden_tier", detail: searchOut.detail }, QUEUE_GATEWAY_GRID.http_forbidden);
     }
@@ -10310,22 +10320,31 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     if (fullReply) return sendJson(searchOut);
     const exactHit = searchOut.results.some((r) => r.matched_channels?.includes("exact_id"));
     const repoMatches = exactHit ? null : await repoMatchesForSearch(db, params.q || params.query);
-    const match = exactHit ? "exact_id" : searchOut.results.length ? "words" : repoMatches ? "exact_repo" : "none";
+    const match = exactHit ? "exact_id" : searchOut.true_matches ? "words" : repoMatches ? "exact_repo" : "none";
+    const added = {
+      match,
+      ...(exactHit ? { exact_match: compactSearchHit(searchOut.results[0], SEARCH_HIT_SUMMARY_CHARS) } : {}),
+      ...(repoMatches ? { repo_matches: repoMatches } : {}),
+      ...(match === "none" ? { note: "No match. Anything listed is only nearby and may not be related." } : {}),
+      true_matches: searchOut.true_matches,
+      nearby: searchOut.nearby.map((r) => compactSearchHit(r, SEARCH_NEARBY_SUMMARY_CHARS)),
+      nearby_count: searchOut.nearby_count,
+    };
+    if (!compactReply) {
+      const { true_matches: _t, nearby: _n, nearby_count: _c, ok: searchOk, ...old } = searchOut;
+      return sendJson({ ok: searchOk, ...added, ...old, short_reply: "Add compact=1 for a short reply with only real matches." });
+    }
     const corrections = searchOut.query_analysis.typo_corrections;
     return sendJson({
       ok: searchOut.ok,
+      ...added,
       schema: "herma.priority_work_gateway.search.v3",
       caller_role: searchOut.caller_role,
       query: searchOut.query_analysis.raw_query,
-      match,
       total_matches: searchOut.total_matches,
-      ...(repoMatches ? { repo_matches: repoMatches } : {}),
       query_analysis: { typo_corrections: corrections, corrected_tokens: searchOut.query_analysis.corrected_tokens },
       results: searchOut.results.map((r) => compactSearchHit(r, SEARCH_HIT_SUMMARY_CHARS)),
-      nearby: searchOut.nearby.map((r) => compactSearchHit(r, SEARCH_NEARBY_SUMMARY_CHARS)),
-      nearby_count: searchOut.nearby_count,
-      ...(match === "none" ? { note: "No match. nearby lists the closest items, which may not be related." } : {}),
-      more_detail: "Add full=1 for every field. Read one item at object_url.",
+      more_detail: "Leave out compact=1 for every field. Read one item at object_url.",
     });
   }
 
