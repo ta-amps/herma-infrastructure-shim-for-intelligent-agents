@@ -15,13 +15,14 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const GENERATED = path.join(ROOT, "deploy/cloudflare/banned_words.generated.js");
-export const DEFAULT_LIST = "/home/username/meta_hacakthon/notes/coordination-2026-10-31/rules/banned-words.json";
-export const DEFAULT_NEUTRAL = "/home/username/meta_hacakthon/notes/claude-work-2026-10-31/herma/herma-neutral-names.json";
+export const DEFAULT_LIST = path.join(os.homedir(), "meta_hacakthon/notes/coordination-2026-10-31/rules/banned-words.json");
+export const DEFAULT_NEUTRAL = path.join(os.homedir(), "meta_hacakthon/notes/claude-work-2026-10-31/herma/herma-neutral-names.json");
 export const FIXTURE_LIST = path.join(ROOT, "tests/fixtures/made-up-banned-words.json");
 export const FIXTURE_NEUTRAL = path.join(ROOT, "tests/fixtures/made-up-neutral-names.json");
 const ELLIPSIS = "…";

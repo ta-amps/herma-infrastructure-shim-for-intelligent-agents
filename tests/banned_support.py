@@ -20,9 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = REPO_ROOT / "tests/fixtures"
 MADE_UP_LIST = FIXTURES / "made-up-banned-words.json"
 MADE_UP_NEUTRAL = FIXTURES / "made-up-neutral-names.json"
-SHARED_LIST = Path(
-    "/home/username/meta_hacakthon/notes/coordination-2026-10-31/rules/banned-words.json"
-)
+SHARED_LIST = Path.home() / "meta_hacakthon/notes/coordination-2026-10-31/rules/banned-words.json"
 
 
 @dataclass(frozen=True)
