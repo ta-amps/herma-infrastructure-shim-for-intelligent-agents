@@ -236,7 +236,8 @@ export function buildPageScrubber(config) {
     return remembered.get(word);
   };
   const scrubText = (value) => {
-    let text = value;
+    // A worker's name can hold an old product name; the page says the public one. Stored names stay.
+    let text = value.replace(/(?<![a-z0-9])(?:herma|tessera)(?![a-z0-9])/gi, "fabric");
     for (const rule of rules) text = text.replace(rule.re, rule.to);
     if (hashes.size) text = text.replace(/[A-Za-z0-9]+/g, (word) => (isPrivateName(word.toLowerCase()) ? ELLIPSIS : word));
     return text;

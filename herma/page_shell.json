@@ -54,19 +54,14 @@
         "external": true
       },
       {
-        "label": "Agora ↗",
-        "href": "https://agora.eranosforgood.org/",
-        "external": true
-      },
-      {
         "label": "Teleion Labs ↗",
         "href": "https://teleionlabs.com/",
         "external": true
       },
       {
-        "label": "Network ↗",
-        "href": "https://agora.eranosforgood.org/network/",
-        "external": true
+        "label": "Network",
+        "href": "/dashboard",
+        "external": false
       },
       {
         "label": "Models used ↗",

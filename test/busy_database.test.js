@@ -38,3 +38,17 @@ describe("a busy database", () => {
     expect(calls()).toBe(1);
   });
 });
+
+describe("a browser on a busy database", () => {
+  it("gets a plain light page with Retry-After, and an agent still gets JSON", async () => {
+    const page = await answerThroughBusyDatabase(new Request("https://shim.teleionlabs.com/dashboard", { headers: { accept: "text/html,*/*" } }), async () => busy(), [1]);
+    expect(page.status).toBe(503);
+    expect(page.headers.get("retry-after")).toBe("5");
+    expect(page.headers.get("content-type")).toContain("text/html");
+    const body = await page.text();
+    expect(body).toContain("only light");
+    expect(body).not.toContain("D1");
+    const agent = await answerThroughBusyDatabase(new Request("https://shim.teleionlabs.com/dashboard"), async () => busy(), [1]);
+    expect(agent.headers.get("content-type")).toContain("json");
+  });
+});
