@@ -281,7 +281,7 @@ function buildPromptCatalogRaw(publicUrl) {
     "COPY EVERYTHING BELOW THIS LINE INTO YOUR AGENT (A GOAL OR LOOP COMMAND, A TERMINAL AGENT, OR A CHAT):",
     "--------------------------------------------------------------------------------",
     "",
-    "You are an autonomous frontier systems engineer and public-good contributor operating across the live `ta-amps` network (`Herma` + `Eranos` + `Tessera`). Never simulate HTTP calls or invent benchmark numbers -- always execute real HTTP requests (`User-Agent: ta-amps-worker/9.0`) and real local tests (`pytest`, `unittest`, `node --test`).",
+    "You are an autonomous frontier systems engineer and public-good contributor operating across the live Teleion Fabric network (its shim, its queue and Eranos). Never simulate HTTP calls or invent benchmark numbers -- always execute real HTTP requests (`User-Agent: ta-amps-worker/9.0`) and real local tests (`pytest`, `unittest`, `node --test`).",
     "",
     "### 0. UNIQUE WORKER IDENTITY, FENCING, HEARTBEAT & ZERO-COLLISION HYGIENE",
     "1. **Unique Per-Instance Handle (Never a Bare Shared Handle)**:",

@@ -280,4 +280,120 @@ describe("from the second independent review", () => {
     expect(html).not.toContain('href="/c/self_seed"');
     expect(worker_uuid).toBeTruthy();
   });
+
+  describe("a submit answered busy after its object was stored", () => {
+    const ready = async () => {
+      const name = unique("retry-agent");
+      const key = unique("retry_key").replaceAll("-", "_");
+      const task = `verb_ngo_retry_${unique("t").replaceAll("-", "_")}`;
+      await env.HERMA_DB.prepare("INSERT INTO herma_durable_queue (task_id, tier, visibility, priority, title, prompt, simhash64_hex, producer_agent, created_at, updated_at) VALUES (?, 'public_general', 'public_commons', 50, 'Retry test', 'Write one line.', '0', 'retry-test', ?, ?)").bind(task, new Date().toISOString(), new Date().toISOString()).run();
+      const claimed = await (await post("/q/claim", { agent_id: name, task_id: task })).json();
+      const fence = claimed.lease.fencing_token;
+      const body = { agent_id: name, task_id: task, fencing_token: fence, summary: "the work", task_objects: [{ object_key: key, summary: "the work", category: "ngo_public_good", payload: { full: "the full work" } }] };
+      return { name, key, task, fence, body };
+    };
+    const rows = async (key) => (await env.HERMA_DB.prepare("SELECT object_key, version_num FROM herma_task_objects WHERE requested_object_key = ?").bind(key).all()).results;
+    const plantHalfDone = async ({ name, key, task, body }) => {
+      // Only the first step of a submit that then failed: its object row, with the Task still open.
+      const raw = JSON.stringify(body.task_objects[0].payload);
+      const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+      await env.HERMA_DB.prepare("INSERT INTO herma_task_objects (object_key, requested_object_key, version_num, category, visibility, producer_agent, source_task_id, summary, payload_json, simhash64_hex, sha256_hash, created_at, worker_uuid, labels_json) VALUES (?, ?, 1, 'ngo_public_good', 'public_commons', ?, ?, 'the work', ?, '0', ?, ?, ?, '[]')").bind(key, key, name, task, raw, hash, new Date().toISOString(), `w_agent_${name}`).run();
+    };
+
+    it("the same bytes sent again keep the key, add no row, and close the Task", async () => {
+      const r = await ready();
+      await plantHalfDone(r);
+      const res = await post("/q/submit", r.body);
+      expect(res.status).toBe(200);
+      const out = await res.json();
+      expect(out.stored_task_objects[0].object_key).toBe(r.key);
+      expect(out.stored_task_objects[0].version_num).toBe(1);
+      expect(out.warnings || []).toEqual([]);
+      expect(await rows(r.key)).toHaveLength(1);
+      const task = await env.HERMA_DB.prepare("SELECT state FROM herma_durable_queue WHERE task_id = ?").bind(r.task).first();
+      expect(task.state).toBe("done");
+    });
+
+    it("different bytes on the same Task still go to a key of their own", async () => {
+      const r = await ready();
+      await plantHalfDone(r);
+      const changed = { ...r.body, task_objects: [{ ...r.body.task_objects[0], payload: { full: "other work" } }] };
+      const out = await (await post("/q/submit", changed)).json();
+      expect(out.stored_task_objects[0].object_key).toBe(`${r.key}__by_${r.name}`);
+      expect(await rows(r.key)).toHaveLength(2);
+    });
+
+    it("in the real order: busy after the Task closed and the row was stored, the resend keeps one row", async () => {
+      const r = await ready();
+      const flaky = (re) => {
+        let left = 1;
+        return new Proxy(env.HERMA_DB, {
+          get(t, p) {
+            if (p === "prepare") return (sql) => {
+              if (left > 0 && re.test(sql)) { left--; throw new Error("D1_ERROR: D1 DB is overloaded. Too many requests queued."); }
+              return t.prepare(sql);
+            };
+            const v = t[p];
+            return typeof v === "function" ? v.bind(t) : v;
+          },
+        });
+      };
+      const first = await worker.fetch(new Request("https://shim.teleionlabs.com/q/submit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(r.body) }), { ...limits, HERMA_DB: flaky(/SET iteration_count = \?/) }, { waitUntil() {}, passThroughOnException() {} });
+      expect(first.status).toBe(503);
+      expect(await rows(r.key)).toHaveLength(1);
+      const res = await post("/q/submit", r.body);
+      expect(res.status).toBe(200);
+      const out = await res.json();
+      expect(out.stored_task_objects[0].object_key).toBe(r.key);
+      expect(await rows(r.key)).toHaveLength(1);
+    });
+
+    it("no real Task means no reuse, so a made-up task id can't reach the owner's key", async () => {
+      const { name, key, own } = await setup();
+      const body = { agent_id: name, task_id: "plan_z", summary: "same", task_objects: [{ object_key: key, summary: "same", category: "knowledge_noun", payload: { full: "same bytes" } }] };
+      await post("/q/submit", { ...body, ...own });
+      const out = await (await post("/q/submit", { ...body, worker_uuid: own.worker_uuid })).json();
+      expect(out.stored_task_objects[0].object_key).toBe(`${key}__by_${name}`);
+    });
+
+    it("a row made with a token isn't reused without the token", async () => {
+      const r = await ready();
+      await plantHalfDone(r);
+      await env.HERMA_DB.prepare("UPDATE herma_task_objects SET labels_json = ? WHERE object_key = ?").bind(JSON.stringify(["made_with_worker_token:true"]), r.key).run();
+      const out = await (await post("/q/submit", r.body)).json();
+      expect(out.stored_task_objects[0].object_key).toBe(`${r.key}__by_${r.name}`);
+    });
+
+    it("changed fields with the same payload are a new submit, not this retry", async () => {
+      const r = await ready();
+      await plantHalfDone(r);
+      const changed = { ...r.body, task_objects: [{ ...r.body.task_objects[0], summary: "a different summary" }] };
+      const out = await (await post("/q/submit", changed)).json();
+      expect(out.stored_task_objects[0].object_key).toBe(`${r.key}__by_${r.name}`);
+    });
+
+    it("a resend of an older version isn't swallowed when a newer one is on the key", async () => {
+      const r = await ready();
+      await plantHalfDone(r);
+      const raw = JSON.stringify({ full: "a newer version" });
+      await env.HERMA_DB.prepare("INSERT INTO herma_task_objects (object_key, requested_object_key, version_num, category, visibility, producer_agent, source_task_id, summary, payload_json, simhash64_hex, sha256_hash, created_at, worker_uuid, labels_json) VALUES (?, ?, 2, 'ngo_public_good', 'public_commons', ?, ?, 'the work', ?, '0', 'abc', ?, ?, '[]')").bind(r.key, r.key, r.name, r.task, raw, new Date().toISOString(), `w_agent_${r.name}`).run();
+      const out = await (await post("/q/submit", r.body)).json();
+      expect(out.stored_task_objects[0].object_key).toBe(`${r.key}__by_${r.name}`);
+    });
+
+    it("another worker sending the same bytes doesn't take the key", async () => {
+      const r = await ready();
+      await plantHalfDone({ ...r, name: unique("first-maker") });
+      const out = await (await post("/q/submit", r.body)).json();
+      expect(out.stored_task_objects[0].object_key).toBe(`${r.key}__by_${r.name}`);
+    });
+  });
+
+  it("broken JSON on a submit says nothing was saved and not to shorten the work", async () => {
+    const res = await call(new Request("https://shim.teleionlabs.com/q/submit", { method: "POST", headers: { "content-type": "application/json" }, body: '{"agent_id":"a"}}' }));
+    expect(res.status).toBe(400);
+    const out = await res.json();
+    expect(out.code).toBe("invalid_json");
+    expect(out.detail).toContain("Do not shorten");
+  });
 });

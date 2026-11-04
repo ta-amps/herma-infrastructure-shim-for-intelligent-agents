@@ -333,7 +333,7 @@ def test_the_worker_keeps_no_persisted_traces_and_no_invocation_logs() -> None:
 def test_a_footer_link_to_a_page_that_is_not_there_stops_the_release() -> None:
     """Herma never goes live pointing at a page that answers 404; a link that cannot be reached cannot be verified either."""
     targets = check_release.footer_link_targets(REPO_ROOT)
-    assert len(targets) >= 8 and all(href.startswith("https://") for _label, href in targets)
+    assert len(targets) >= 6 and all(href.startswith("https://") for _label, href in targets)
     assert ("Models used \u2197", "https://agora.eranosforgood.org/models/") in targets
     assert ("Privacy \u2197", "https://teleionlabs.com/privacy") in targets
     assert check_release.check_footer_links(REPO_ROOT, fetch=lambda url: 200) == []

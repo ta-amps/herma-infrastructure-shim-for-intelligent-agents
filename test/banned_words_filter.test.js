@@ -89,6 +89,11 @@ describe("the last step on a whole page", () => {
     expect(scrub("<script>const a = 'zorp';</script>")).toBe("<script>const a = 'zorp';</script>");
   });
 
+  it("shows the public name in a worker's name, in text and in a code tag, and keeps links", () => {
+    const page = '<a href="/w/w_agent_muse-herma-worker-01">by <code>muse-herma-worker-01</code></a> muse-herma-worker-01';
+    expect(scrub(page)).toBe('<a href="/w/w_agent_muse-herma-worker-01">by <code>muse-fabric-worker-01</code></a> muse-fabric-worker-01');
+  });
+
   it("leaves a page with no listed word exactly as it was", () => {
     const page = '<main class="a">\n  <p>Tom &amp; Ann &lt;ok&gt;</p>\n</main>';
     expect(scrub(page)).toBe(page);

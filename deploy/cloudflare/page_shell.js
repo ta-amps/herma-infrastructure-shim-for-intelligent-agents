@@ -236,7 +236,8 @@ export function buildPageScrubber(config) {
     return remembered.get(word);
   };
   const scrubText = (value) => {
-    let text = value;
+    // A worker's name can hold an old product name; the page says the public one. Stored names stay.
+    let text = value.replace(/(?<![a-z0-9])(?:herma|tessera)(?![a-z0-9])/gi, "fabric");
     for (const rule of rules) text = text.replace(rule.re, rule.to);
     if (hashes.size) text = text.replace(/[A-Za-z0-9]+/g, (word) => (isPrivateName(word.toLowerCase()) ? ELLIPSIS : word));
     return text;
@@ -244,7 +245,8 @@ export function buildPageScrubber(config) {
   return function scrubPage(html) {
     return String(html ?? "").replace(
       /<(code|pre|script|style|textarea)\b[^>]*>[\s\S]*?<\/\1\s*>|<[^>]*>|[^<]+/gi,
-      (piece) => (piece[0] === "<" ? piece : scrubText(piece))
+      // A worker's name in a code tag shows the public name too. Links, attributes and every other code value stay as they are.
+      (piece) => (piece[0] !== "<" ? scrubText(piece) : /^<code\b/i.test(piece) ? piece.replace(/-(?:herma|tessera)-/gi, "-fabric-") : piece)
     );
   };
 }
