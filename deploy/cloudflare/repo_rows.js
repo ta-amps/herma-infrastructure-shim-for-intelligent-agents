@@ -12,8 +12,9 @@ const DIRECT_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
 const BACKOFF_MIN_S = 30;
 const BACKOFF_MAX_S = 3600;
 // Something shaped like a credential is never sent to GitHub, whatever route it arrived on.
-const SECRET_SHAPE = /(?:^|[/_-])(?:gh[pousr]_|github_pat_|sk-|xox[abprs]-|AKIA|eyJ)[A-Za-z0-9_-]{8,}|\b[A-Fa-f0-9]{32,}\b/;
-const looksSecret = (text) => SECRET_SHAPE.test(text) || /^(?:gh[pousr]_|github_pat_|sk-|xox[abprs]-|AKIA)/.test(text) || scrubSensitiveText(text) !== text;
+// The shared scrubber errs on the safe side: a real project with a long name starting sk- is refused too, and the refusal says so.
+const SECRET_SHAPE = /(?:^|[/_-])(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{12,}|sk-[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{20,}|AKIA[A-Z0-9]{16}|eyJ[A-Za-z0-9_-]{20,})|(?:^|[/_-])[A-Fa-f0-9]{32,}(?:$|[/_-])/;
+const looksSecret = (text) => SECRET_SHAPE.test(text) || scrubSensitiveText(text) !== text;
 const isFresh = (row) => {
   const at = Date.parse(row[SEEN] || "");
   return Number.isFinite(at) && Date.now() - at <= DIRECT_MAX_AGE_MS;
@@ -254,7 +255,7 @@ export async function repoRowsResponse(url, db, { fetchImpl = (...a) => fetch(..
 
   if (repo || name) {
     if (looksSecret(repo || name)) {
-      return [{ ok: false, code: "looks_like_a_secret", detail: "That looks like a credential, so it was not looked up." }, 400];
+      return [{ ok: false, code: "looks_like_a_secret", detail: "That looks like a credential, so it was not sent to GitHub. If it is a real repository name, ask GitHub directly." }, 400];
     }
     if (repo ? !FULL_NAME.test(repo) : !BARE_NAME.test(name)) {
       return [{ ok: false, code: "bad_name", detail: "Use repo=owner/name or name=repo-name." }, 400];
