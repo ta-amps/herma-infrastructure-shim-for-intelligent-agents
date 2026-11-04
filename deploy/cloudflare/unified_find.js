@@ -9,6 +9,10 @@ const MAX_TOKENS = 800000;
 const COLD_WAIT_MS = 3000;
 const MAYBE_HITS = 3;
 const SPARE_HITS = 3;
+const HINT_COLD_WAIT_MS = 1500;
+const KIND_ALIAS = { repo: "repo", repos: "repo", pack: "pack", packs: "pack", seed_pack: "pack", kit: "kit", kits: "kit", obj: "obj", task_object: "obj", task_objects: "obj" };
+const KINDS_WIDEN = 8;
+const WIDE_MAX = 90; // D1 takes at most 100 bound values
 const HINT_TITLE_CHARS = 120;
 const HINT_CHECK_MS = 300;
 const RELOAD_GAP_MS = 60 * 1000;
@@ -119,7 +123,7 @@ export function buildIndex({ objects = [], repos = [], kits = [], packs = [], fe
   }
   for (const r of seenRepo.values()) {
     const feedText = r.feeds.map((f) => `${f} ${feedWords[f] || ""}`).join(" ");
-    add({ kind: "repo", id: r.repo, title: r.repo, about: [r.language, r.license, r.stars != null ? `${r.stars} stars` : "", r.feeds[0]].filter(Boolean).join(", "), url: `https://github.com/${r.repo}`, prior: TUNE.kindPrior.repo * (1 + TUNE.stars * Math.log1p(Number(r.stars) || 0)), name: String(r.name).toLowerCase(), owner: String(r.repo).toLowerCase().split("/")[0], stars: Number(r.stars) || 0 }, [[r.repo, TUNE.name], [feedText, TUNE.tags], [`${r.language || ""} ${r.license || ""}`, TUNE.tags]]);
+    add({ kind: "repo", id: r.repo, title: r.repo, license: r.license || "not stated", about: [r.language, r.license, r.stars != null ? `${r.stars} stars` : "", r.feeds[0]].filter(Boolean).join(", "), url: `https://github.com/${r.repo}`, prior: TUNE.kindPrior.repo * (1 + TUNE.stars * Math.log1p(Number(r.stars) || 0)), name: String(r.name).toLowerCase(), owner: String(r.repo).toLowerCase().split("/")[0], stars: Number(r.stars) || 0 }, [[r.repo, TUNE.name], [feedText, TUNE.tags], [`${r.language || ""} ${r.license || ""}`, TUNE.tags]]);
   }
   for (const o of objects) {
     const prior = (LOW_VALUE.has(o.category) ? TUNE.junk : TUNE.kindPrior.obj) * (1 + TUNE.reuse * Math.log1p(Number(o.reuse_count) || 0));
@@ -308,7 +312,14 @@ export function searchIndex(index, rawQuery, limit = DEFAULT_LIMIT) {
   return take(list, "words", rewrote ? { rewrote } : {});
 }
 
+const GOOD_VERDICTS = new Set(["CONFIRMED", "REPRODUCED"]);
+const TYPE_LABEL = { obj: "Task Object", pack: "seed pack", kit: "kit", repo: "repo", task: "Task" };
+// A stored note that says the work could not be done helps nobody who wants to do it.
+const NOT_A_HELPER = /^(?:cannot|could not|couldn't|unable|task requires|no lease|blocked)\b|not executed|was not run/i;
 function hitForReply(d) {
+  return { ...hitBase(d), type: TYPE_LABEL[d.kind] || d.kind, reviewed: d.kind === "obj" ? d.reviewed === true : false, ...(d.kind === "repo" ? { license: d.license || "not stated" } : {}) };
+}
+function hitBase(d) {
   return { ref: `${d.kind}:${d.id}`, kind: d.kind === "obj" ? "task_object" : d.kind === "pack" ? "seed_pack" : d.kind, id: d.id, title: tidyText(String(d.title || ""), 120), about: tidyText(String(d.about || ""), 400).slice(0, ABOUT_CHARS), url: d.url };
 }
 
@@ -404,16 +415,19 @@ async function stillPublic(db, hits) {
   const keys = hits.filter((d) => d.kind === "obj").map((d) => d.id);
   if (!keys.length) return hits;
   let live = new Set();
+  const verdicts = new Map();
   let failed = false;
   try {
-    const out = await db.prepare(`SELECT object_key FROM herma_task_objects WHERE ${REUSABLE} AND object_key IN (${keys.map(() => "?").join(",")})`).bind(...keys).all();
+    const out = await db.prepare(`SELECT object_key, verification_verdict FROM herma_task_objects WHERE ${REUSABLE} AND object_key IN (${keys.map(() => "?").join(",")})`).bind(...keys).all();
     live = new Set((out?.results || []).map((r) => r.object_key));
+    for (const r of out?.results || []) verdicts.set(r.object_key, r.verification_verdict);
   } catch {
     // Fail closed: the kinds that need no check still answer.
     failed = true;
   }
   // Marked gone in this index, so a newer version in the same family can answer until the next load.
   for (const d of hits) if (d.kind === "obj" && !live.has(d.id) && !failed) d.gone = true;
+  for (const d of hits) if (d.kind === "obj" && verdicts.has(d.id)) d.reviewed = GOOD_VERDICTS.has(verdicts.get(d.id));
   return hits.filter((d) => d.kind !== "obj" || live.has(d.id));
 }
 
@@ -421,34 +435,44 @@ async function lookupId(db, low) {
   // The same visibility as the index. The index on LOWER() exists once /q/search has run once; without it this is a scan of a small table.
   const task = await db.prepare(`SELECT task_id, title, prompt FROM herma_durable_queue WHERE ${PUBLIC_VIS} AND LOWER(task_id) = ? LIMIT 1`).bind(low).first();
   if (task) return { kind: "task", id: task.task_id, title: task.title, about: task.prompt, url: `${SITE}/q/task/${encodeURIComponent(task.task_id)}` };
-  const obj = await db.prepare(`SELECT object_key, summary FROM herma_task_objects WHERE ${PUBLIC_VIS} AND is_tombstoned = 0 AND LOWER(object_key) = ? LIMIT 1`).bind(low).first();
-  return obj ? { kind: "obj", id: obj.object_key, title: obj.object_key, about: obj.summary, url: `${SITE}/q/object/${encodeURIComponent(obj.object_key)}` } : null;
+  const obj = await db.prepare(`SELECT object_key, summary, verification_verdict FROM herma_task_objects WHERE ${PUBLIC_VIS} AND is_tombstoned = 0 AND LOWER(object_key) = ? LIMIT 1`).bind(low).first();
+  return obj ? { kind: "obj", reviewed: GOOD_VERDICTS.has(obj.verification_verdict), id: obj.object_key, title: obj.object_key, about: obj.summary, url: `${SITE}/q/object/${encodeURIComponent(obj.object_key)}` } : null;
 }
 
-/** Hits for a Task's title, for the claim reply: only a clear words match, only things worth reading. A claim never builds the index and never waits for
- * one: with none here yet it starts one for the next claim and goes on. Never throws. */
+/** Hits for a Task's title, for the claim reply: only a clear words match, only things worth reading. Bounded waits only. Never throws. */
 export async function reuseHintsForTask(db, title, { limit = 3, waitUntil } = {}) {
   try {
     if (!held) {
-      if (!coldLoadAt && waitUntil) {
-        coldLoadAt = Date.now();
-        waitUntil(loadIndex(db).then((index) => {
+      // Workers that claim now and then usually land on a cold isolate, so skipping here would mean they never see a hint. The claim waits a bounded
+      // time for this one load, then goes on without hints while the load finishes for the next claim.
+      if (coldLoadAt) return [];
+      coldLoadAt = Date.now();
+      const load = loadIndex(db)
+        .then((index) => {
           held = { index, at: Date.now() };
-        }).catch(() => {}).finally(() => {
+        })
+        .catch(() => {})
+        .finally(() => {
           coldLoadAt = 0;
-        }));
-      }
-      return [];
+        });
+      waitUntil?.(load);
+      let timer;
+      await Promise.race([load, new Promise((resolve) => {
+        timer = setTimeout(resolve, HINT_COLD_WAIT_MS);
+      })]);
+      clearTimeout(timer);
+      if (!held) return [];
     }
     if (Date.now() - held.at >= INDEX_TTL_MS) refreshLater(db, waitUntil);
-    const out = searchIndex(held.index, String(title || "").slice(0, HINT_TITLE_CHARS), limit * 2);
+    const out = searchIndex(held.index, String(title || "").slice(0, HINT_TITLE_CHARS), limit * 3);
     if (!out.found || out.match !== "words") return [];
     // Optional, so it never holds up a lease that is already issued.
     let timer;
     const late = new Promise((resolve) => {
       timer = setTimeout(() => resolve([]), HINT_CHECK_MS);
     });
-    const checked = await Promise.race([stillPublic(db, out.hits.filter((d) => d.kind !== "repo")), late]);
+    const usable = out.hits.filter((d) => !NOT_A_HELPER.test(String(d.about || "")));
+    const checked = await Promise.race([stillPublic(db, usable), late]);
     clearTimeout(timer);
     return checked.slice(0, limit).map(hitForReply);
   } catch {
@@ -458,13 +482,23 @@ export async function reuseHintsForTask(db, title, { limit = 3, waitUntil } = {}
 
 /** [body, status] for GET /q/find. Throws only if the rows can't be read. */
 export async function findResponse(url, db, { waitUntil } = {}) {
-  const q = url.searchParams.get("q") || url.searchParams.get("query") || "";
+  let q = url.searchParams.get("q") || url.searchParams.get("query") || "";
+  const forTask = String(url.searchParams.get("for_task") || "").trim().slice(0, 200);
+  if (!q.trim() && forTask) {
+    const row = await db.prepare(`SELECT title FROM herma_durable_queue WHERE ${PUBLIC_VIS} AND task_id = ? LIMIT 1`).bind(forTask).first();
+    if (!row) return [{ ok: false, code: "no_such_task", detail: "No public Task has this id." }, 404];
+    q = String(row.title || "").slice(0, HINT_TITLE_CHARS);
+  }
+  // kinds=repo,pack,kit,task_object: the client's choice of what comes back.
+  const kinds = new Set(String(url.searchParams.get("kinds") || "").split(",").map((k) => KIND_ALIAS[k.trim().toLowerCase()]).filter(Boolean));
+  const keep = (list) => (kinds.size ? list.filter((d) => kinds.has(d.kind)) : list);
   if (!q.trim()) return [{ ok: false, code: "needs_q", detail: "Add q=<words>: a repository, an owner, a Task Object, a kit, a seed pack, or a need in plain words." }, 400];
   const asked = Number(url.searchParams.get("limit"));
   const limit = Number.isInteger(asked) && asked > 0 ? Math.min(asked, MAX_LIMIT) : DEFAULT_LIMIT;
   const index = await currentIndex(db, waitUntil);
   // A few spare hits, so a row that just left public view doesn't shorten the answer.
-  let out = searchIndex(index, q, limit + SPARE_HITS);
+  const wide = kinds.size ? Math.min((limit + SPARE_HITS) * KINDS_WIDEN, WIDE_MAX) : limit + SPARE_HITS;
+  let out = searchIndex(index, q, wide);
   // Tasks aren't in the index, and a new object may not be yet: a query shaped like an ID asks the rows directly.
   // An exact object name is a read by id: it follows that rule, not the rule for what's offered for reuse.
   const exactObject = out.match === "exact" && out.hits[0]?.kind === "obj";
@@ -478,15 +512,15 @@ export async function findResponse(url, db, { waitUntil } = {}) {
   // `read`: those rows were just read, under the rule for a read by id.
   let hits = out.read ? out.hits : await stillPublic(db, out.hits);
   if (hits.length < out.hits.length && out.match !== "exact") {
-    out = searchIndex(index, q, limit + SPARE_HITS);
+    out = searchIndex(index, q, wide);
     hits = await stillPublic(db, out.hits);
   }
-  hits = hits.slice(0, limit);
+  hits = keep(hits).slice(0, limit);
   if (!hits.length) out = { found: false, match: "none", hits: [], maybe: out.maybe };
   const body = { ok: true, q: q.slice(0, 200), found: out.found, match: out.match, hits: hits.map(hitForReply) };
   if (out.rewrote) body.rewrote = out.rewrote;
   if (!out.found) {
-    const maybe = out.maybe?.length ? (await stillPublic(db, out.maybe)).map(hitForReply) : [];
+    const maybe = out.maybe?.length ? keep(await stillPublic(db, out.maybe)).map(hitForReply) : [];
     if (maybe.length) body.maybe = maybe;
     body.note = maybe.length ? "No clear match. Items in maybe share only some of your words: read them before you trust one, or try again with 2 to 4 distinctive words." : "Nothing here fits. Try again with 2 to 4 distinctive words, or a name.";
   }

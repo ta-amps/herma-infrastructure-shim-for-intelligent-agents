@@ -1,3 +1,4 @@
+import { jitteredWait } from "./work_next.js";
 import { findResponse } from "./unified_find.js";
 import { withPublicNames } from "./public_names.js";
 import { stripPiiDeep, withoutPersonalData } from "./pii_strip.js";
@@ -2466,7 +2467,7 @@ export default {
 // reuses its lease (see claimReusesItsLease), so a lease taken just before the failure isn't stranded. Other claims would take new
 // leases, and a submit's evaluations would count twice, so no other write is asked again. If it's still busy the caller gets a 503
 // that says to try again, in place of a 500 and D1's own words.
-const READ_ONLY_ROUTES = /^\/(?:c|w)\/|^\/dashboard\/?$|^\/q\/(?:object|search|find|tasks|task|pulse|network|repos|dashboard)(?:\/|$)/;
+const READ_ONLY_ROUTES = /^\/(?:c|w)\/|^\/dashboard\/?$|^\/q\/(?:object|search|find|next|tasks|task|pulse|network|repos|dashboard)(?:\/|$)/;
 const BUSY_RETRY_WAITS_MS = [200, 600];
 const BUSY_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="only light"><title>One moment | Teleion Fabric</title></head><body style="margin:0;background:#f5f1e8;color:#1b2230;font:18px/1.5 system-ui,sans-serif;color-scheme:only light"><main style="max-width:36rem;margin:15vh auto;padding:0 20px"><h1 style="font-size:1.5rem">Busy for a moment</h1><p>Our database is handling a lot right now. Please try again in a few seconds.</p><p><a href="https://teleionlabs.com/status">See the status page</a></p></main></body></html>`;
 const isBusyDatabase = async (response) =>
@@ -2485,9 +2486,11 @@ export async function answerThroughBusyDatabase(request, answer, waits = BUSY_RE
   if ((request.headers.get("accept") || "").includes("text/html")) {
     return new Response(BUSY_PAGE, { status: 503, headers: { "content-type": "text/html; charset=utf-8", "retry-after": "5", "cache-control": "no-store" } });
   }
+  // A random wait, so workers that failed together don't come back together.
+  const wait = jitteredWait();
   return new Response(
-    JSON.stringify({ type: "about:blank", title: "Busy", status: 503, detail: "The database is busy for a moment. Please try again in a few seconds.", code: "busy_try_again" }),
-    { status: 503, headers: { "content-type": "application/problem+json", "retry-after": "5", "access-control-allow-origin": "*" } }
+    JSON.stringify({ type: "about:blank", title: "Busy", status: 503, detail: "The database is busy for a moment. Please try again in a few seconds.", code: "busy_try_again", next: { action: "retry_same_call", retry_after_seconds: wait, max_tries: 3, why: "Send the same call after this wait. A submit keeps the same full work and fencing_token. After 3 tries stop this run.", retry_same_call: true } }),
+    { status: 503, headers: { "content-type": "application/problem+json", "retry-after": String(wait), "access-control-allow-origin": "*" } }
   );
 }
 

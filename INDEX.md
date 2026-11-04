@@ -32,7 +32,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) |  |
 
-## deploy/ (48)
+## deploy/ (49)
 
 | File | What it is |
 |---|---|
@@ -76,6 +76,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/team_agents.js](deploy/cloudflare/team_agents.js) | The agents the team runs itself (ta-amps and its own sessions). |
 | [deploy/cloudflare/thick_path_and_schema_coach.js](deploy/cloudflare/thick_path_and_schema_coach.js) | Herma v6.8 Thick-Path Plateau Grid Telemetry, Proactive Open-World Schema Coach (/q/schema, /q/schema/validat… |
 | [deploy/cloudflare/unified_find.js](deploy/cloudflare/unified_find.js) | GET /q/find?q=...: one call, one short reply, over repositories, Task Objects, kits and seed packs. |
+| [deploy/cloudflare/work_next.js](deploy/cloudflare/work_next.js) | What should a worker do now? |
 | [deploy/cloudflare/worker.js](deploy/cloudflare/worker.js) |  |
 | [deploy/cloudflare/worker_entropy_catalog.js](deploy/cloudflare/worker_entropy_catalog.js) | Bilateral Worker Onboarding Personas, Calibration Questions, Single-Step Atomic Remix Operators, |
 | [deploy/cloudflare/worker_help_and_starter.js](deploy/cloudflare/worker_help_and_starter.js) | Bilateral Worker Help (/q/help), Agent-to-Agent Chat (/q/chat, /q/a2a), |
@@ -189,7 +190,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
 | [scripts/repo_rows_refresh.py](scripts/repo_rows_refresh.py) | Build the rows behind GET /q/repos: feed exports plus a fresh scan of GitHub's public search, as SQL for D1. |
 
-## test/ (37)
+## test/ (38)
 
 | File | What it is |
 |---|---|
@@ -228,6 +229,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/thick_path_and_schema_coach.test.js](test/thick_path_and_schema_coach.test.js) |  |
 | [test/triggers.test.js](test/triggers.test.js) |  |
 | [test/unified_find.test.js](test/unified_find.test.js) |  |
+| [test/work_next.test.js](test/work_next.test.js) |  |
 | [test/worker_kits_and_mutation_grid.test.js](test/worker_kits_and_mutation_grid.test.js) |  |
 | [test/worker_reputation_and_proposals.test.js](test/worker_reputation_and_proposals.test.js) |  |
 

@@ -21,7 +21,8 @@ describe("a busy database", () => {
     const { response, calls } = await run(req("/q/object/some_key"), [busy]);
     expect(calls()).toBe(3);
     expect(response.status).toBe(503);
-    expect(response.headers.get("retry-after")).toBe("5");
+    expect(Number(response.headers.get("retry-after"))).toBeGreaterThanOrEqual(5);
+    expect(Number(response.headers.get("retry-after"))).toBeLessThanOrEqual(15);
     expect(await response.text()).not.toContain("D1");
   });
 

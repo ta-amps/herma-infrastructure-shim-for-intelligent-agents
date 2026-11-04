@@ -165,11 +165,11 @@ describe("GET /q/find on a real database", () => {
     expect(hit.c).toBe(0);
   });
   it("gives a claim a short hint only on a clear match, and never throws", async () => {
-    // No index yet: a claim neither builds one nor waits.
+    // A cold isolate: the claim waits a bounded time for one load, so a worker that claims now and then still gets hints.
     let started = 0;
-    expect(await reuseHintsForTask(env.HERMA_DB, "Rubric for glacier ropes", { waitUntil: () => { started += 1; } })).toEqual([]);
+    const first = await reuseHintsForTask(env.HERMA_DB, "Rubric for glacier ropes", { waitUntil: () => { started += 1; } });
     expect(started).toBe(1);
-    await call("/q/find?q=glacier+ropes");
+    expect(first.map((h) => h.id)).toContain("find_test_public_v1");
     const hints = await reuseHintsForTask(env.HERMA_DB, "Rubric for glacier ropes");
     expect(hints.map((h) => h.id)).toContain("find_test_public_v1");
     expect(await reuseHintsForTask(env.HERMA_DB, "sourdough schedule")).toEqual([]);
