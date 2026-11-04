@@ -312,12 +312,21 @@ describe("review findings, November 4", () => {
 
   it("1. /q/repos refuses a credential-shaped name and calls no one", async () => {
     const f = vi.fn();
-    for (const qs of [`name=${FAKE_TOKEN}`, "repo=github_pat_abcdefghij0123456789/x", "name=0123456789abcdef0123456789abcdef", `ask=${encodeURIComponent("What licence does the GitHub repository sk-abcdefghijklmnop/x use?")}`]) {
+    for (const qs of [`name=${FAKE_TOKEN}`, "repo=github_pat_abcdefghij0123456789/x", "name=0123456789abcdef0123456789abcdef", "name=sk-proj-abc_def-ghi-jkl", `ask=${encodeURIComponent("What licence does the GitHub repository sk-abcdefghijklmnopqrstuvwx/x use?")}`]) {
       const [body, status] = await call(qs, f);
       expect([qs, status, body.code]).toEqual([qs, 400, "looks_like_a_secret"]);
       expect(JSON.stringify(body)).not.toContain("abcdefghij");
     }
     expect(f).not.toHaveBeenCalled();
+  });
+
+  it("1. a real project name that only starts like a credential is still looked up", async () => {
+    for (const name of ["sk-learn", "ghp_tools", "AKIA-notes", "eyJ-viewer", "cafe-babe"]) {
+      const f = github(200, { total_count: 0, items: [] });
+      const [body, status] = await call(`name=${name}`, f);
+      expect([name, status, body.code]).toEqual([name, 200, undefined]);
+      expect(f).toHaveBeenCalledTimes(1);
+    }
   });
 
   it("2. a stored object named after a plain word does not take first place or exact_match", async () => {
