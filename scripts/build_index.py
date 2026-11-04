@@ -191,7 +191,11 @@ def repository_name(root: Path) -> str:
         metadata = json.loads((root / "architecture.json").read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
         return root.name
-    name = metadata.get("name") if isinstance(metadata, dict) else None
+    name = (
+        (metadata.get("display_title") or metadata.get("name"))
+        if isinstance(metadata, dict)
+        else None
+    )
     return name.strip() if isinstance(name, str) and name.strip() else root.name
 
 
