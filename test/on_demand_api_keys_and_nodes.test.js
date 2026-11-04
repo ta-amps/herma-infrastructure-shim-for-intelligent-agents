@@ -730,7 +730,7 @@ describe("Universal On-Demand TaskObject API Runtime, Scoped Key Vault & Swappab
     // 4. Advance upstream object to v2 and verify `/q/graph` + `/q/object` emit `upstream_newer_version_available: true`!
     const v2UpdRes = await callGateway("/q/submit", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", authorization: `Bearer ${env.HERMA_ADMIN_TOKEN || env.BOOTSTRAP_SECRET || env.EDGE_SECRET || ""}` },
       body: JSON.stringify({
         agent_id: "kit-architect-01",
         task_id: "self_seed",
@@ -1033,7 +1033,7 @@ describe("Universal On-Demand TaskObject API Runtime, Scoped Key Vault & Swappab
     const v2Bump = await (
       await callGateway("/q/submit", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", authorization: `Bearer ${env.HERMA_ADMIN_TOKEN || env.BOOTSTRAP_SECRET || env.EDGE_SECRET || ""}` },
         body: JSON.stringify({
           agent_id: "schema-author-01",
           task_id: "self_seed",

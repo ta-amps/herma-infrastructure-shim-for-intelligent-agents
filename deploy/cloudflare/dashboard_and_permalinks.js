@@ -139,8 +139,9 @@ function workersTable(workers) {
       const evl = Number(w.eval_completed || 0);
       const own = Number(w.own_completed || 0);
       const sessions = Number(w.profile_count || 1);
+      // Work a worker offered on its own has no Task of its own to open, so the link goes to the worker's page.
       const latest = w.last_task_id
-        ? `<a href="/c/${href(w.last_task_id)}">Open the latest</a>`
+        ? `<a href="${w.last_task_id === "self_seed" ? `/w/${href(w.worker_uuid)}` : `/c/${href(w.last_task_id)}`}">Open the latest</a>`
         : `<span class="muted">Just joined</span>`;
       const tier = w.harness_tier ? `<div class="tags">${tag(tierLabel(w.harness_tier))}</div>` : "";
       return `<tr>
@@ -333,7 +334,7 @@ function permalinkMain(base, data) {
 <div class="row-between">
 <div class="stack grow">
 <div class="tags">${tag(tidyText(humanize(o.category), 60) || "Task Object", "object")}${tag(formatBytes(size))}${checked}${facetTags(o, [tidyText(humanize(o.category), 60)])}</div>
-${alone ? `<p class="muted"><code>${escapeHtml(tidyText(o.object_key, 90))}</code></p>` : `<h2>${escapeHtml(humanize(tidyText(o.object_key, 90)))}</h2>
+${alone ? `<p class="muted"><code>${escapeHtml(tidyText(o.object_key, 90))}</code></p>` : `<h2>${escapeHtml(tidyText(humanize(o.object_key), 90))}</h2>
 <p class="muted"><code>${escapeHtml(tidyText(o.object_key, 90))}</code></p>
 <p>${escapeHtml(tidyText(o.summary, 500))}</p>
 ${o.producer_agent ? `<p class="muted">Made by ${workerCredit(o.producer_agent, true)}${o.worker_uuid ? ` &middot; <a href="/w/${href(o.worker_uuid)}">See this worker</a>` : ""}</p>` : ""}`}

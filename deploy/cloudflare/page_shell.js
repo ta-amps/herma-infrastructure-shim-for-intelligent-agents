@@ -96,6 +96,10 @@ export function canonicalUrl(path) {
 
 /** A whole page: head, banner, header, the page's own main content, footer, then its scripts. */
 export function documentHtml({ title, description = "", active = "", main, scripts = [], canonical = "" }) {
+  // The display filter's last step, on every page of this shell: pages showing contributed data filter at display time.
+  title = scrubPageHtml(title);
+  description = scrubPageHtml(description);
+  main = scrubPageHtml(main);
   // Every page names the one canonical host (rel=canonical), whichever host it was reached on.
   const canonicalLink = canonical ? `<link rel="canonical" href="${escapeHtml(canonicalUrl(canonical))}">\n` : "";
   const preload = SHELL.assets.preload
@@ -212,11 +216,46 @@ export function buildBannedScrubber(config) {
 }
 
 /**
+ * The same word rules for a page already written as HTML: the last step before a page goes out, so a text that reached the
+ * page some other way (a heading made from an id, a label) is covered too. Only text a person reads changes: never tags,
+ * attributes, machine values in code or pre, or the spacing. Stored records keep their words.
+ */
+export function buildPageScrubber(config) {
+  const rules = (config.displayRules || []).map((rule) => {
+    const flags = rule.flags.includes("g") ? rule.flags : `${rule.flags}g`;
+    const to = typeof rule.to === "string" ? rule.to : (match) => rule.to[match.toLowerCase()] ?? ELLIPSIS;
+    return { re: new RegExp(rule.re, flags), to };
+  });
+  const hashes = new Set((config.privateSha256 || []).map((hash) => String(hash).toLowerCase()));
+  const remembered = new Map();
+  const isPrivateName = (word) => {
+    if (!remembered.has(word)) {
+      if (remembered.size >= MAX_REMEMBERED_WORDS) remembered.clear();
+      remembered.set(word, hashes.has(sha256Hex(word)));
+    }
+    return remembered.get(word);
+  };
+  const scrubText = (value) => {
+    let text = value;
+    for (const rule of rules) text = text.replace(rule.re, rule.to);
+    if (hashes.size) text = text.replace(/[A-Za-z0-9]+/g, (word) => (isPrivateName(word.toLowerCase()) ? ELLIPSIS : word));
+    return text;
+  };
+  return function scrubPage(html) {
+    return String(html ?? "").replace(
+      /<(code|pre|script|style|textarea)\b[^>]*>[\s\S]*?<\/\1\s*>|<[^>]*>|[^<]+/gi,
+      (piece) => (piece[0] === "<" ? piece : scrubText(piece))
+    );
+  };
+}
+
+/**
  * Text that workers wrote (titles, summaries, labels), made fit to show: long ids and hashes are dropped, every word on
  * the shared banned-word list is replaced by its plain description, and nothing is longer than `max` characters.
  */
 export const tidyText = buildTidy(BANNED);
 export const scrubBannedWords = buildBannedScrubber(BANNED);
+export const scrubPageHtml = buildPageScrubber(BANNED);
 
 /** `runs_on_small_4gb_laptop` becomes "Runs on small 4gb laptop". */
 export function humanize(id) {
