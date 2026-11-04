@@ -28,7 +28,9 @@ function publicWords(text) {
     .replace(/\bTessera's\b/g, "Teleion Fabric's")
     .replace(/\bTessera\b/g, "Teleion Fabric")
     .replace(/Never print a hash or a receipt\./g, "Show the links only, nothing else from the record.")
-    .replace(/\bIf not yet onboarded\b/g, "If you haven't onboarded");
+    .replace(/\bIf not yet onboarded\b/g, "If you haven't onboarded")
+    .replace(/\bsub-verbs\b/g, "sub-Tasks")
+    .replace(/\bdo not yet have\b/g, "don't have");
 }
 
 export function buildPromptCatalog(publicUrl) {

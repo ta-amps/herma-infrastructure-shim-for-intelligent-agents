@@ -2436,10 +2436,10 @@ export function buildLlmsFullTxt(publicUrl) {
     provSummaries,
     "",
     "## Security & Isolation Invariants",
-    "- Multi-caller non-poisoning: custom provisions, context entries, receipts, working entities, and outcomes are strictly partitioned by `caller_scope` (`open:<agent>` or `key:<key_id>`).",
+    "- Multi-caller non-poisoning: custom provisions, context entries, records, working entities, and outcomes are strictly partitioned by `caller_scope` (`open:<agent>` or `key:<key_id>`).",
     "- Builtin protection: non-admin attempts to overwrite or delete `system_builtin` provisions or context entries return `403 builtin_protected`.",
     "- Admin key lockdown: `/v1/admin/keys` requires bootstrap/admin secret (`403 admin_required` for ordinary callers).",
-    "- Layer-1 Governance Lens: refuses `status:quarantined` items, verifies SHA-256 on `tessera://blobs/<sha>`, and enforces `visibility_scope`, `allowed_surfaces`, and `X-Herma-Cohort`.",
+    "- Layer-1 Governance Lens: refuses `status:quarantined` items, checks the digest of `tessera://blobs/<sha>`, and enforces `visibility_scope`, `allowed_surfaces`, and `X-Herma-Cohort`.",
     "- Standard mode only: refuses `contributor` and `*-contributor` model identifiers (`403 contributor_tier_refused`).",
     "",
   ].join("\n");
