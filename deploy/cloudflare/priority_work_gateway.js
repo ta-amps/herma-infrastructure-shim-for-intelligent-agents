@@ -6011,7 +6011,7 @@ async function claimNextAuthorizedTask(
       const pool = await db
         .prepare(
           `SELECT * FROM herma_durable_queue
-           WHERE state = 'ready' AND tier = ? ${prereqReadyClause}
+           WHERE state = 'ready' AND tier = ? AND ${visAllowed} ${prereqReadyClause}
            ORDER BY ${bandOrderClause} priority DESC, id ASC LIMIT ?`
         )
         .bind(requestedTier, ...bandBind, poolLimit)
