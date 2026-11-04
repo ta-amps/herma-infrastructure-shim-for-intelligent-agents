@@ -65,6 +65,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/provider_health.js](deploy/cloudflare/provider_health.js) | Deterministic shared availability inside the existing operator allowance coordinator. |
 | [deploy/cloudflare/public_names.js](deploy/cloudflare/public_names.js) | Public output says Teleion Fabric and the shim's public address. |
 | [deploy/cloudflare/release-policy.json](deploy/cloudflare/release-policy.json) | JSON object: schema, note, required_ancestors, live_when_recorded, rules |
+| [deploy/cloudflare/repo_rows.js](deploy/cloudflare/repo_rows.js) | Compact lookup of new GitHub repositories for agents (GET /q/repos). |
 | [deploy/cloudflare/sha256_sync.js](deploy/cloudflare/sha256_sync.js) | A small synchronous SHA-256 for the Worker's display filter. |
 | [deploy/cloudflare/site_pages.js](deploy/cloudflare/site_pages.js) | The pages that are not the dashboard or a record: the home, Get started and Trust & safety (design contract |
 | [deploy/cloudflare/taxonomy_affinity_and_proactive_feedback.js](deploy/cloudflare/taxonomy_affinity_and_proactive_feedback.js) | Herma v6.10 Deterministic Taxonomy Auto-Describer, Preferred-Worker / Setup Affinity, |
@@ -163,7 +164,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [herma/triggers/micromodel.py](herma/triggers/micromodel.py) | Tier-3 micromodel router trigger: fast tiny/cloud classifier with deterministic offline fallback. |
 | [herma/triggers/semantic.py](herma/triggers/semantic.py) | Tier-2 semantic similarity trigger (~1-5 ms): hybrid concept + subword cosine + optional embeddings. |
 
-## scripts/ (12)
+## scripts/ (13)
 
 | File | What it is |
 |---|---|
@@ -179,6 +180,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/page_fixtures_server.mjs](scripts/page_fixtures_server.mjs) | Serves every public Herma page from small fixtures, with the real static assets, so a browser can check the l… |
 | [scripts/page_interactions.mjs](scripts/page_interactions.mjs) | Clicks through the interactive parts of the redesigned pages (fixture server, the Worker's real page policy)… |
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
+| [scripts/repo_rows_refresh.py](scripts/repo_rows_refresh.py) | Build the rows behind GET /q/repos: feed exports plus a fresh scan of GitHub's public search, as SQL for D1. |
 
 ## test/ (30)
 
@@ -209,6 +211,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/provider_health.test.js](test/provider_health.test.js) |  |
 | [test/public_names.test.js](test/public_names.test.js) |  |
 | [test/q_submit_forms_and_field_work.test.js](test/q_submit_forms_and_field_work.test.js) |  |
+| [test/repo_rows.test.js](test/repo_rows.test.js) |  |
 | [test/team_agents.test.js](test/team_agents.test.js) |  |
 | [test/thick_path_and_schema_coach.test.js](test/thick_path_and_schema_coach.test.js) |  |
 | [test/triggers.test.js](test/triggers.test.js) |  |
