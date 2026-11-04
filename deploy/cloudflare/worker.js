@@ -2445,6 +2445,36 @@ export default {
   },
 };
 
+// Who holds a lease and its fence go only to the worker that claimed it, so a stranger can't act as that worker.
+// A refusal says what's wrong without naming the holder or the right number.
+const LEASE_FIELDS = ["leased_by", "leased_worker_uuid", "fencing_token", "lease_epoch", "fence_seq", "expected_fencing_token", "expected_lease_epoch"];
+function dropLeaseFields(value) {
+  if (Array.isArray(value)) return value.map(dropLeaseFields);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).filter(([k]) => !LEASE_FIELDS.includes(k)).map(([k, v]) => [k, dropLeaseFields(v)]));
+}
+export async function withoutLeaseDetails(request, response, env) {
+  if (env.OPEN_WORK_LIMITS !== "on" || KEY_HEADERS.some((h) => request.headers.has(h))) return response;
+  const path = new URL(request.url).pathname;
+  const lookup = request.method === "GET" && /^\/q\/tasks?(\/|$)/.test(path);
+  if (!lookup && response.status !== 409) return response;
+  if (!(response.headers.get("content-type") || "").includes("json")) return response;
+  const text = await response.text();
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return new Response(text, response);
+  }
+  const clean = dropLeaseFields(body);
+  if (typeof clean.detail === "string") {
+    clean.detail = clean.detail.replace(/ \(expected=\d+\)/, "").replace(/is leased by '[^']*', not '[^']*'/, "is held by another worker");
+  }
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  return new Response(JSON.stringify(clean, null, 2), { status: response.status, statusText: response.statusText, headers });
+}
+
 // Public addresses and headers say the public names; every old header still works, and a client that asks with one
 // is told so. Callers with a key get the stored names. Bodies read by digest pass through unchanged.
 const KEY_HEADERS = ["authorization", "x-herma-api-key", "x-herma-key", "x-herma-infra-key", "x-herma-admin-token", "x-bootstrap-secret", "x-upstream-api-key"];
@@ -2456,10 +2486,11 @@ async function serveWithPublicNames(request, env, ctx) {
   }
   const inbound = new Request(request, { headers });
   const answer = await (agentStartAsset(inbound) || onboardingApplication.fetch(inbound, env, ctx));
-  const out = await withPublicNames(inbound, answer, {
+  const named = await withPublicNames(inbound, answer, {
     skip: ["/q/object/", "/q/compose", "/q/upload", "/kits/", "/assets/", "/agent-start", "/v1/chat/completions", "/v1/responses", "/v1/messages"],
     keyHeaders: KEY_HEADERS,
   });
+  const out = await withoutLeaseDetails(inbound, named, env);
   const allow = out.headers.get("access-control-allow-headers");
   if (!allow) return out;
   const reply = new Headers(out.headers);

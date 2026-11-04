@@ -239,6 +239,7 @@ export const QUEUE_GATEWAY_GRID = Object.freeze({
   max_batch_claim: 4,
   cas_claim_max_retries: 8,
   cjk_bigram_width: 2,
+  open_followup_priority_cap: 60,
   priority_ngo_default: 95,
   priority_ngo_floor: 80,
   priority_public_default: 60,
@@ -5613,7 +5614,10 @@ async function claimNextAuthorizedTask(
   const visBase = infraAllowed
     ? "visibility IN ('server_infra', 'public_ngo', 'public_commons')"
     : "visibility IN ('public_ngo', 'public_commons')";
-  const visAllowed = canDoFieldWork ? visBase : `${visBase} AND NOT (${FIELD_WORK_SQL})`;
+  const visWithField = canDoFieldWork ? visBase : `${visBase} AND NOT (${FIELD_WORK_SQL})`;
+  // A worker that just let a Task go isn't handed it again by a plain claim; claiming it by id still works.
+  const notJustLetGo = explicitTaskId ? "" : ` AND COALESCE(last_expired_by, '') <> '${String(agentId || "").replace(/'/g, "''")}'`;
+  const visAllowed = `${visWithField}${notJustLetGo}`;
 
   if (explicitTaskId) {
     const targetVisRow = await db
@@ -6549,10 +6553,11 @@ async function releaseLeasedTask(
   const relRes = await db
     .prepare(
       `UPDATE herma_durable_queue
-       SET state = 'ready', leased_by = NULL, leased_worker_uuid = '', lease_expires_at = NULL, updated_at = ?
+       SET state = 'ready', leased_by = NULL, leased_worker_uuid = '', lease_expires_at = NULL, updated_at = ?,
+           last_expired_by = ?
        WHERE id = ? AND state = 'leased' AND fencing_token = ?`
     )
-    .bind(nowIso, existing.id, curFence)
+    .bind(nowIso, cleanAgent, existing.id, curFence)
     .run();
   const wasReleased = Number(relRes?.meta?.changes || 0) === 1;
   const cleanReason = scrubSensitiveText(reason || "worker_graceful_release").slice(
@@ -7639,6 +7644,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
   const storedObjects = [];
   const clientIndexSummaries = [];
   const autoEnqueuedIndexAndReviewVerbs = [];
+  const rejectedOpenFollowups = [];
   for (let i = 0; i < prevalidatedObjects.length; i += 1) {
     const { item, serializedRaw, payloadByteLen, objVis } = prevalidatedObjects[i];
     const pObj = item.payload && typeof item.payload === "object" ? item.payload : null;
@@ -8040,7 +8046,9 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
     clientIndexSummaries.push(clientIdxSummary);
 
     let autoIdxAndReview = { enqueued_index_enrich_task_id: null, enqueued_peer_review_task_id: null };
-    if (!salvagedConcurrentTwinAttempt && objGenDepth < QUEUE_GATEWAY_GRID.max_auto_followup_depth) {
+    // No-key work stores its object and stops there: extra Tasks per object would flood the queue as more bots join.
+    const autoFollowups = infraAllowed || env?.OPEN_WORK_LIMITS !== "on";
+    if (autoFollowups && !salvagedConcurrentTwinAttempt && objGenDepth < QUEUE_GATEWAY_GRID.max_auto_followup_depth) {
       autoIdxAndReview = await autoEnqueueIndexEnrichAndPeerReviewVerbs(
         db,
         publicUrl,
@@ -8226,10 +8234,17 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       vReach.adaptive_priority_boost + vDemand.demand_boost
     );
     const baseRawPrio = v.priority !== undefined && v.priority !== null ? Number(v.priority) : defaultPrio;
-    const prio =
+    const clampedPrio =
       v.priority !== undefined && v.priority !== null
         ? clampAdaptiveTierPriority(tier, baseRawPrio, 0)
         : clampAdaptiveTierPriority(tier, baseRawPrio, totalAdaptiveBoost);
+    // A follow-up from no-key work can't jump the queue, and needs a real prompt, not a title.
+    const openLimits = !infraAllowed && env?.OPEN_WORK_LIMITS === "on";
+    if (openLimits && (String(v.prompt || "").trim().length < 24 || String(v.prompt || "").trim() === String(v.title || "").trim())) {
+      rejectedOpenFollowups.push({ title: vTitle, reason: "a follow-up needs a real prompt of at least 24 characters, not only a title" });
+      continue;
+    }
+    const prio = openLimits ? Math.min(clampedPrio, QUEUE_GATEWAY_GRID.open_followup_priority_cap) : clampedPrio;
     const vGenDepth = Math.max(
       0,
       Math.min(QUEUE_GATEWAY_GRID.max_generation_depth, Number(v.generation_depth ?? parentGenDepth + 1))
@@ -8830,6 +8845,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       ? { auto_enqueued_index_and_review_verbs: autoEnqueuedIndexAndReviewVerbs }
       : {}),
     applied_evaluations: appliedEvaluations,
+    ...(rejectedOpenFollowups.length ? { rejected_followup_tasks: rejectedOpenFollowups } : {}),
     enqueued_followup_tasks: enqueuedVerbs,
     enqueued_followup_verbs: enqueuedVerbs,
     queue_counts_by_tier: pulse.queue_counts_by_tier,
@@ -8856,6 +8872,10 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
   }
 
   return responseDoc;
+}
+
+function process_env_brief(pulse) {
+  return pulse?.brief_claims === true;
 }
 
 function formatClaimBanner(publicUrl, claimOut, pulse) {
@@ -8918,7 +8938,7 @@ function formatClaimBanner(publicUrl, claimOut, pulse) {
     "ATOMIC SINGLE-STEP & ANTI-CONVERGENCE CONTRACT:",
     "1. Hesitate to do too many discrete steps at once: execute ONLY ONE narrow atomic branch/operator right now.",
     "2. Tag reusable schemas, rankings, or node specs with your worker_uuid in `task_objects`.",
-    "3. Enqueue your next narrow continuation (`owner_worker_uuid` / `--own-verb-`) or a `meta_generator` / `verb_mutator` verb.",
+    ...(process_env_brief(pulse) ? [] : ["3. Enqueue your next narrow continuation (`owner_worker_uuid` / `--own-verb-`) or a `meta_generator` / `verb_mutator` verb."]),
     `4. Prompts Hub: ${publicUrl}/prompts | Search: ${publicUrl}/q/search?q=<keywords> | Routing: ${publicUrl}/q/routing`,
     "",
     "HOW TO SUBMIT:",
@@ -10351,6 +10371,8 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       });
       claimOut.worker_toolkit_guidance = workerToolkitGuidance;
       const pulse = await buildPulseSnapshot(db, env, infraAllowed);
+      const briefClaims = env?.OPEN_WORK_LIMITS === "on" && !infraAllowed && url.searchParams.get("verbose") !== "1";
+      if (briefClaims) pulse.brief_claims = true;
       if (wantsJson) {
         return sendJson({
           ok: true,
@@ -10369,13 +10391,11 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
             ? {
                 family_filter: claimOut.family_filter,
                 family_filter_matched: claimOut.family_filter_matched,
-                self_seed_recommended: claimOut.self_seed_recommended || false,
+                self_seed_recommended: briefClaims ? false : claimOut.self_seed_recommended || false,
               }
             : {}),
           ...(claimOut.collision_warning ? { collision_warning: claimOut.collision_warning } : {}),
-          worker_toolkit_guidance: workerToolkitGuidance,
-          bilateral_guidance: claimOut.bilateral_guidance,
-          pulse,
+          ...(briefClaims ? {} : { worker_toolkit_guidance: workerToolkitGuidance, bilateral_guidance: claimOut.bilateral_guidance, pulse }),
         });
       }
       return sendText(formatClaimBanner(publicUrl, claimOut, pulse));
@@ -10479,6 +10499,8 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         toolsAvailable: body.worker_setup?.tools_available || null,
       });
       const pulse = await buildPulseSnapshot(db, env, infraAllowed);
+      const briefClaims = env?.OPEN_WORK_LIMITS === "on" && !infraAllowed && url.searchParams.get("verbose") !== "1";
+      if (briefClaims) pulse.brief_claims = true;
       return sendJson({
         ok: true,
         caller_role: pulse.caller_role,
@@ -10496,7 +10518,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           ? {
               family_filter: claimOut.family_filter,
               family_filter_matched: claimOut.family_filter_matched,
-              self_seed_recommended: claimOut.self_seed_recommended || false,
+              self_seed_recommended: briefClaims ? false : claimOut.self_seed_recommended || false,
             }
           : {}),
         ...(claimOut.collision_warning ? { collision_warning: claimOut.collision_warning } : {}),
@@ -10504,9 +10526,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           harness_tier: claimOut.bilateral_guidance?.worker_profile?.harness_tier || "",
           capability_milli: claimOut.bilateral_guidance?.worker_profile?.capability_milli || 0,
         },
-        worker_toolkit_guidance: workerToolkitGuidance,
-        bilateral_guidance: claimOut.bilateral_guidance,
-        pulse,
+        ...(briefClaims ? {} : { worker_toolkit_guidance: workerToolkitGuidance, bilateral_guidance: claimOut.bilateral_guidance, pulse }),
       });
     }
     return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
