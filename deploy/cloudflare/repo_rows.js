@@ -121,15 +121,26 @@ async function allOwners(db, name, fetchImpl) {
   return { rows, source: fromDb.length ? "feed" : "github", state: rows.length ? "found" : up.state, complete: Boolean(up.complete) };
 }
 
-// A direct answer needs one repository and one plain field. Anything more complex goes to the caller's model.
+// A direct answer is given only for these plain, present-tense sentences about one repository. Anything else goes to the caller's model.
+const REPO_IN_ASK = "((?:[A-Za-z0-9][A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]*[A-Za-z0-9_-])";
+const ASK_FORMS = [
+  [1, new RegExp(`^What (?:software )?licen[cs]e does (?:the )?(?:GitHub )?(?:repository |repo )?${REPO_IN_ASK} use\\?$`, "i")],
+  [2, new RegExp(`^What is the (?:primary )?(?:programming )?language of (?:the )?(?:GitHub )?(?:repository |repo )?${REPO_IN_ASK}\\?$`, "i")],
+  [0, new RegExp(`^Who owns (?:the )?(?:GitHub )?(?:repository |repo )?${REPO_IN_ASK}\\?$`, "i")],
+];
+const ASK_OWNER_BY_NAME = /^(?:An? )?(?:public )?(?:GitHub )?(?:repository|repo) named "([A-Za-z0-9._-]{2,100})"(?: is an? [A-Za-z ,-]{1,80})?(?:, created in (20\d\d-\d\d))?\. Which GitHub (?:account|organi[sz]ation)(?: or organi[sz]ation)? owns it\?$/i;
+
 function parseAsk(ask) {
-  const text = String(ask).slice(0, 600);
-  const asks = [/\blicen[cs]e\b/i.test(text) && 1, /\b(?:programming )?language\b/i.test(text) && 2, /\b(?:own(?:s|er|ed)|which (?:github )?(?:account|organi[sz]ation))\b/i.test(text) && 0].filter((x) => x !== false);
-  const fulls = [...text.matchAll(/(?:^|[\s(`"'])([A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}?)(?=[\s)`"'?,:;]|\.(?:\s|$)|$)/g)].map((m) => m[1]);
-  const quoted = [...text.matchAll(/["`]([A-Za-z0-9._-]{2,100})["`]/g)].map((m) => m[1]);
-  const month = text.match(/\b(20\d\d-\d\d)\b/);
-  const multi = fulls.length > 1 || quoted.length > 1 || (fulls.length === 1 && quoted.length === 1 && quoted[0] !== fulls[0]) || asks.length !== 1 || /\b20\d\d-\d\d-\d\d\b/.test(text) || /\b(?:and|or|versus|vs\.?|compare|previously|formerly|used to)\b/i.test(text.replace(/\borganization\b/gi, "").replace(/\baccount or\b/gi, "account"));
-  return { field: multi ? -1 : asks[0], repo: fulls[0] || null, name: !fulls.length && quoted.length ? quoted[0] : null, month: month ? month[1] : null };
+  const text = String(ask).slice(0, 600).trim().replace(/\s+Answer with [a-z ]{1,40}\.$/i, "");
+  for (const [field, form] of ASK_FORMS) {
+    const m = text.match(form);
+    if (m) return { field, repo: m[1], name: null, month: null };
+  }
+  const named = text.match(ASK_OWNER_BY_NAME);
+  if (named) return { field: 0, repo: null, name: named[1], month: named[2] || null };
+  const anyRepo = text.match(new RegExp(`(?:^|[\\s(\`"'])${REPO_IN_ASK}`));
+  const quoted = text.match(/["`]([A-Za-z0-9._-]{2,100})["`]/);
+  return { field: -1, repo: anyRepo ? anyRepo[1] : null, name: !anyRepo && quoted ? quoted[1] : null, month: null };
 }
 
 function directAnswer(parsed, found) {
