@@ -285,7 +285,8 @@ export async function runGate() {
   const dirtyRendered = await dirtyPages();
   for (const [name, html] of Object.entries(dirtyRendered)) problems.push(...pageProblems(name, html));
   let files = 0;
-  for (const file of trackedFiles()) {
+  // The tracked-file scan needs the real list: on the sample list it would only find the sample's own made-up words.
+  for (const file of INPUTS.source === "fixture" ? [] : trackedFiles()) {
     let text;
     try { text = fs.readFileSync(path.join(ROOT, file), "utf8"); } catch { continue; }
     files += 1;
