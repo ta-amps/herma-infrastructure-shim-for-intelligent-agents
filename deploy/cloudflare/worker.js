@@ -1,4 +1,5 @@
 import { withPublicNames } from "./public_names.js";
+import { isServerInfraAuthorized } from "./priority_work_gateway.js";
 import { agentStartAsset } from "./agent_start.js";
 import { canonicalRedirect, isPageNavigation } from "./canonical_host.js";
 import { readHomeTotals } from "./home_totals.js";
@@ -2454,10 +2455,12 @@ function dropLeaseFields(value) {
   return Object.fromEntries(Object.entries(value).filter(([k]) => !LEASE_FIELDS.includes(k)).map(([k, v]) => [k, dropLeaseFields(v)]));
 }
 export async function withoutLeaseDetails(request, response, env) {
-  if (env.OPEN_WORK_LIMITS !== "on" || KEY_HEADERS.some((h) => request.headers.has(h))) return response;
+  if (env.OPEN_WORK_LIMITS !== "on") return response;
   const path = new URL(request.url).pathname;
-  const lookup = request.method === "GET" && /^\/q\/tasks?(\/|$)/.test(path);
-  if (!lookup && response.status !== 409) return response;
+  if (!path.startsWith("/q/") && !path.startsWith("/help")) return response;
+  // The worker's own lease answers keep its fence.
+  if (response.status !== 409 && /^\/q\/(?:claim|heartbeat|submit|complete|release|onboard|enqueue)(?:\/|$)/.test(path)) return response;
+  if (await isServerInfraAuthorized(request, env, env.HERMA_DB).catch(() => false)) return response;
   if (!(response.headers.get("content-type") || "").includes("json")) return response;
   const text = await response.text();
   let body;

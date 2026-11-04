@@ -792,7 +792,7 @@ function hammingSimilarityHex64(hexA, hexB) {
   }
 }
 
-async function isServerInfraAuthorized(request, env, db = null) {
+export async function isServerInfraAuthorized(request, env, db = null) {
   if (isAdminRequest(request, env)) return true;
   if (db) {
     const scopedRaw = extractPresentedScopedKey(request);
@@ -5615,8 +5615,14 @@ async function claimNextAuthorizedTask(
     ? "visibility IN ('server_infra', 'public_ngo', 'public_commons')"
     : "visibility IN ('public_ngo', 'public_commons')";
   const visWithField = canDoFieldWork ? visBase : `${visBase} AND NOT (${FIELD_WORK_SQL})`;
-  // A worker that just let a Task go isn't handed it again by a plain claim; claiming it by id still works.
-  const notJustLetGo = explicitTaskId || env?.OPEN_WORK_LIMITS !== "on" ? "" : ` AND COALESCE(last_expired_by, '') <> '${String(agentId || "").replace(/'/g, "''")}'`;
+  // A no-key worker that just let a Task go isn't handed it again by a plain claim for half an hour. Shared generic
+  // names are left out, or their bots would hide Tasks from each other; a claim by id still works.
+  const sharedName = /^(?:volunteer-agent|worker|agent|anonymous|test)$/i.test(String(agentId || ""));
+  const letGoCutoff = new Date(Date.now() - 1800000).toISOString();
+  const notJustLetGo =
+    explicitTaskId || infraAllowed || sharedName || env?.OPEN_WORK_LIMITS !== "on"
+      ? ""
+      : ` AND NOT (COALESCE(last_expired_by, '') = '${String(agentId || "").replace(/'/g, "''")}' AND updated_at > '${letGoCutoff}')`;
   const visAllowed = `${visWithField}${notJustLetGo}`;
 
   if (explicitTaskId) {
@@ -5653,7 +5659,7 @@ async function claimNextAuthorizedTask(
     let dupSql = `SELECT * FROM herma_durable_queue
                   WHERE state = 'leased' AND leased_by = ?
                     AND (COALESCE(leased_worker_uuid, '') = '' OR leased_worker_uuid = ?)
-                    AND lease_expires_at > ? AND updated_at >= ? AND ${visAllowed}`;
+                    AND lease_expires_at > ? AND updated_at >= ? AND ${visBase}`;
     const dupBinds = [cleanAgent, profile.worker_uuid, nowIso, dupWindowIso];
     if (explicitTaskId) {
       dupSql += " AND task_id = ?";
@@ -5685,7 +5691,7 @@ async function claimNextAuthorizedTask(
       const activeCoSlot = await db.prepare(coDupSql).bind(...coDupBinds).first();
       if (activeCoSlot) {
         activeLease = await db
-          .prepare(`SELECT * FROM herma_durable_queue WHERE task_id = ? AND ${visAllowed} LIMIT 1`)
+          .prepare(`SELECT * FROM herma_durable_queue WHERE task_id = ? AND ${visBase} LIMIT 1`)
           .bind(activeCoSlot.task_id)
           .first();
         reusedCoEpoch = Number(activeCoSlot.lease_epoch);
@@ -10395,7 +10401,9 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
               }
             : {}),
           ...(claimOut.collision_warning ? { collision_warning: claimOut.collision_warning } : {}),
-          ...(briefClaims ? {} : { worker_toolkit_guidance: workerToolkitGuidance, bilateral_guidance: claimOut.bilateral_guidance, pulse }),
+          ...(briefClaims
+            ? { bilateral_guidance: { worker_profile: claimOut.bilateral_guidance?.worker_profile } }
+            : { worker_toolkit_guidance: workerToolkitGuidance, bilateral_guidance: claimOut.bilateral_guidance, pulse }),
         });
       }
       return sendText(formatClaimBanner(publicUrl, claimOut, pulse));
@@ -10526,7 +10534,9 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           harness_tier: claimOut.bilateral_guidance?.worker_profile?.harness_tier || "",
           capability_milli: claimOut.bilateral_guidance?.worker_profile?.capability_milli || 0,
         },
-        ...(briefClaims ? {} : { worker_toolkit_guidance: workerToolkitGuidance, bilateral_guidance: claimOut.bilateral_guidance, pulse }),
+        ...(briefClaims
+            ? { bilateral_guidance: { worker_profile: claimOut.bilateral_guidance?.worker_profile } }
+            : { worker_toolkit_guidance: workerToolkitGuidance, bilateral_guidance: claimOut.bilateral_guidance, pulse }),
       });
     }
     return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);

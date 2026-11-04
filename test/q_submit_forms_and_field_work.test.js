@@ -57,3 +57,20 @@ describe("open work limits, in the running worker", () => {
     expect(next.lease?.task_id).not.toBe(claimed.lease.task_id);
   });
 });
+
+describe("lease details", () => {
+  it("a stranger reading a Task or a refusal sees no holder or fence, even with a made-up key header", async () => {
+    const { withoutLeaseDetails } = await import("../deploy/cloudflare/worker.js");
+    const on = { ...env, OPEN_WORK_LIMITS: "on" };
+    const task = () => new Response(JSON.stringify({ task: { task_id: "t", leased_by: "a", fencing_token: 3, state: "leased" } }), { headers: { "content-type": "application/json" } });
+    const req = new Request("https://x/q/task/t", { headers: { "x-herma-key": "made-up" } });
+    const out = await (await withoutLeaseDetails(req, task(), on)).json();
+    expect(out.task).toEqual({ task_id: "t", state: "leased" });
+    const refused = new Response(JSON.stringify({ code: "stale_fencing_token", detail: "Stale (9) for task t (expected=3).", expected_fencing_token: 3 }), { status: 409, headers: { "content-type": "application/json" } });
+    const body = await (await withoutLeaseDetails(new Request("https://x/q/submit", { method: "POST" }), refused, on)).json();
+    expect(body.expected_fencing_token).toBeUndefined();
+    expect(body.detail).not.toContain("expected=");
+    const own = new Response(JSON.stringify({ lease: { fencing_token: 3 } }), { headers: { "content-type": "application/json" } });
+    expect((await (await withoutLeaseDetails(new Request("https://x/q/claim", { method: "POST" }), own, on)).json()).lease.fencing_token).toBe(3);
+  });
+});
