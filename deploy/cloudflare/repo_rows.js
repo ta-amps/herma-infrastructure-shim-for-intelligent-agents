@@ -3,9 +3,21 @@
 // by scripts/repo_rows_refresh.py). A repository the scans never saw is read through to GitHub's public API with no credential;
 // that answer is kept only in the edge cache, never in D1, and each request makes at most one upstream call.
 import { tidyText } from "./page_shell.js";
+import { scrubSensitiveText } from "./bilateral_bridge.js";
 import { publicNames } from "./public_names.js";
 
-const COLS = ["repo", "license", "language", "created", "stars", "feed"];
+const COLS = ["repo", "license", "language", "created", "stars", "feed", "seen"];
+const SEEN = 6;
+const DIRECT_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
+const BACKOFF_MIN_S = 30;
+const BACKOFF_MAX_S = 3600;
+// Something shaped like a credential is never sent to GitHub, whatever route it arrived on.
+const SECRET_SHAPE = /(?:^|[/_-])(?:gh[pousr]_|github_pat_|sk-|xox[abprs]-|AKIA|eyJ)[A-Za-z0-9_-]{8,}|\b[A-Fa-f0-9]{32,}\b/;
+const looksSecret = (text) => SECRET_SHAPE.test(text) || /^(?:gh[pousr]_|github_pat_|sk-|xox[abprs]-|AKIA)/.test(text) || scrubSensitiveText(text) !== text;
+const isFresh = (row) => {
+  const at = Date.parse(row[SEEN] || "");
+  return Number.isFinite(at) && Date.now() - at <= DIRECT_MAX_AGE_MS;
+};
 const FULL_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 const BARE_NAME = /^[A-Za-z0-9._-]{1,100}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -19,12 +31,12 @@ const UPSTREAM_MS = 4000;
 const servable = (repo) => tidyText(repo, 400) === repo && publicNames(repo) === repo;
 
 function rowFromDb(r) {
-  return [r.repo, r.license || null, r.language || null, r.created || null, r.stars ?? null, r.feed || ""];
+  return [r.repo, r.license || null, r.language || null, r.created || null, r.stars ?? null, r.feed || "", r.seen_at || null];
 }
 
 function rowFromGithub(g) {
   const lic = g.license && g.license.spdx_id;
-  return [g.full_name, lic && lic !== "NOASSERTION" ? lic : null, g.language || null, String(g.created_at || "").slice(0, 10), g.stargazers_count ?? null, ""];
+  return [g.full_name, lic && lic !== "NOASSERTION" ? lic : null, g.language || null, String(g.created_at || "").slice(0, 10), g.stargazers_count ?? null, "", new Date().toISOString().slice(0, 10)];
 }
 
 async function queryRows(db, sql, binds) {
@@ -54,7 +66,7 @@ function firstPerRepo(rows) {
 
 async function exactFromDb(db, { repo, name }) {
   const [where, value] = repo ? ["repo = ? COLLATE NOCASE", repo] : ["name = ? COLLATE NOCASE", name];
-  const sql = `SELECT repo, license, language, created, stars, feed FROM feed_repo_rows WHERE ${where} ORDER BY created DESC LIMIT 40`;
+  const sql = `SELECT repo, license, language, created, stars, feed, seen_at FROM feed_repo_rows WHERE ${where} ORDER BY created DESC LIMIT 40`;
   return firstPerRepo(await queryRows(db, sql, [value]));
 }
 
@@ -66,8 +78,34 @@ function cacheStore() {
   }
 }
 
+const backoffKey = (kind) => new Request(`https://repo-rows.invalid/backoff/${kind}`);
+
+async function inBackoff(kind) {
+  const cache = cacheStore();
+  return cache ? Boolean(await cache.match(backoffKey(kind)).catch(() => null)) : false;
+}
+
+// GitHub's public limit is shared by everyone who comes through here, so once it says stop, nobody asks until it says go.
+async function startBackoff(kind, res) {
+  const cache = cacheStore();
+  if (!cache) return;
+  const retryAfter = Number(res.headers.get("retry-after"));
+  const reset = Number(res.headers.get("x-ratelimit-reset"));
+  const wanted = retryAfter > 0 ? retryAfter : reset > 0 ? reset - Math.floor(Date.now() / 1000) : BACKOFF_MIN_S;
+  const seconds = Math.min(BACKOFF_MAX_S, Math.max(BACKOFF_MIN_S, wanted));
+  await cache.put(backoffKey(kind), new Response("1", { headers: { "cache-control": `public, max-age=${seconds}` } })).catch(() => {});
+}
+
+/** For tests. */
+export async function clearUpstreamBackoff() {
+  const cache = cacheStore();
+  if (!cache) return;
+  await cache.delete(backoffKey("repos")).catch(() => {});
+  await cache.delete(backoffKey("search")).catch(() => {});
+}
+
 // Returns { rows, state, complete }. state: found, no_such_repo (GitHub's own 404 for owner/name), not_in_github_search (a search
-// page without that exact name, which does not prove absence), rate_limited or unavailable. complete: every exact name is on this page.
+// page without that exact name, which does not prove absence), rate_limited, refused or unavailable. complete: every exact name is on this page.
 async function upstream({ repo, name }, fetchImpl) {
   const path = repo
     ? `/repos/${repo.split("/").map(encodeURIComponent).join("/")}`
@@ -78,6 +116,8 @@ async function upstream({ repo, name }, fetchImpl) {
     const hit = await cache.match(cacheKey).catch(() => null);
     if (hit) return hit.json();
   }
+  const kind = repo ? "repos" : "search";
+  if (await inBackoff(kind)) return { rows: [], state: "rate_limited" };
   let res;
   try {
     res = await fetchImpl(`https://api.github.com${path}`, {
@@ -87,9 +127,14 @@ async function upstream({ repo, name }, fetchImpl) {
   } catch {
     return { rows: [], state: "unavailable" };
   }
-  if (res.status === 403 || res.status === 429) return { rows: [], state: "rate_limited" };
+  const limited = res.status === 429 || (res.status === 403 && (res.headers.get("x-ratelimit-remaining") === "0" || res.headers.has("retry-after")));
+  if (limited) {
+    await startBackoff(kind, res);
+    return { rows: [], state: "rate_limited" };
+  }
   let out;
   if (res.status === 404) out = { rows: [], state: "no_such_repo" };
+  else if (res.status === 403 || res.status === 451) out = { rows: [], state: "refused" };
   else if (!res.ok) return { rows: [], state: "unavailable" };
   else {
     const body = await res.json().catch(() => null);
@@ -107,20 +152,32 @@ async function upstream({ repo, name }, fetchImpl) {
   return out;
 }
 
-async function exactLookup(db, target, fetchImpl) {
-  const fromDb = await exactFromDb(db, target);
-  if (fromDb.length) return { rows: fromDb.map(rowFromDb), source: "feed", state: "found", complete: Boolean(target.repo) };
-  const up = await upstream(target, fetchImpl);
-  return { rows: up.rows, source: "github", state: up.state, complete: Boolean(up.complete) };
+function withFeeds(rows, feedRows) {
+  const feeds = new Map(feedRows.map((r) => [String(r[0]).toLowerCase(), r[5]]));
+  return rows.map((r) => {
+    const out = [...r];
+    out[5] = feeds.get(String(r[0]).toLowerCase()) || r[5];
+    return out;
+  });
 }
 
-// For a question asked by bare name: every owner, or as many as can be known. The rows hold only what the scans saw, so GitHub is asked too.
+async function exactLookup(db, target, fetchImpl, { needFresh = false } = {}) {
+  const fromDb = (await exactFromDb(db, target)).map(rowFromDb);
+  if (fromDb.length && (!needFresh || fromDb.every(isFresh))) return { rows: fromDb, source: "feed", state: "found", complete: Boolean(target.repo) };
+  const up = await upstream(target, fetchImpl);
+  if (fromDb.length && !up.rows.length) return { rows: fromDb, source: "feed", state: "found", complete: false };
+  return { rows: withFeeds(up.rows, fromDb), source: "github", state: up.state, complete: Boolean(up.complete) };
+}
+
+// For a question asked by bare name: every owner, or as many as can be known. The rows hold only what the scans saw, so GitHub is
+// asked too. When GitHub's list is complete it wins, so an owner who moved or deleted the repository is not named.
 async function allOwners(db, name, fetchImpl) {
   const fromDb = (await exactFromDb(db, { name })).map(rowFromDb);
   const up = await upstream({ name }, fetchImpl);
+  if (up.complete && up.rows.length) return { rows: withFeeds(up.rows, fromDb), source: "github", state: "found", complete: true };
   const seen = new Set(fromDb.map((r) => String(r[0]).toLowerCase()));
   const rows = [...fromDb, ...up.rows.filter((r) => !seen.has(String(r[0]).toLowerCase()))];
-  return { rows, source: fromDb.length ? "feed" : "github", state: rows.length ? "found" : up.state, complete: Boolean(up.complete) };
+  return { rows, source: fromDb.length ? "feed" : "github", state: rows.length ? "found" : up.state, complete: false };
 }
 
 // A direct answer is given only for these plain, present-tense sentences about one repository. Anything else goes to the caller's model.
@@ -150,6 +207,7 @@ function directAnswer(parsed, found) {
   const fits = parsed.month ? found.rows.filter((r) => String(r[3] || "").startsWith(parsed.month)) : found.rows;
   if (fits.length !== 1) return null;
   const row = fits[0];
+  if (!isFresh(row)) return null;
   if (parsed.field === 0) return { answer: String(row[0]).split("/")[0], field: "owner", repo: row[0] };
   const value = row[parsed.field];
   if (!value || /^(unknown|other)$/i.test(String(value))) return null;
@@ -171,7 +229,7 @@ async function listRows(db, p) {
   if (p.maxStars !== null) add("stars <= ?", p.maxStars);
   for (const word of p.words) add("repo LIKE ? ESCAPE '\\'", `%${word.replace(/[%_\\]/g, "\\$&")}%`);
   const order = p.sort === "new" ? "created DESC, repo" : "stars DESC, created DESC, repo";
-  const sql = `SELECT repo, license, language, created, stars, MIN(feed) AS feed FROM feed_repo_rows WHERE ${where.join(" AND ")} GROUP BY repo ORDER BY ${order} LIMIT ? OFFSET ?`;
+  const sql = `SELECT repo, license, language, created, stars, MIN(feed) AS feed, MAX(seen_at) AS seen_at FROM feed_repo_rows WHERE ${where.join(" AND ")} GROUP BY repo ORDER BY ${order} LIMIT ? OFFSET ?`;
   return queryRows(db, sql, [...binds, p.limit + 1, p.offset]);
 }
 
@@ -179,7 +237,9 @@ const missNote = {
   no_such_repo: "GitHub says there is no public repository at that address.",
   not_in_github_search: "Not in the feed rows, and GitHub's search shows no repository with that exact name. It may still exist.",
   rate_limited: "Not in the feed rows. GitHub's public limit is used up for now, so this is not a statement that it does not exist.",
+  refused: "Not in the feed rows. GitHub refused to show this repository, so this is not a statement that it does not exist.",
   unavailable: "Not in the feed rows. GitHub did not answer, so this is not a statement that it does not exist.",
+  withheld: "A repository matches, but its name can't be shown here.",
 };
 
 /** The handler for GET /q/repos. Returns [body, status]. */
@@ -193,20 +253,29 @@ export async function repoRowsResponse(url, db, { fetchImpl = (...a) => fetch(..
   const base = { ok: true, as_of, cols: COLS };
 
   if (repo || name) {
+    if (looksSecret(repo || name)) {
+      return [{ ok: false, code: "looks_like_a_secret", detail: "That looks like a credential, so it was not looked up." }, 400];
+    }
     if (repo ? !FULL_NAME.test(repo) : !BARE_NAME.test(name)) {
       return [{ ok: false, code: "bad_name", detail: "Use repo=owner/name or name=repo-name." }, 400];
     }
-    const found = parsed && name ? await allOwners(db, name, fetchImpl) : await exactLookup(db, repo ? { repo } : { name }, fetchImpl);
-    const rows = found.rows.filter((r) => servable(String(r[0]))).slice(0, MAX_LIMIT);
+    const found = parsed && name ? await allOwners(db, name, fetchImpl) : await exactLookup(db, repo ? { repo } : { name }, fetchImpl, { needFresh: Boolean(parsed) });
+    const all = found.rows.slice(0, MAX_LIMIT);
+    const rows = all.filter((r) => servable(String(r[0])));
+    const withheld = all.length - rows.length;
     const body = { ...base, source: found.source, rows };
-    if (name && !found.complete && rows.length) body.other_owners_possible = true;
+    if (withheld) body.withheld_count = withheld;
+    if (name && rows.length && (!found.complete || withheld)) body.other_owners_possible = true;
     if (parsed) {
-      const direct = directAnswer(parsed, { rows, complete: found.complete && rows.length === found.rows.length });
+      const direct = directAnswer(parsed, { rows, complete: found.complete && !withheld });
       if (direct) Object.assign(body, { direct: true }, direct);
       else body.direct = false;
     }
-    if (!rows.length) body.miss = found.state === "found" ? "withheld" : found.state;
-    if (!rows.length && missNote[found.state]) body.note = missNote[found.state];
+    if (!rows.length) {
+      const miss = withheld ? "withheld" : found.state;
+      body.miss = miss;
+      if (missNote[miss]) body.note = missNote[miss];
+    }
     return [body, 200];
   }
 
@@ -242,17 +311,30 @@ export async function repoRowsResponse(url, db, { fetchImpl = (...a) => fetch(..
   return [body, 200];
 }
 
-/** Rows for an exact repository name typed into /q/search. Never throws; a search must not fail because of this. */
-export async function repoMatchesForSearch(db, query, { fetchImpl = (...a) => fetch(...a) } = {}) {
+/** Rows for an exact repository name typed into /q/search, from the rows only: nothing the caller typed leaves here. Never throws. */
+export async function repoMatchesForSearch(db, query) {
   const text = String(query || "").trim();
-  if (!/[/_-]/.test(text)) return null;
   const target = FULL_NAME.test(text) ? { repo: text } : BARE_NAME.test(text) ? { name: text } : null;
-  if (!target) return null;
+  if (!target || looksSecret(text)) return null;
   try {
-    const found = await exactLookup(db, target, fetchImpl);
-    const rows = found.rows.filter((r) => servable(String(r[0]))).slice(0, 3);
-    return rows.length ? { cols: COLS, rows, source: found.source } : null;
+    const all = (await exactFromDb(db, target)).map(rowFromDb).slice(0, MAX_LIMIT);
+    if (!all.length) return null;
+    const rows = all.filter((r) => servable(String(r[0])));
+    const out = { cols: COLS, rows: rows.slice(0, 3), source: "feed" };
+    const more = rows.length - out.rows.length;
+    if (all.length !== rows.length) out.withheld_count = all.length - rows.length;
+    if (more) out.more_rows = more;
+    if (target.name) out.other_owners_possible = true;
+    return out;
   } catch {
     return null;
   }
+}
+
+/** The one call that can look further, for a query shaped like a repository name. */
+export function repoLookupHint(query) {
+  const text = String(query || "").trim();
+  if (!/[/_-]/.test(text) || looksSecret(text)) return null;
+  if (FULL_NAME.test(text)) return `/q/repos?repo=${text}`;
+  return BARE_NAME.test(text) ? `/q/repos?name=${text}` : null;
 }

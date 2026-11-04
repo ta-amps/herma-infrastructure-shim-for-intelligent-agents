@@ -42,6 +42,7 @@ def from_exports(folder: Path) -> dict[tuple[str, str], dict]:
     rows: dict[tuple[str, str], dict] = {}
     for feed in FEEDS:
         doc = json.loads((folder / f"{feed}.json").read_text())
+        read_on = (doc.get("last_run", {}).get("at") or doc.get("generated_at") or "")[:10]
         for item in doc.get("items", []):
             rows[(item["repo"].lower(), feed)] = {
                 "repo": item["repo"],
@@ -51,13 +52,14 @@ def from_exports(folder: Path) -> dict[tuple[str, str], dict]:
                 "created": (item.get("created_at") or "")[:10],
                 "stars": item.get("stars"),
                 "relevant": 1 if item.get("relevant") else 0,
-                "seen_at": (item.get("first_seen_at") or "")[:10],
+                "seen_at": read_on,
             }
     return rows
 
 
-def scan(days: int, now: datetime) -> dict[tuple[str, str], dict]:
+def scan(days: int, now: datetime) -> tuple[dict[tuple[str, str], dict], int]:
     rows: dict[tuple[str, str], dict] = {}
+    failures = 0
     since = (now - timedelta(days=days)).strftime("%Y-%m-%d")
     for feed, queries in FEEDS.items():
         for query in queries:
@@ -72,6 +74,7 @@ def scan(days: int, now: datetime) -> dict[tuple[str, str], dict]:
                 )
                 if res.returncode:
                     print("scan failure", feed, query, page, res.stderr[:120], flush=True)
+                    failures += 1
                     break
                 items = json.loads(res.stdout)["items"]
                 for r in items:
@@ -97,7 +100,7 @@ def scan(days: int, now: datetime) -> dict[tuple[str, str], dict]:
                     }
                 if len(items) < 100:
                     break
-    return rows
+    return rows, failures
 
 
 def lit(value: object) -> str:
@@ -108,7 +111,7 @@ def lit(value: object) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def write_sql(rows: list[dict], as_of: str, path: Path) -> None:
+def write_sql(rows: list[dict], as_of: str | None, path: Path) -> None:
     schema = re.search(
         r"CREATE TABLE IF NOT EXISTS feed_repo_rows.*",
         (Path(__file__).parent.parent / "deploy/cloudflare/d1-herma.sql").read_text(),
@@ -133,9 +136,12 @@ def write_sql(rows: list[dict], as_of: str, path: Path) -> None:
             + ",".join(lit(v) for v in values)
             + ");"
         )
-    lines.append(
-        f"INSERT OR REPLACE INTO feed_repo_meta (key,value) VALUES ('as_of',{lit(as_of)});"
-    )
+    if (
+        as_of
+    ):  # a scan with failures keeps the old date: the table is not current just because a job ran
+        lines.append(
+            f"INSERT OR REPLACE INTO feed_repo_meta (key,value) VALUES ('as_of',{lit(as_of)});"
+        )
     path.write_text("\n".join(lines) + "\n")
 
 
@@ -148,7 +154,7 @@ def main() -> None:
     a = ap.parse_args()
     now = datetime.now(UTC)
     rows = from_exports(a.feeds) if a.feeds else {}
-    fresh = scan(a.days, now)
+    fresh, failures = scan(a.days, now)
     rows.update(fresh)
     out = sorted(rows.values(), key=lambda r: (r["repo"].lower(), r["feed"]))
     a.out.write_text(
@@ -156,8 +162,8 @@ def main() -> None:
             {"as_of": now.strftime("%Y-%m-%dT%H:%MZ"), "fresh_rows": len(fresh), "rows": out}
         )
     )
-    write_sql(out, now.strftime("%Y-%m-%dT%H:%MZ"), a.sql)
-    print("rows", len(out), "fresh", len(fresh))
+    write_sql(out, None if failures else now.strftime("%Y-%m-%dT%H:%MZ"), a.sql)
+    print("rows", len(out), "fresh", len(fresh), "scan failures", failures)
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@
 //     trigrams, `O(1)` SymSpell 1..2-edit typo recovery, 4-band SimHash LSH, 64-bit semantic concept
 //     hyperplane sketches, and Weighted Reciprocal Rank Fusion (RRF) + Quality/Tombstone reranking.
 
-import { repoMatchesForSearch, repoRowsResponse } from "./repo_rows.js";
+import { repoLookupHint, repoMatchesForSearch, repoRowsResponse } from "./repo_rows.js";
 import { computeTaskFingerprint, scrubSensitiveText } from "./bilateral_bridge.js";
 import { clientFamily } from "./client_family.js";
 import { contributorPrintout } from "./contributor_printout.js";
@@ -2109,6 +2109,8 @@ async function runPriorityGatewaySchemaInitOnce(
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_hdq_content_sha ON herma_durable_queue (content_sha256)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_hdq_receipt ON herma_durable_queue (receipt_hash)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_hto_key ON herma_task_objects (object_key, id DESC)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_hto_lower_key ON herma_task_objects (LOWER(object_key))`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_hdq_lower_task ON herma_durable_queue (LOWER(task_id))`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_hgtl_action_status ON herma_gateway_trace_log (action, http_status, id DESC)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_heval_target ON herma_evaluations (target_kind, target_id, id DESC)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_hto_vis ON herma_task_objects (visibility, id DESC)`),
@@ -2654,15 +2656,17 @@ async function reassembleTaskObjectPayload(db, objRow) {
 }
 
 const SEARCH_NEARBY_LIMIT = 5;
+const SEARCH_ID_SHAPE = /^(?=.{3,128}$)[A-Za-z0-9]+(?:[-_.:][A-Za-z0-9]+)+$/;
 const SEARCH_WORD_CHANNELS = new Set(["stem_bm25", "typo_symspell_stem", "label_exact", "worker_phrase_or_facet", "facet_partition", "io_port_shape"]);
 
 // A search result is a real match only if it matched on words. Everything fuzzier goes to `nearby`, because some agents want
 // neighbours and no one should mistake them for an answer. One row per ID, the exact ID first.
-function splitStrongAndNearby(ranked, rawQuery) {
+export function splitStrongAndNearby(ranked, rawQuery) {
   const seen = new Map();
   for (const r of ranked) {
-    const old = seen.get(r.id);
-    if (!old || (r.matched_channels.includes("exact_id") && !old.matched_channels.includes("exact_id"))) seen.set(r.id, r);
+    const key = `${r.artifact_kind}:${r.id}`;
+    const old = seen.get(key);
+    if (!old || (r.matched_channels.includes("exact_id") && !old.matched_channels.includes("exact_id"))) seen.set(key, r);
   }
   const unique = [...seen.values()];
   const nameShaped = rawQuery && !/\s/.test(rawQuery) && /[-_/]/.test(rawQuery);
@@ -2684,10 +2688,10 @@ function splitStrongAndNearby(ranked, rawQuery) {
 
 const SEARCH_HIT_SUMMARY_CHARS = 160;
 const SEARCH_NEARBY_SUMMARY_CHARS = 80;
-function compactSearchHit(r, summaryChars) {
+function compactSearchHit(r, summaryChars, { withPayload = false } = {}) {
   const out = { artifact_kind: r.artifact_kind, id: r.id, tier: r.tier, category: r.category, state: r.state, title: r.title };
   out.summary = String(r.summary || "").slice(0, summaryChars);
-  for (const k of ["quality_milli", "reuse_mode", "reuse_count", "used_by_count", "builds_on", "reuse_weighted_quality_milli", "payload", "payload_sha256_verified"]) {
+  for (const k of ["quality_milli", "reuse_mode", "reuse_count", "used_by_count", "builds_on", "reuse_weighted_quality_milli", ...(withPayload ? ["payload", "payload_sha256_verified"] : [])]) {
     if (r[k] !== undefined && r[k] !== "" && !(Array.isArray(r[k]) && r[k].length === 0)) out[k] = r[k];
   }
   out.object_url = r.object_url;
@@ -2955,33 +2959,15 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
     return s;
   };
 
-  const appendShaPushdown = (binds, idColumn, append) => {
-    const shas = Array.isArray(pushedShas) ? pushedShas : null;
-    if (shas && !exactId) {
-      if (shas.length > 0) {
-        append(` AND content_sha256 IN (${shas.map(() => "?").join(",")})`);
-        binds.push(...shas);
-      }
-      return;
-    }
-    if (shas) {
-      // One candidate gives up its place for the exact ID: D1 allows 100 bound values and the pool cap plus LIMIT is at that edge.
-      const kept = shas.slice(0, QUEUE_GATEWAY_GRID.candidate_pool_cap - 1);
-      const inList = kept.length > 0 ? `content_sha256 IN (${kept.map(() => "?").join(",")}) OR ` : "";
-      append(` AND (${inList}LOWER(${idColumn}) = ?)`);
-      binds.push(...kept, exactId);
-    }
-  };
-
   const candidates = [];
-  // The shaped reply (/q/search) reads an exact ID through the same SELECT as the candidates, so visibility rules are the same.
   const shaped = params.shaped === true;
   const annotated = params.annotated === true;
-  const exactId = shaped || annotated ? rawQuery.toLowerCase() : "";
-  const skipCandidateScan = Array.isArray(pushedShas) && pushedShas.length === 0 && !exactId;
+  // Only an ID-shaped query can be lifted to first place. A plain word is never an exact ID: anyone may store an object named after one.
+  const exactId =
+    (shaped || annotated) && !reqTier && !hasBroadStructuralFilter && SEARCH_ID_SHAPE.test(rawQuery) ? rawQuery.toLowerCase() : "";
+  const skipCandidateScan = Array.isArray(pushedShas) && pushedShas.length === 0;
 
-  if (!skipCandidateScan && (scope === "all" || scope === "tasks")) {
-    let sql = `SELECT id AS row_id, 'durable_task' AS artifact_kind, task_id AS item_id, tier, visibility, priority, state,
+  const selectTasks = `SELECT id AS row_id, 'durable_task' AS artifact_kind, task_id AS item_id, tier, visibility, priority, state,
                       category, title, prompt AS summary, input_contract, output_contract,
                       input_shape_hash, output_shape_hash, lsh_band_0, quality_milli, 0 AS is_tombstoned, content_sha256,
                       intent_bucket, opt_goal, target_env, prog_lang, locale_country, deliverable_kind,
@@ -2989,6 +2975,18 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
                       COALESCE(audience_reach_milli, 350) AS audience_reach_milli, 0 AS reuse_count,
                       COALESCE(step_mode, '') AS step_mode, '' AS reuse_mode
                FROM herma_durable_queue WHERE ${visFilter}`;
+  const selectObjects = `SELECT id AS row_id, 'task_object' AS artifact_kind, object_key AS item_id, 'public_general' AS tier, visibility,
+                      80 AS priority, 'stored' AS state, category, object_key AS title, summary,
+                      'json_object' AS input_contract, category AS output_contract,
+                      input_shape_hash, output_shape_hash, lsh_band_0, quality_milli, is_tombstoned, content_sha256,
+                      intent_bucket, opt_goal, target_env, prog_lang, locale_country, deliverable_kind,
+                      500 AS complexity_milli, chunk_count, total_payload_bytes,
+                      COALESCE(audience_reach_milli, 350) AS audience_reach_milli, COALESCE(reuse_count, 0) AS reuse_count,
+                      COALESCE(step_mode, '') AS step_mode, COALESCE(reuse_mode, '') AS reuse_mode
+               FROM herma_task_objects WHERE ${visFilter}`;
+
+  if (!skipCandidateScan && (scope === "all" || scope === "tasks")) {
+    let sql = selectTasks;
     const binds = [];
     if (reqTier) {
       sql += " AND tier = ?";
@@ -2999,9 +2997,10 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
       binds.push(reqCategory);
     }
     sql = appendFacetClauses(sql, binds);
-    appendShaPushdown(binds, "task_id", (clause) => {
-      sql += clause;
-    });
+    if (Array.isArray(pushedShas) && pushedShas.length > 0) {
+      sql += ` AND content_sha256 IN (${pushedShas.map(() => "?").join(",")})`;
+      binds.push(...pushedShas);
+    }
     sql += " ORDER BY id DESC LIMIT ?";
     binds.push(QUEUE_GATEWAY_GRID.candidate_pool_cap * QUEUE_GATEWAY_GRID.band_hex_width);
     const tRows = await db.prepare(sql).bind(...binds).all();
@@ -3010,28 +3009,31 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
 
   if (!skipCandidateScan && (scope === "all" || scope === "objects") && (!reqTier || reqTier === "public_general")) {
     // Omit `payload_json` from candidate scan so /q/search never transfers multi-MB blobs per query; hydrate only top `limit` winners below
-    let sql = `SELECT id AS row_id, 'task_object' AS artifact_kind, object_key AS item_id, 'public_general' AS tier, visibility,
-                      80 AS priority, 'stored' AS state, category, object_key AS title, summary,
-                      'json_object' AS input_contract, category AS output_contract,
-                      input_shape_hash, output_shape_hash, lsh_band_0, quality_milli, is_tombstoned, content_sha256,
-                      intent_bucket, opt_goal, target_env, prog_lang, locale_country, deliverable_kind,
-                      500 AS complexity_milli, chunk_count, total_payload_bytes,
-                      COALESCE(audience_reach_milli, 350) AS audience_reach_milli, COALESCE(reuse_count, 0) AS reuse_count,
-                      COALESCE(step_mode, '') AS step_mode, COALESCE(reuse_mode, '') AS reuse_mode
-               FROM herma_task_objects WHERE ${visFilter}`;
+    let sql = selectObjects;
     const binds = [];
     if (reqCategory) {
       sql += " AND category = ?";
       binds.push(reqCategory);
     }
     sql = appendFacetClauses(sql, binds);
-    appendShaPushdown(binds, "object_key", (clause) => {
-      sql += clause;
-    });
+    if (Array.isArray(pushedShas) && pushedShas.length > 0) {
+      sql += ` AND content_sha256 IN (${pushedShas.map(() => "?").join(",")})`;
+      binds.push(...pushedShas);
+    }
     sql += " ORDER BY id DESC LIMIT ?";
     binds.push(QUEUE_GATEWAY_GRID.candidate_pool_cap * QUEUE_GATEWAY_GRID.band_hex_width);
     const oRows = await db.prepare(sql).bind(...binds).all();
     candidates.push(...(oRows?.results || []));
+  }
+
+  // The same SELECTs as the candidates, so the visibility rules are the same. Both columns have an index on LOWER().
+  if (exactId && (scope === "all" || scope === "tasks")) {
+    const hit = await db.prepare(`${selectTasks} AND LOWER(task_id) = ? ORDER BY id DESC LIMIT 1`).bind(exactId).all();
+    candidates.push(...(hit?.results || []));
+  }
+  if (exactId && (scope === "all" || scope === "objects")) {
+    const hit = await db.prepare(`${selectObjects} AND LOWER(object_key) = ? ORDER BY id DESC LIMIT 1`).bind(exactId).all();
+    candidates.push(...(hit?.results || []));
   }
 
   const corrSet = new Set(correctedTokens);
@@ -3151,7 +3153,7 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
   }
 
   const formattedResults = [];
-  const strongIds = new Set(strong.map((r) => r.id));
+  const strongRows = new Set(strong);
   for (const r of new Set([...topSlice, ...nearbySlice])) {
     const rawRow = r._rawRow;
     delete r._rawRow;
@@ -3163,7 +3165,7 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
       r.reuse_weighted_quality_milli = computeReuseWeightedQualityMilli(r.quality_milli, depCnt);
     }
     if (annotated) {
-      r.match_quality = r.matched_channels.includes("exact_id") ? "exact_id" : strongIds.has(r.id) ? "words" : "nearby";
+      r.match_quality = r.matched_channels.includes("exact_id") ? "exact_id" : strongRows.has(r) ? "words" : "nearby";
     }
     if (includePayload && r.artifact_kind === "task_object" && rawRow && topSlice.includes(r)) {
       const fullObjRow = await db
@@ -10401,13 +10403,18 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     traceCtx.detail.matches = searchOut.total_matches;
     if (fullReply) return sendJson(searchOut);
     const exactHit = searchOut.results.some((r) => r.matched_channels?.includes("exact_id"));
-    const repoMatches = exactHit ? null : await repoMatchesForSearch(db, params.q || params.query);
-    const match = exactHit ? "exact_id" : searchOut.true_matches ? "words" : repoMatches ? "exact_repo" : "none";
+    // The rows only: this route never sends what a caller typed to anyone else. /q/repos is the route that asks GitHub.
+    const repoMatches = await repoMatchesForSearch(db, params.q || params.query);
+    const repoLookup = repoMatches ? null : repoLookupHint(params.q || params.query);
+    const repoRows = repoMatches?.rows.length || 0;
+    const match = exactHit ? "exact_id" : searchOut.true_matches ? "words" : repoRows ? "exact_repo" : repoMatches ? "withheld" : "none";
     const added = {
       match,
       ...(exactHit ? { exact_match: compactSearchHit(searchOut.results[0], SEARCH_HIT_SUMMARY_CHARS) } : {}),
       ...(repoMatches ? { repo_matches: repoMatches } : {}),
+      ...(repoLookup ? { repo_lookup: repoLookup } : {}),
       ...(match === "none" ? { note: "No match. Anything listed is only nearby and may not be related." } : {}),
+      ...(!searchOut.true_matches && !compactReply && searchOut.results.length ? { results_are_nearby_only: true } : {}),
       true_matches: searchOut.true_matches,
       nearby: searchOut.nearby.map((r) => compactSearchHit(r, SEARCH_NEARBY_SUMMARY_CHARS)),
       nearby_count: searchOut.nearby_count,
@@ -10425,7 +10432,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       query: searchOut.query_analysis.raw_query,
       total_matches: searchOut.total_matches,
       query_analysis: { typo_corrections: corrections, corrected_tokens: searchOut.query_analysis.corrected_tokens },
-      results: searchOut.results.map((r) => compactSearchHit(r, SEARCH_HIT_SUMMARY_CHARS)),
+      results: searchOut.results.map((r) => compactSearchHit(r, SEARCH_HIT_SUMMARY_CHARS, { withPayload: true })),
       more_detail: "Leave out compact=1 for every field. Read one item at object_url.",
     });
   }
