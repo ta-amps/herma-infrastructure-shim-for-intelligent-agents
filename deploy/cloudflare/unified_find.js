@@ -2,9 +2,11 @@
 // types leaves here. The index is built from public rows (same visibility as /q/search) plus a snapshot of the library's words made ahead of time.
 import { tidyText } from "./page_shell.js";
 import { publicNames } from "./public_names.js";
-import CATALOG from "./find_catalog.generated.json";
+import CATALOG from "./find_catalog.generated.json" with { type: "json" };
 
 const INDEX_TTL_MS = 10 * 60 * 1000;
+const SPARE_HITS = 3;
+const HINT_CHECK_MS = 300;
 const RELOAD_GAP_MS = 60 * 1000;
 const ROWS_TTL_S = 300;
 const MAX_OBJECT_ROWS = 8000;
@@ -27,12 +29,12 @@ export const TUNE = {
 const LOW_VALUE = new Set(["worker_memory", "system_feedback_signal", "worker_issue_report", "peer_review", "aggregate_review_digest", "version_propagation_recheck", "aggregate_review_plan", "eval_and_rank", "evaluation_rubric", "public_general", "discovery_candidate", "feed_run"]);
 const STOP = new Set("a an and are as at be by can could do does for from get give go had has have help how i if in into is it its just let like looking make me my need needs of on or our please should show so some something someone sure that the their them there these this those to tool tools us use using want wants was way we were what when where which who why will with would you your find tell".split(" "));
 // Everyday word -> words the library uses. Plain code, reported in `rewrote` only when it fixed a misspelling. Tuned on the dev questions only.
-const ALSO = {
+const ALSO = Object.assign(Object.create(null), {
   scan: ["ocr"], scann: ["ocr", "scan"], read: ["ocr"], form: ["intake"], remember: ["memory", "recall"], session: ["memory"], helper: ["volunteer", "agent"], automat: ["agent"], recording: ["video"], clip: ["video", "cutdown"], picture: ["video", "frame"], handout: ["flyer"], leaflet: ["flyer"],
   spoken: ["voice", "narration"], voice: ["narration"], explainer: ["video"], fund: ["grant", "funding"], funder: ["grant", "funding"], donor: ["donation"], spend: ["cost"], bill: ["cost"], price: ["cost"], cheap: ["cost"], translate: ["translation", "multilingual"], translated: ["translation", "multilingual"],
   bug: ["defect", "regression"], ship: ["release", "launch"], publish: ["release"], law: ["policy", "rule"], government: ["policy", "public"], requirement: ["rule"], job: ["recruit", "contract"], abroad: ["overseas"], pressur: ["coerc"], outdated: ["freshness", "stale"], unsupported: ["claim"], unusual: ["edge", "corner"], evidence: ["research"], promise: ["claim"], assistance: ["aid", "support"], provider: ["partner", "directory"],
   privacy: ["pii", "anonymiz", "redaction"], identity: ["pii", "anonymiz"], anonym: ["pii", "kanon"], sparse: ["suppression"], boat: ["riverine"], phone: ["ussd", "sms"], menu: ["ussd"], pump: ["water"], cold: ["subzero", "arctic"], blind: ["tactile", "accessibility"], keyboard: ["accessibility"], tuning: ["tune"], improve: ["tune"], trial: ["pilot", "drill"], exercise: ["drill"], practice: ["drill"],
-};
+});
 const ASK_KIND = [[/\b(?:repos?|repositor(?:y|ies)|github|projects?)\b/i, "repo"], [/\b(?:seed[- ]?packs?|packs?)\b/i, "pack"], [/\bkits?\b/i, "kit"], [/\b(?:task[- ]?objects?|objects?)\b/i, "obj"]];
 const KIND_WORDS = /\b(?:repos?|repositor(?:y|ies)|github|seed[- ]?packs?|packs?|kits?|task[- ]?objects?)\b/gi;
 const ID_LOOKUP = /^(?=.{3,128}$)(?=.*(?:[_:]|[0-9]{2}))[A-Za-z0-9]+(?:[-_.:][A-Za-z0-9]+)+$/;
@@ -200,7 +202,7 @@ export function searchIndex(index, rawQuery, limit = DEFAULT_LIMIT) {
   }
   const askedTitle = askedKind ? low.replace(KIND_WORDS, " ").replace(/^\s*for\s+/, "") : low;
   const titled = closestTitle(index, askedTitle);
-  if (titled) return take(titled.map(hit).sort((a, b) => Number(b.kind === "kit") - Number(a.kind === "kit")), "title");
+  if (titled) return take(titled.map(hit).sort((a, b) => Number(b.kind === (askedKind || "kit")) - Number(a.kind === (askedKind || "kit"))), "title");
   let rewrote = null;
   if (!/\s/.test(low) && low.length >= 6 && ID_SHAPE.test(low)) {
     const near = closestName(index, low);
@@ -391,7 +393,14 @@ export async function reuseHintsForTask(db, title, { limit = 3, waitUntil } = {}
     if (Date.now() - held.at >= INDEX_TTL_MS) refreshLater(db, waitUntil);
     const out = searchIndex(held.index, title, limit * 2);
     if (!out.found || out.match !== "words") return [];
-    return (await stillPublic(db, out.hits.filter((d) => d.kind !== "repo"))).slice(0, limit).map(hitForReply);
+    // Optional, so it never holds up a lease that is already issued.
+    let timer;
+    const late = new Promise((resolve) => {
+      timer = setTimeout(() => resolve([]), HINT_CHECK_MS);
+    });
+    const checked = await Promise.race([stillPublic(db, out.hits.filter((d) => d.kind !== "repo")), late]);
+    clearTimeout(timer);
+    return checked.slice(0, limit).map(hitForReply);
   } catch {
     return [];
   }
@@ -404,13 +413,14 @@ export async function findResponse(url, db, { waitUntil } = {}) {
   const asked = Number(url.searchParams.get("limit"));
   const limit = Number.isInteger(asked) && asked > 0 ? Math.min(asked, MAX_LIMIT) : DEFAULT_LIMIT;
   const index = await currentIndex(db, waitUntil);
-  let out = searchIndex(index, q, limit);
+  // A few spare hits, so a row that just left public view doesn't shorten the answer.
+  let out = searchIndex(index, q, limit + SPARE_HITS);
   // Tasks aren't in the index, and a new object may not be yet: a query shaped like an ID asks the rows directly.
   if (out.match !== "exact" && ID_LOOKUP.test(q.trim())) {
     const direct = await lookupId(db, q.trim().toLowerCase());
     if (direct) out = { found: true, match: "exact", hits: [direct] };
   }
-  const hits = await stillPublic(db, out.hits);
+  const hits = (await stillPublic(db, out.hits)).slice(0, limit);
   if (!hits.length) out = { found: false, match: "none", hits: [] };
   const body = { ok: true, q: q.slice(0, 200), found: out.found, match: out.match, hits: hits.map(hitForReply) };
   if (out.rewrote) body.rewrote = out.rewrote;

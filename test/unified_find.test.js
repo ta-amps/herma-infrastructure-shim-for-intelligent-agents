@@ -69,6 +69,10 @@ describe("searchIndex", () => {
     expect(r.filter((x) => x.startsWith("obj:shelter_intake")).length).toBe(1);
     expect(r[0]).toMatch(/^obj:shelter_intake/);
   });
+  it("treats a word that names a built-in like any other word", () => {
+    expect(searchIndex(index, "constructor xyzzy").found).toBe(false);
+    expect(searchIndex(index, "__proto__").found).toBe(false);
+  });
   it("says found:false rather than guess", () => {
     for (const q of ["sourdough starter feeding", "qwertyuiop zxcvbnm", "   "]) {
       const r = searchIndex(index, q);
