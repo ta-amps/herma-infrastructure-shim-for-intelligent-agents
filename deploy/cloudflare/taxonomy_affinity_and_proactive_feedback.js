@@ -1149,9 +1149,9 @@ export function evaluateTaskWorkerAffinity({
   };
 }
 
-export async function buildAffinitySnapshot(db, infraAllowed = false, publicUrl = "https://herma.teleionlabs.com") {
+export async function buildAffinitySnapshot(db, infraAllowed = false, publicUrl = "https://shim.teleionlabs.com") {
   await ensureTaxonomyAffinityAndFeedbackSchema(db);
-  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
   const visFilter = infraAllowed
     ? "visibility IN ('public_ngo', 'public_commons', 'server_infra')"
     : "visibility IN ('public_ngo', 'public_commons')";
@@ -1549,7 +1549,7 @@ export async function ingestCatchAllFeedbackObservation(
     verifiedWorkerUuid = "",
     tokenVerified = false,
     infraAllowed = false,
-    publicUrl = "https://herma.teleionlabs.com",
+    publicUrl = "https://shim.teleionlabs.com",
     gatewayOps = null,
     mirrorFn = null,
     autoDiagnosis = null,
@@ -1560,7 +1560,7 @@ export async function ingestCatchAllFeedbackObservation(
   const g = TAXONOMY_AFFINITY_FEEDBACK_GRID;
   const bounds = resolveBilateralBounds(env);
   const encoder = new TextEncoder();
-  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
   const scrub = gatewayOps?.scrubSensitiveText || ((s) => String(s || ""));
   const scrubTokens = (s) =>
     scrub(

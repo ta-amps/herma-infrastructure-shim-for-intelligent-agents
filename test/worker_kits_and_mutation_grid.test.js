@@ -750,7 +750,7 @@ describe("Herma v6.11 Downloadable Worker Kits, Prompt/Toolkit Evolutionary Band
     const v11Res = await callGateway("/prompts/raw/codex_unlimited_frontier_loop_v11?mutate=0");
     expect(v11Res.status).toBe(200);
     const v11Text = await v11Res.text();
-    expect(v11Text).toContain("herma.teleionlabs.com");
+    expect(v11Text).toContain("shim.teleionlabs.com");
     expect(v11Text).toContain("dense_embedding_int8");
     expect(v11Text).toContain("RECOMMENDED WORKER TOOLKIT SETUP");
     expect(v11Text).not.toContain("\u2014");

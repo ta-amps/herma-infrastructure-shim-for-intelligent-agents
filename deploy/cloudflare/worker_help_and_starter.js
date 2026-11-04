@@ -357,7 +357,7 @@ async function loadBuiltinProvisionsAndContext(db) {
 }
 
 function summarizeObjectStructure(objRow, publicUrl) {
-  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
   const payload = objRow?.payload;
   let schemaKeys = [];
   let files = [];
@@ -910,7 +910,7 @@ async function logMetaCallAttempt(db, record) {
 }
 
 function buildDeterministicGuidance(hermaIntake, publicUrl, diagnostics = null) {
-  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
   const task = hermaIntake?.task_context?.task;
   const topObjects = hermaIntake?.reusable_task_objects || [];
   const firstObj = topObjects[0];
@@ -2556,7 +2556,7 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
   const bounds = resolveBilateralBounds(env);
   const method = request.method.toUpperCase();
   const url = new URL(request.url);
-  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
 
   if (method !== "GET" && method !== "HEAD" && method !== "POST") {
     return { status: HELP_STARTER_GRID.http_method_not_allowed, body: { ok: false, error: "method_not_allowed" } };

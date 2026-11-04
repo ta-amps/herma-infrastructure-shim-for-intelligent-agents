@@ -88,7 +88,7 @@ export function footerHtml() {
   );
 }
 
-/** The canonical address of a path on this site, as the design contract sets it: always https://herma.teleionlabs.com. */
+/** The canonical address of a path on this site, as the design contract sets it: always https://shim.teleionlabs.com. */
 export function canonicalUrl(path) {
   const clean = String(path || "/").split("#")[0];
   return `${SHELL.site.origin}${clean.startsWith("/") ? clean : `/${clean}`}`;

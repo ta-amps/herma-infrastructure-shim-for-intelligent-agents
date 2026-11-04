@@ -1206,7 +1206,7 @@ export async function handleLeaderboardRequest(url, db, { nowMs = Date.now() } =
   return body;
 }
 
-export async function handleProposalsGovernanceRequest(url, db, publicUrl = "https://herma.teleionlabs.com") {
+export async function handleProposalsGovernanceRequest(url, db, publicUrl = "https://shim.teleionlabs.com") {
   await ensureReputationAndProposalsSchema(db);
   const statusFilter = String(url.searchParams.get("status") || "").trim().toLowerCase();
   const kindFilter = String(url.searchParams.get("kind") || "").trim().toLowerCase();

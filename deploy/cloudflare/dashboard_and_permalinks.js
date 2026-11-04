@@ -402,7 +402,7 @@ ${reviews}
 }
 
 export function renderContributionPermalinkHtml(publicUrl, data) {
-  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
   if (!data || (!data.task && (!data.objects || data.objects.length === 0))) {
     const asked = tidyText(data?.lookup_id || "", 80);
     return documentHtml({

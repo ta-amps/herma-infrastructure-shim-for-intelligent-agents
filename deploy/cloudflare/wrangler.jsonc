@@ -50,7 +50,7 @@
     "HERMA_CONVERSATION_DISABLED_PROVIDERS": "[\"anthropic\",\"openrouter\"]",
     "HERMA_META_BUDGET_USD": "5",
     "STORAGE_MODE": "cloud",
-    "PUBLIC_URL": "https://herma.teleionlabs.com",
+    "PUBLIC_URL": "https://shim.teleionlabs.com",
     "CANONICAL_REDIRECT": "on",
     "TESSERA_URL": "https://tessera.ta-amps.workers.dev",
     "ORIGIN": "https://herma-api.fly.dev"

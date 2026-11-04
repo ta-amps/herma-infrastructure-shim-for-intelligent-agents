@@ -1856,7 +1856,7 @@ export async function ensureWorkerKitsAndMutationGridSchema(db, env, ops = {}) {
   }
 
   if (typeof ops.seedTaskObjectNoun === "function") {
-    const publicUrl = String(ops.publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
+    const publicUrl = String(ops.publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
     const researchObj = buildAgenticCostModelsResearchTaskObject();
 
     const kitsDistNoun = {
@@ -2427,7 +2427,7 @@ export async function recordArmSubmitOutcome(
 export async function buildWorkerToolkitGuidanceForClaim(db, publicUrl, claimContext = {}) {
   const grid = HERMA_PROMPT_KIT_MUTATION_GRID;
   const bc = grid.bandit_config;
-  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
   const kitBundle = await buildWorkerKitArtifacts(base);
 
   const armRow = await selectOrMutatePromptKitArm(db, {
@@ -2570,7 +2570,7 @@ export async function buildWorkerToolkitGuidanceForClaim(db, publicUrl, claimCon
 
 export async function renderPromptToolkitGuidanceBlock(publicUrl, armRow, { agentId = "" } = {}) {
   const grid = HERMA_PROMPT_KIT_MUTATION_GRID;
-  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
   const kitBundle = await buildWorkerKitArtifacts(base);
   const setups = orderSetupsForArm(kitBundle, armRow.kit_order, { modelHint: agentId }, armRow.variant_cell_id);
   const pitch =
@@ -2621,7 +2621,7 @@ export async function handleWorkerKitsRequest(request, url, db, publicUrl) {
     };
   }
 
-  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
   const kitBundle = await buildWorkerKitArtifacts(base);
   const armParam =
     url.searchParams.get("arm") ||
@@ -2714,7 +2714,7 @@ export async function handleExperimentsLeaderboardRequest(request, url, db, publ
     return { status: hs.method_not_allowed, body: { ok: false, error: "method_not_allowed" } };
   }
 
-  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
   const rowsRes = await db
     .prepare("SELECT * FROM herma_prompt_kit_arm_stats ORDER BY variant_cell_id ASC")
     .all();
@@ -3254,7 +3254,7 @@ export async function handleReprioritizeRequest(request, url, db, publicUrl, ops
   const rb = grid.reprioritization_bounds;
   const hs = grid.http_status;
   const method = request.method.toUpperCase();
-  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
 
   const cadenceStatus = await ensureCadenceAggregateReviewVerbs(db, base, ops);
 
@@ -3637,7 +3637,7 @@ export async function fetchClientIndexMetadata(db, objectKey, { includeDenseVect
 export async function autoEnqueueIndexEnrichAndPeerReviewVerbs(db, publicUrl, spec = {}, ops = {}) {
   const bounds = HERMA_PROMPT_KIT_MUTATION_GRID.client_index_bounds;
   const objectKey = String(spec.objectKey || "").trim();
-  const base = String(publicUrl || "https://herma.teleionlabs.com").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
   if (
     !db ||
     !objectKey ||

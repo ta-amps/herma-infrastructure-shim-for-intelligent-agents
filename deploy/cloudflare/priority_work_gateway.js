@@ -1716,7 +1716,7 @@ async function seedV611VerbIfMissing(db, verbSpec) {
 
 export async function ensurePriorityGatewaySchema(
   db,
-  { isLiveRuntime = false, env = null, publicUrl = "https://herma.teleionlabs.com" } = {}
+  { isLiveRuntime = false, env = null, publicUrl = "https://shim.teleionlabs.com" } = {}
 ) {
   if (!db || typeof db !== "object") {
     return;
@@ -1745,7 +1745,7 @@ export async function ensurePriorityGatewaySchema(
 
 async function runPriorityGatewaySchemaInitOnce(
   db,
-  { isLiveRuntime = false, env = null, publicUrl = "https://herma.teleionlabs.com" } = {}
+  { isLiveRuntime = false, env = null, publicUrl = "https://shim.teleionlabs.com" } = {}
 ) {
   if (typeof db.batch === "function" && typeof db.prepare === "function") {
     try {
@@ -2649,7 +2649,7 @@ async function reassembleTaskObjectPayload(db, objRow) {
   };
 }
 
-async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https://herma.teleionlabs.com") {
+async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https://shim.teleionlabs.com") {
   const rawQuery = String(params.q || params.query || "").trim();
   const scope = String(params.scope || "all").toLowerCase(); // 'all' | 'tasks' | 'objects'
   const reqTier = params.tier ? String(params.tier) : null;
@@ -4105,7 +4105,7 @@ async function recordRoutingOutcome(
   }
 }
 
-async function buildRoutingTelemetrySnapshot(db, infraAllowed, publicUrl = "https://herma.teleionlabs.com") {
+async function buildRoutingTelemetrySnapshot(db, infraAllowed, publicUrl = "https://shim.teleionlabs.com") {
   const visFilter = infraAllowed
     ? "visibility IN ('public_ngo', 'public_commons', 'server_infra')"
     : "visibility IN ('public_ngo', 'public_commons')";
@@ -4984,7 +4984,7 @@ async function evaluateFreeAccessWindowGuardrail(request, url, env, db, { infraA
   return { allowed: true, config };
 }
 
-async function buildPulseSnapshot(db, env, infraAllowed, publicUrl = "https://herma.teleionlabs.com") {
+async function buildPulseSnapshot(db, env, infraAllowed, publicUrl = "https://shim.teleionlabs.com") {
   await ensureCadenceAggregateReviewVerbs(db, publicUrl, {
     infraAllowed,
     scrubSensitiveText,
@@ -5430,6 +5430,30 @@ async function workerTokenRefusal({
   };
 }
 
+// Tasks that need people in a place (a field team, a live trial, collecting logs at a site): an API or
+// browser agent can't do them, so they go only to a claim that says it has people (can_do_field_work).
+const FIELD_WORK_PHRASES = Object.freeze([
+  "field team",
+  "field-team",
+  "field partner",
+  "field test",
+  "live block",
+  "live trial",
+  "gloved trial",
+  "40-trial",
+  "consented sites",
+  "collect genuine",
+  "recruit a",
+  "live two-pair run",
+]);
+const FIELD_WORK_SQL = FIELD_WORK_PHRASES.map(
+  (phrase) => `LOWER(COALESCE(title, '')) LIKE '%${phrase}%'`
+).join(" OR ");
+export function needsFieldTeam(title = "") {
+  const text = String(title).toLowerCase();
+  return FIELD_WORK_PHRASES.some((phrase) => text.includes(phrase));
+}
+
 async function claimNextAuthorizedTask(
   db,
   agentId,
@@ -5441,6 +5465,7 @@ async function claimNextAuthorizedTask(
     workerToken = "",
     slot = null,
     generalist = false,
+    canDoFieldWork = false,
     intentBucket = "",
     publicUrl = "https://shim.teleionlabs.com",
     modelHint = "",
@@ -5585,9 +5610,10 @@ async function claimNextAuthorizedTask(
         ? "any"
         : honorSlotCodeForIndex(profile.iteration_count);
 
-  const visAllowed = infraAllowed
+  const visBase = infraAllowed
     ? "visibility IN ('server_infra', 'public_ngo', 'public_commons')"
     : "visibility IN ('public_ngo', 'public_commons')";
+  const visAllowed = canDoFieldWork ? visBase : `${visBase} AND NOT (${FIELD_WORK_SQL})`;
 
   if (explicitTaskId) {
     const targetVisRow = await db
@@ -7065,8 +7091,27 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
     payload.objects ||
     payload.nouns ||
     (payload.task_object && typeof payload.task_object === "object" ? [payload.task_object] : []);
-  const explicitRawObjects = Array.isArray(rawObjectsInput)
-    ? rawObjectsInput.slice(0, QUEUE_GATEWAY_GRID.max_objects_per_submit)
+  // One object, or a map of key to object, is kept like a list; anything else is refused, never dropped.
+  let objectsList = rawObjectsInput;
+  if (rawObjectsInput && typeof rawObjectsInput === "object" && !Array.isArray(rawObjectsInput)) {
+    const looksLikeOne = ["object_key", "key", "summary", "payload", "category"].some((k) => k in rawObjectsInput);
+    objectsList = looksLikeOne
+      ? [rawObjectsInput]
+      : Object.entries(rawObjectsInput).map(([key, value]) =>
+          value && typeof value === "object" && !Array.isArray(value)
+            ? { object_key: key, ...value }
+            : { object_key: key, payload: { value } }
+        );
+  } else if (rawObjectsInput && !Array.isArray(rawObjectsInput)) {
+    return {
+      ok: false,
+      status: 400,
+      code: "invalid_task_objects",
+      detail: "task_objects must be a list, one object, or a map of key to object.",
+    };
+  }
+  const explicitRawObjects = Array.isArray(objectsList)
+    ? objectsList.slice(0, QUEUE_GATEWAY_GRID.max_objects_per_submit)
     : [];
 
   const enqueueDirectPrompt =
@@ -10247,6 +10292,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         stepMode: url.searchParams.get("step_mode") || "",
         generalist:
           url.searchParams.get("generalist") === "1" || url.searchParams.get("generalist") === "true" || undefined,
+        canDoFieldWork: url.searchParams.get("can_do_field_work") === "1" || url.searchParams.get("can_do_field_work") === "true",
         publicUrl,
         allowCoLease: allowCoLeaseRaw,
         showOnMap: parseShowOnMap(url.searchParams.get("show_on_map")),
@@ -10364,6 +10410,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           intentBucket: body.intent_bucket || "",
           stepMode: body.step_mode || "",
           generalist: body.generalist !== undefined ? Boolean(body.generalist) : undefined,
+          canDoFieldWork: body.can_do_field_work === true,
           publicUrl,
           allowCoLease: body.allow_co_lease ?? body.co_lease ?? null,
           workerSetup: body.worker_setup && typeof body.worker_setup === "object" ? body.worker_setup : null,
