@@ -13,7 +13,9 @@ URL: https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents
 
 # Teleion Fabric shim: context and capability checks for any agent
 
-**The Teleion Fabric shim (Meta Global AI Developer Hackathon 2026):** context-shimming AI middleware and capability firewall for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic `task objects` (`nouns`), durable `tasks (things to do)` (`verbs`), and URI context from a user-configured database before LLM execution across Meta Muse, **Baseten**, **Fireworks AI**, and **Modal**.
+> **Start at the main repository:** https://github.com/ta-amps/teleionlabs-teleion-fabric
+
+**The Teleion Fabric shim (Meta Global AI Developer Hackathon 2026):** context-shimming AI middleware and capability firewall for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic `task objects` (`nouns`), durable `tasks (things to do)` (`verbs`), and URI context from a user-configured database before LLM execution across Meta Muse, **Baseten**, ****, and **Modal**.
 
 ## See it
 
@@ -79,7 +81,7 @@ the Teleion Fabric shim routes model requests to the Meta API at the standard ti
 
 See [Models used ↗](https://agora.eranosforgood.org/models/) for the full list.
 
-Official inference partners are compute hosts, not models, so they are not in this table: **Baseten** (`inference.baseten.co`), **Fireworks AI** (`api.fireworks.ai`) and **Modal** sit downstream of the Teleion Fabric shim's shims. Live `HTTP 200` is checked on **Baseten** `meta-models/muse-spark-open`; the `partner-compute-cascade` and `partner-compute-telemetry-cards` packs separate `live_api` from `local_verified` records.
+Official inference partners are compute hosts, not models, so they are not in this table: **Baseten** (`inference.baseten.co`) and **Modal** sit downstream of the Teleion Fabric shim's shims. Live `HTTP 200` is checked on **Baseten** `meta-models/muse-spark-open`; the `partner-compute-cascade` and `partner-compute-telemetry-cards` packs separate `live_api` from `local_verified` records.
 
 ## Prompt Shimming vs LoRAs as Parametric Memory (`training/` & `eval/`)
 
