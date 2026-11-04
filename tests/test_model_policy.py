@@ -384,6 +384,9 @@ def test_repository_holds_no_word_that_is_banned_everywhere() -> None:
     offenders: list[str] = []
     scanned = 0
     for path in repo_text_files():
+        # The one file the release gate exempts: license text that must name the model family.
+        if path.name == "NOTICE-META-MODELS.txt":
+            continue
         try:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
