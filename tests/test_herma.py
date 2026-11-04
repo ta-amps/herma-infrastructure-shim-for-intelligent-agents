@@ -1955,6 +1955,11 @@ console.log(JSON.stringify({
     assert cf["mcpServer"] == "herma"
     assert set(cf["mcpTools"]) == {
         "find",
+        "search",
+        "list_task_objects",
+        "list_tasks",
+        "read_task",
+        "read_task_object",
         "list_builtin_provisions",
         "preview_shim",
         "extract_entities",

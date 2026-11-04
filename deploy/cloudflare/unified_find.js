@@ -1,5 +1,6 @@
 // GET /q/find?q=...: one call, one short reply, over repositories, Task Objects, kits and seed packs. Plain code only: no model call, nothing a caller
 // types leaves here. The index is built from public rows (same visibility as /q/search) plus a snapshot of the library's words made ahead of time.
+import { stripPiiDeep } from "./pii_strip.js";
 import { tidyText } from "./page_shell.js";
 import { publicNames } from "./public_names.js";
 import CATALOG from "./find_catalog.generated.json" with { type: "json" };
@@ -474,7 +475,8 @@ export async function reuseHintsForTask(db, title, { limit = 3, waitUntil } = {}
     const usable = out.hits.filter((d) => !NOT_A_HELPER.test(String(d.about || "")));
     const checked = await Promise.race([stillPublic(db, usable), late]);
     clearTimeout(timer);
-    return checked.slice(0, limit).map(hitForReply);
+    // The claim route answers outside the display layer, so a helper's words pass through it here.
+    return checked.slice(0, limit).map((d) => stripPiiDeep(hitForReply(d)));
   } catch {
     return [];
   }

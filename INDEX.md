@@ -32,7 +32,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) |  |
 
-## deploy/ (50)
+## deploy/ (52)
 
 | File | What it is |
 |---|---|
@@ -43,6 +43,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/bilateral_bridge.js](deploy/cloudflare/bilateral_bridge.js) | Bilateral Agent Transport Shim (/bridge/) for Herma Cloud Worker. |
 | [deploy/cloudflare/canonical_host.js](deploy/cloudflare/canonical_host.js) | One canonical host for people (design contract of Nov 2, 2026): on any other host that reaches this Worker, a… |
 | [deploy/cloudflare/client_family.js](deploy/cloudflare/client_family.js) | What Herma keeps of a visitor's browser or tool (finding F-PRIV-LOGS-001): a coarse family, never the version… |
+| [deploy/cloudflare/client_prefs.js](deploy/cloudflare/client_prefs.js) | What a client can choose on search, list, object read, claim and MCP. |
 | [deploy/cloudflare/co_lease_and_ensemble.js](deploy/cloudflare/co_lease_and_ensemble.js) | Herma v6.9 Adaptive Multi-Worker Co-Leasing, Heartbeat (/q/heartbeat), |
 | [deploy/cloudflare/composition_and_demand_engine.js](deploy/cloudflare/composition_and_demand_engine.js) | Universal Task-Object Reuse Graph, Interface Composer & Adaptive Demand-Driven Prioritizer (/q/graph, /q/comp… |
 | [deploy/cloudflare/contributor_printout.js](deploy/cloudflare/contributor_printout.js) | What a contributor's agent shows its person after it reports a Task (design contract of Nov 2, 2026): two pla… |
@@ -69,6 +70,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/provider_diagnostics.js](deploy/cloudflare/provider_diagnostics.js) | Fixed provider-reported categories only. |
 | [deploy/cloudflare/provider_health.js](deploy/cloudflare/provider_health.js) | Deterministic shared availability inside the existing operator allowance coordinator. |
 | [deploy/cloudflare/public_names.js](deploy/cloudflare/public_names.js) | Public output says Teleion Fabric and the shim's public address. |
+| [deploy/cloudflare/public_read.js](deploy/cloudflare/public_read.js) | What a no-key reader can't read on the model shim. |
 | [deploy/cloudflare/release-policy.json](deploy/cloudflare/release-policy.json) | JSON object: schema, note, required_ancestors, live_when_recorded, rules |
 | [deploy/cloudflare/repo_rows.js](deploy/cloudflare/repo_rows.js) | Compact lookup of new GitHub repositories for agents (GET /q/repos). |
 | [deploy/cloudflare/sha256_sync.js](deploy/cloudflare/sha256_sync.js) | A small synchronous SHA-256 for the Worker's display filter. |
@@ -191,7 +193,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
 | [scripts/repo_rows_refresh.py](scripts/repo_rows_refresh.py) | Build the rows behind GET /q/repos: feed exports plus a fresh scan of GitHub's public search, as SQL for D1. |
 
-## test/ (39)
+## test/ (40)
 
 | File | What it is |
 |---|---|
@@ -218,6 +220,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/node/pii_strip.node-test.mjs](test/node/pii_strip.node-test.mjs) |  |
 | [test/object_key_owner.test.js](test/object_key_owner.test.js) | A name is only a label. |
 | [test/on_demand_api_keys_and_nodes.test.js](test/on_demand_api_keys_and_nodes.test.js) |  |
+| [test/open_read.test.js](test/open_read.test.js) | Anyone reads public Task Objects with no key, by HTTP and MCP; every result says whether it was reviewed; a c… |
 | [test/pii_public_read.test.mjs](test/pii_public_read.test.mjs) |  |
 | [test/priority_work_gateway.test.js](test/priority_work_gateway.test.js) |  |
 | [test/privacy_logs.test.js](test/privacy_logs.test.js) |  |

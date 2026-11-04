@@ -3,7 +3,7 @@
 // up to 8 calls; a few Tasks needing people trapped worker after worker. Read-only: nothing here leases, writes or runs anything.
 
 export const WORK_NEXT = Object.freeze({
-  let_go_workers: 3, // this many different workers let a Task go in the window: a plain claim stops handing it out; a claim by id still works
+  let_go_workers: 3, // this many different workers let a Task go in the window: a plain claim offers it last, when nothing else is left
   let_go_window_ms: 24 * 3600 * 1000,
   let_go_cache_ms: 60 * 1000,
   let_go_recent_rows: 5000,
@@ -170,6 +170,24 @@ export async function workNextResponse(url, db, { publicUrl, fieldSql, infraAllo
     picked.push(...(out?.results || []).map((r) => ({ ...r, order: tiers.indexOf(tier) })));
     if (picked.length >= limit) break;
   }
+  // Tasks several workers let go come last: still offered when nothing else is left.
+  const lastResort = letGo.filter((id) => !skip.includes(id));
+  if (picked.length < limit && lastResort.length) {
+    for (const tier of tiers) {
+      if (tier === "infra_private" && !infraAllowed) continue;
+      const out = await db
+        .prepare(
+          `SELECT task_id, tier, priority, title, SUBSTR(prompt, 1, ${WORK_NEXT.prompt_head_chars + 1}) AS prompt, verb_kind FROM herma_durable_queue
+           WHERE state = 'ready' AND tier = ? AND ${vis} AND ${prereq}${notPeople}${noVectors}${notOwn} AND task_id IN (${lastResort.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})
+           ORDER BY priority DESC, id DESC LIMIT ?`
+        )
+        .bind(tier, ...(agentId ? [agentId] : []), limit)
+        .all();
+      if (out?.results?.length && !tierUsed) tierUsed = tier;
+      picked.push(...(out?.results || []).map((r) => ({ ...r, order: tiers.length + tiers.indexOf(tier) })));
+      if (picked.length >= limit) break;
+    }
+  }
   const pool = [...picked];
   for (let i = pool.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -184,7 +202,7 @@ export async function workNextResponse(url, db, { publicUrl, fieldSql, infraAllo
     title: r.title,
     prompt_head: String(r.prompt || "").slice(0, WORK_NEXT.prompt_head_chars),
     prompt_cut: String(r.prompt || "").length > WORK_NEXT.prompt_head_chars,
-    claim_url: `${q(publicUrl)}/claim/${claimAs}?task_id=${enc(r.task_id)}&format=json${wantPeople ? "&can_do_field_work=1" : ""}`,
+    claim_url: `${q(publicUrl)}/claim/${claimAs}?task_id=${enc(r.task_id)}${wantPeople ? "&can_do_field_work=1" : ""}`,
     task_url: `${q(publicUrl)}/task/${enc(r.task_id)}`,
   }));
   const body = {
@@ -196,7 +214,7 @@ export async function workNextResponse(url, db, { publicUrl, fieldSql, infraAllo
     left_out: {
       let_go_by_several_workers: letGo.length,
       skipped_by_you: skip.length,
-      rule: "Left out: Tasks needing people or a place, waiting on another Task, your own, or let go by several workers. Everything stays readable at /q/tasks and claimable by id.",
+      rule: "Left out: Tasks needing people or a place, waiting on another Task, or your own. Tasks let go by several workers come last. Everything stays readable at /q/tasks and claimable by id.",
     },
   };
   if (tasks.length) {
@@ -239,7 +257,7 @@ export async function markListedTasks(url, body, db, { needsFieldTeam, publicUrl
   let tasks = body.tasks.map((t) => {
     const needs_people = Boolean(needsFieldTeam?.(t.title));
     const waiting = Boolean(t.blocked_by_task_id) && !doneBlockers.has(t.blocked_by_task_id);
-    return { ...t, needs_people, ...(counts.get(t.task_id) ? { let_go_by_workers: counts.get(t.task_id) } : {}), plain_claim_offers_it: t.state === "ready" && !needs_people && !letGo.has(t.task_id) && !waiting };
+    return { ...t, needs_people, ...(counts.get(t.task_id) ? { let_go_by_workers: counts.get(t.task_id) } : {}), plain_claim_offers_it: t.state === "ready" && !needs_people && !waiting, ...(letGo.has(t.task_id) ? { offered_last: true } : {}) };
   });
   const wantClaimable = url.searchParams.get("claimable") === "1";
   if (wantClaimable) tasks = tasks.filter((t) => t.plain_claim_offers_it);

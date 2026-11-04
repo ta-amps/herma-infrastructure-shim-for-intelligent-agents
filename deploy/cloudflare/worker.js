@@ -29,7 +29,7 @@ import {
   FAVICON_SVG,
   HERMA_VERSION,
   HermaErr,
-  MCP_TOOLS_SPEC,
+  MCP_READ_TOOLS, MCP_TOOLS_SPEC,
   PREVIEW_JS,
   ROBOTS_TXT,
   SAFE_BUCKET_SEG_RE,
@@ -1419,6 +1419,23 @@ async function handleStatelessMcp(request, db, env) {
     const args = params.arguments || {};
     await ensureSeeded(db);
 
+    if (Object.hasOwn(MCP_READ_TOOLS, toolName)) {
+      const tool = MCP_READ_TOOLS[toolName];
+      const missing = tool.required.find((name) => args[name] === undefined || args[name] === "");
+      if (missing) return jsonResp({ jsonrpc: "2.0", id: reqId, error: { code: -32602, message: `${toolName} needs ${missing}` } });
+      const readUrl = new URL(`https://shim.teleionlabs.com/q/${tool.route}`);
+      for (const [name, value] of Object.entries(args)) {
+        if (name === "key" || name === "task_id") readUrl.pathname += `/${encodeURIComponent(String(value))}`;
+        else if (value !== null && typeof value !== "object") readUrl.searchParams.set(name, typeof value === "boolean" ? (value ? "1" : "0") : String(value));
+      }
+      // A plain no-key read of the same route: MCP opens nothing the route doesn't, and closes nothing more.
+      const readRequest = new Request(readUrl, { headers: { accept: "application/json" } });
+      const answer = await withoutLeaseDetails(readRequest, await handlePriorityWorkGateway(readRequest, env, db, "https://shim.teleionlabs.com", { withSecurity }), env);
+      // The same display steps as the public paths: no lease details, personal data replaced.
+      const text = JSON.stringify(stripPiiDeep(JSON.parse(await answer.text())));
+      return jsonResp({ jsonrpc: "2.0", id: reqId, result: { content: [{ type: "text", text }], isError: !answer.ok } });
+    }
+
     if (toolName === "find") {
       const findQ = typeof args.q === "string" ? args.q : "";
       if (!findQ.trim() || Object.keys(args).some((k) => k !== "q" && k !== "limit")) {
@@ -1660,7 +1677,11 @@ const application = {
         if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
         return textResp(buildLlmsFullTxt(publicUrl), "text/plain; charset=utf-8");
       }
-      if (path === "/.well-known/agent-card.json") {
+      if (path === "/.well-known/security.txt") {
+        if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
+        return textResp("Contact: https://teleionlabs.com/security/\nExpires: 2027-10-31T23:59:59.000Z\nPolicy: https://teleionlabs.com/security/\n", "text/plain; charset=utf-8");
+      }
+      if (path === "/.well-known/agent-card.json" || path === "/.well-known/agent.json") {
         if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
         return jsonResp(buildAgentCard(publicUrl));
       }
@@ -2535,7 +2556,7 @@ function dropLeaseFields(value) {
 export async function withoutLeaseDetails(request, response, env) {
   if (env.OPEN_WORK_LIMITS !== "on") return response;
   const path = new URL(request.url).pathname;
-  if (!path.startsWith("/q/") && !path.startsWith("/help") && !path.startsWith("/chat")) return response;
+  if (!path.startsWith("/q/") && !path.startsWith("/c/") && !path.startsWith("/help") && !path.startsWith("/chat")) return response;
   // The worker's own lease answers keep its fence.
   if (response.status !== 409 && /^\/q\/(?:claim|heartbeat|submit|complete|release|onboard|enqueue)(?:\/|$)/.test(path)) return response;
   // A stored object is read by digest: never edited here.

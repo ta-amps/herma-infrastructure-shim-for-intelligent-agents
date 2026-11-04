@@ -42,7 +42,7 @@ describe("GET /q/next", () => {
     expect(body.next.action).toBe("claim");
     const row = await env.HERMA_DB.prepare("SELECT state FROM herma_durable_queue WHERE task_id = ?").bind(good).first();
     expect(row.state).toBe("ready");
-    const lease = await (await call(new URL(body.next.url).pathname + new URL(body.next.url).search)).json();
+    const lease = await (await call(`${new URL(body.next.url).pathname}${new URL(body.next.url).search}&format=json`)).json();
     expect(lease.lease.task_id).toBe(good);
     expect(lease.next.action).toBe("do_the_work");
     expect(lease.next.give_back_url).toContain(`/${lease.lease.fencing_token}?`);
@@ -104,16 +104,19 @@ describe("a dead Task stops trapping workers", () => {
       expect(rel.next.url).toContain(`skip=${dead}`);
     }
     resetLetGoCache();
-    const body = await (await call("/q/next?agent_id=wn-d4")).json();
-    expect(body.tasks).toEqual([]);
+    // Ranked lower, not dropped: another Task comes first, and it's still offered when nothing else is left.
+    const other = await makeTask("Write a short sheet", { priority: 1 });
+    const body = await (await call("/q/next?agent_id=wn-d4&limit=2")).json();
+    expect(body.tasks.map((t) => t.task_id)).toEqual([other, dead]);
     expect(body.left_out.let_go_by_several_workers).toBeGreaterThanOrEqual(1);
-    const plain = await (await call("/q/claim/wn-d4?format=json")).json();
-    expect(plain.lease?.task_id).not.toBe(dead);
     const listed = (await (await call("/q/tasks?state=ready&tier=ngo_priority&limit=50")).json()).tasks.find((t) => t.task_id === dead);
     expect(listed.let_go_by_workers).toBe(3);
-    expect(listed.plain_claim_offers_it).toBe(false);
-    const byId = await (await call(`/q/claim/wn-d4?task_id=${dead}&format=json`)).json();
-    expect(byId.lease.task_id).toBe(dead);
+    expect(listed.plain_claim_offers_it).toBe(true);
+    expect(listed.offered_last).toBe(true);
+    const first = await (await call("/q/claim/wn-d4?format=json")).json();
+    expect(first.lease.task_id).toBe(other);
+    const fallback = await (await call("/q/claim/wn-d5?format=json")).json();
+    expect(fallback.lease.task_id).toBe(dead);
   });
 });
 

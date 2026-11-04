@@ -3,6 +3,8 @@
 // and Modal Finetuning Dataset Export (`/q/training-export`) for Herma v6.3.
 
 import { stripPiiDeep } from "./pii_strip.js";
+import { KEYED_CHECK_SQL, confidenceOf, reviewStateOf } from "./public_read.js";
+import { readClientPrefs, reviewAllowed } from "./client_prefs.js";
 import { MODELS_USED_LINK, documentHtml, scrubBannedWords, tidyText } from "./page_shell.js";
 import { NETWORK_MAP_NOTICE } from "./network_activity.js";
 import { scrubSensitiveText } from "./bilateral_bridge.js";
@@ -4002,6 +4004,7 @@ export async function handleTrainingExportRequest(request, env, db, publicUrl) {
   const wantsJsonl =
     (url.searchParams.get("format") || "").toLowerCase() === "jsonl" ||
     (request.headers.get("accept") || "").includes("application/x-ndjson");
+  const prefs = readClientPrefs(url.searchParams);
 
   // Strictly export only public-good & public-commons data, scrubbed of any identifiers/secrets
   const [tracesRes, objectsRes, chatsRes, routingArmsRes] = await Promise.all([
@@ -4028,7 +4031,7 @@ export async function handleTrainingExportRequest(request, env, db, publicUrl) {
       .all(),
     db
       .prepare(
-        `SELECT o.id, o.object_key, o.category, o.summary, o.payload_json, o.eval_count,
+        `SELECT o.id, o.object_key, o.category, o.summary, o.payload_json, o.eval_count, o.verification_verdict,
                 o.quality_milli, o.novelty_milli, o.sha256_hash, o.created_at,
                 q.title AS task_title, q.prompt AS task_prompt, q.verb_kind AS task_verb_kind
          FROM herma_task_objects o
@@ -4089,6 +4092,21 @@ export async function handleTrainingExportRequest(request, env, db, publicUrl) {
   }
 
   let examples = [];
+  // Who checked each object: distinct checkers, with a key or by name only. If this can't be read, the score rests on the row alone.
+  const checksByKey = new Map();
+  try {
+    const keys = (objectsRes?.results || []).map((o) => `'${String(o.object_key).replace(/'/g, "''")}'`);
+    if (keys.length) {
+      const checks = await db.prepare(
+        `SELECT target_id, COUNT(DISTINCT CASE WHEN ${KEYED_CHECK_SQL} THEN evaluator_worker_uuid END) AS keyed,
+                COUNT(DISTINCT CASE WHEN NOT ${KEYED_CHECK_SQL} THEN evaluator_worker_uuid END) AS name_only
+         FROM herma_evaluations WHERE target_kind = 'object' AND target_id IN (${keys.join(",")}) GROUP BY target_id`
+      ).all();
+      for (const c of checks?.results || []) checksByKey.set(c.target_id, c);
+    }
+  } catch {
+    checksByKey.clear();
+  }
 
   for (const tr of tracesRes?.results || []) {
     if (examples.length >= limit) break;
@@ -4122,6 +4140,8 @@ export async function handleTrainingExportRequest(request, env, db, publicUrl) {
       example_id: tr.trace_id,
       record_kind: tr.source_kind,
       verified_outcome: tr.verified_outcome,
+      confidence: tr.verified_outcome === "accepted" ? 0.6 : /reject|fail|refut/i.test(String(tr.verified_outcome || "")) ? 0.05 : 0.3,
+      evidence: [`recorded run, outcome: ${String(tr.verified_outcome || "none").replace(/_/g, " ")}`],
       sample_weight: weight,
       source_model: tr.model_id || "muse-spark-1.3",
       messages: [
@@ -4145,24 +4165,30 @@ export async function handleTrainingExportRequest(request, env, db, publicUrl) {
     } catch {
       continue; // Skip any broken legacy truncated JSON rows!
     }
+    // Owner, Nov 4: the export stays open, so every row stays, honestly labeled; the client may leave a state out.
+    const reviewState = reviewStateOf(obj);
+    if (!reviewAllowed(reviewState, prefs)) continue;
     const evalCount = Number(obj.eval_count || 0);
+    // An evaluation alone is an opinion a free name can send, so only reviewed work earns weight from one. Failed work teaches nothing.
     const baseQual =
-      evalCount > 0 ? Number(obj.quality_milli || 0) : HELP_STARTER_GRID.unreviewed_object_base_weight_milli;
-    const evalBonus = Math.min(
+      reviewState === "reviewed" ? Number(obj.quality_milli || 0) : HELP_STARTER_GRID.unreviewed_object_base_weight_milli;
+    const evalBonus = reviewState !== "reviewed" ? 0 : Math.min(
       HELP_STARTER_GRID.eval_count_bonus_cap_milli,
       evalCount * HELP_STARTER_GRID.eval_count_bonus_step_milli
     );
     const ucbWin = verbWinRateByKind.get(obj.task_verb_kind || "general_verb") || 0;
     const ucbBonus = Math.round(ucbWin * HELP_STARTER_GRID.ucb_bonus_scale_milli);
     const combinedMilli = Math.min(HELP_STARTER_GRID.milli_scale, baseQual + evalBonus + ucbBonus);
-    const sampleWeight =
+    const sampleWeight = reviewState === "failed" ? 0 :
       Math.round((combinedMilli / HELP_STARTER_GRID.milli_scale) * HELP_STARTER_GRID.rate_round_scale) /
       HELP_STARTER_GRID.rate_round_scale;
 
     examples.push({
       example_id: `obj_${obj.object_key}`,
-      record_kind: obj.category === "reasoning_suggestion" ? "meta_reasoning_suggestion" : "verified_task_object",
-      review_status: evalCount > 0 ? "peer_reviewed" : "unreviewed",
+      // Same words as every other public read: an evaluation alone is a peer's opinion, and a free name can send one.
+      record_kind: obj.category === "reasoning_suggestion" ? "meta_reasoning_suggestion" : "task_object",
+      review_status: reviewState,
+      ...confidenceOf(obj, checksByKey.get(obj.object_key) || { keyed: 0, name_only: 0 }),
       eval_count: evalCount,
       quality_milli: evalCount > 0 ? Number(obj.quality_milli || 0) : 0,
       novelty_milli: Number(obj.novelty_milli || 0),
@@ -4262,6 +4288,8 @@ export async function handleTrainingExportRequest(request, env, db, publicUrl) {
       example_id: `chat_${ch.session_id}`,
       record_kind: "a2a_multiturn_trajectory",
       state_stage: ch.state_stage,
+      confidence: ch.state_stage === "submitted" ? 0.3 : 0.2,
+      evidence: [`recorded conversation, stage: ${String(ch.state_stage || "none").replace(/_/g, " ")}`],
       sample_weight:
         ch.state_stage === "submitted"
           ? HELP_STARTER_GRID.submitted_unreviewed_trace_weight_milli / HELP_STARTER_GRID.milli_scale
@@ -4275,6 +4303,9 @@ export async function handleTrainingExportRequest(request, env, db, publicUrl) {
 
   // Owner, Nov 4: the export stays open, with common personal data stripped from what it serves. Stored rows are unchanged.
   examples = examples.map((ex) => stripPiiDeep(ex));
+  // The client's choice: keep rows at or above this score. Every row stays available by default.
+  const minConfidence = Number(url.searchParams.get("min_confidence"));
+  if (Number.isFinite(minConfidence) && minConfidence > 0) examples = examples.filter((ex) => Number(ex.confidence) >= minConfidence);
 
   if (wantsJsonl) {
     const jsonlBody = examples.map((ex) => JSON.stringify(ex)).join("\n") + (examples.length ? "\n" : "");

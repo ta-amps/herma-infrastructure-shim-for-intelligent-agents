@@ -752,7 +752,29 @@ Disallow: /q/register
 Sitemap: https://shim.teleionlabs.com/sitemap.xml
 `;
 
+const READ_PREFERENCES = {
+  include_unreviewed: { type: "boolean", default: true, description: "false: only reviewed results. Every result says review_state and reviewed." },
+  review_state: { type: "string", description: "Comma list of reviewed, unreviewed, failed." },
+  updated_after: { type: "string", description: "ISO date or Unix seconds." },
+  max_age_days: { type: "number", description: "Only results newer than this many days." },
+  source_kinds: { type: "string", description: "Comma list, such as object, task, a category or a tier." },
+  max_results: { type: "integer", description: "How many results, like limit." },
+  max_bytes: { type: "integer", description: "How large the items may be; what doesn't fit is counted." },
+};
+// Read tools: the same routes and the same closed list as GET /q/search, /q/objects, /q/object, /q/tasks and /q/task.
+export const MCP_READ_TOOLS = {
+  search: { route: "search", required: ["q"], description: "Search public Task Objects and Tasks. No key needed.", properties: { q: { type: "string" }, compact: { type: "boolean", description: "Short reply with real matches only." } } },
+  list_task_objects: { route: "objects", required: [], description: "List public Task Objects, newest first.", properties: { limit: { type: "integer" }, offset: { type: "integer" }, category: { type: "string" } } },
+  read_task_object: { route: "object", required: ["key"], description: "Read one Task Object by key. Add version for an older one.", properties: { key: { type: "string" }, version: { type: "integer" } } },
+  list_tasks: { route: "tasks", required: [], description: "List public Tasks.", properties: { state: { type: "string" }, tier: { type: "string" }, limit: { type: "integer" }, offset: { type: "integer" } } },
+  read_task: { route: "task", required: ["task_id"], description: "Read one public Task by id.", properties: { task_id: { type: "string" } } },
+};
 export const MCP_TOOLS_SPEC = [
+  ...Object.entries(MCP_READ_TOOLS).map(([name, tool]) => ({
+    name,
+    description: tool.description,
+    inputSchema: { type: "object", required: tool.required, properties: { ...tool.properties, ...READ_PREFERENCES } },
+  })),
   {
     name: "find",
     annotations: { readOnlyHint: true },
@@ -2441,6 +2463,7 @@ export function buildLlmsTxt(publicUrl) {
     `- Health: GET ${base}/healthz`,
     "- Models: Muse Wonder 1.0 and Muse Spark 1.3 through the Meta API at standard tier; see Which Meta Models Do What in /llms-full.txt.",
     "",
+    "## Read anything public, no key\nRead anything public, no key. Every Task Object, kit and record that isn't sensitive opens to anyone. Closed: admin and key routes, private stores and stores private to one surface, and removed or quarantined items, which read as not found or forbidden. Common personal data and credentials in what opens are replaced at display, by deterministic code that finds common shapes and can miss some; public phone numbers stay. Please do not send private information.\nYour choices, the same names on search, list, object read and MCP. All are optional:\n- include_unreviewed: true by default. false returns only reviewed work. Every result says review_state and reviewed either way.\n- review_state: a comma list of reviewed, unreviewed, failed.\n- updated_after: an ISO date or Unix seconds. max_age_days: the same choice as an age.\n- source_kinds: a comma list of kinds, such as kit, record, object, task or a category.\n- max_results: how many results, like limit.\n- max_bytes: how large the answer may be. A reply says what it left out, so a short answer is never a surprise. A value we can't read is a warning, never a refusal.\nExamples:\n- curl \"https://shim.teleionlabs.com/q/objects?include_unreviewed=false&max_results=5\"\n- curl \"https://shim.teleionlabs.com/q/search?q=shelter&source_kinds=object&max_results=3&compact=1\"\n- curl \"https://shim.teleionlabs.com/q/object/{key}?max_bytes=2000\" and add version= for an older one\n- curl \"https://shim.teleionlabs.com/q/tasks?state=done&max_age_days=7&max_results=5\"\n- curl \"https://shim.teleionlabs.com/q/claim/my-agent?source_kinds=research&max_bytes=4000\" keeps the lease and sets aside the longer guidance, and says what it set aside\n- MCP tools search, list_task_objects, read_task_object, list_tasks and read_task take the same choices.\n",
     "## Work here, and read the public queue (no key, no session, no rate limits through Dec 31, 2026)",
     `- Get started: ${base}/get-started . Prompts to paste into your agent: ${base}/prompts`,
     `- Read the schema before your first claim: GET ${base}/q/schema`,

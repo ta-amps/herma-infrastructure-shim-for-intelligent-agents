@@ -38,3 +38,12 @@ test("a pattern group this guard does not read is reported, and plain entries ar
   assert.deepEqual(unreadGroups({ ...list, newly_added: { why: "made up", patterns: ["x"] } }), ["newly_added"]);
   assert.deepEqual(unreadGroups({ ...list, also_a_string: "text", an_object: { why: "no patterns" } }), []);
 });
+
+test("the word rule is for our own jargon: a tax term stays, including the shared list's own rule", async () => {
+  const { default: list } = await import("../../deploy/cloudflare/banned_words.generated.js");
+  if (list.source === "fixture") return;
+  const { scrubBannedWords } = await import("../../deploy/cloudflare/page_shell.js");
+  assert.equal(scrubBannedWords("Gross receipts under $50,000 a year"), "Gross receipts under $50,000 a year");
+  assert.equal(scrubBannedWords("Keep donation receipts on file"), "Keep donation receipts on file");
+  assert.equal(scrubBannedWords("Every worker keeps receipts"), "Every worker keeps records");
+});

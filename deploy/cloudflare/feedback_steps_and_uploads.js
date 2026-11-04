@@ -6,6 +6,8 @@
 // Strictly preserves universal `Task` (`herma_durable_queue`) and `Task Object` (`herma_task_objects`)
 // primitives with zero rival work authorities, zero em-dashes, and zero legacy model names.
 
+import { applyClientPrefs, readClientPrefs } from "./client_prefs.js";
+import { TRUSTED_TASK_EVALUATION_SQL, reviewLabels, reviewWhere } from "./public_read.js";
 import {
   enrichTaxonomyRecord,
   ingestCatchAllFeedbackObservation,
@@ -41,7 +43,7 @@ export const FEEDBACK_STEPS_UPLOADS_GRID = Object.freeze({
   diagnostic_cred_points: 6,
   milli_scale: 1000,
   default_list_limit: 25,
-  max_list_limit: 100,
+  max_list_limit: 500,
   feedback_recent_limit: 30,
   cognitive_tier12_bonus: 6.0,
   verification_tier12_bonus: 3.0,
@@ -852,12 +854,31 @@ export async function handleWorkerFeedbackRequest(
   };
 }
 
+// What a client chose, as SQL on the columns it can use, so a short page is never only what a filter left.
+function preferenceWhere(prefs, kindColumns, timeColumn = "created_at") {
+  let where = "";
+  const binds = [];
+  if (prefs.updated_after != null) {
+    where += ` AND ${timeColumn} >= ?`;
+    binds.push(new Date(prefs.updated_after * 1000).toISOString());
+  }
+  if (prefs.source_kinds) {
+    const kinds = prefs.source_kinds.slice(0, 20);
+    const marks = kinds.map(() => "?").join(", ");
+    where += ` AND (${kindColumns.map((column) => `LOWER(COALESCE(${column}, '')) IN (${marks})`).join(" OR ")})`;
+    for (const _ of kindColumns) binds.push(...kinds);
+  }
+  return { where, binds };
+}
+const secondsOf = (value) => Date.parse(String(value)) / 1000;
+
 export async function handleListDurableTasksRequest(url, db, publicUrl, { infraAllowed = false } = {}) {
   const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
   const visFilter = infraAllowed
     ? "visibility IN ('public_ngo', 'public_commons', 'server_infra')"
     : "visibility IN ('public_ngo', 'public_commons')";
 
+  const prefs = readClientPrefs(url.searchParams);
   const stateFilter = String(url.searchParams.get("state") || "").trim().toLowerCase();
   const tierFilter = String(url.searchParams.get("tier") || "").trim().toLowerCase();
   const stepModeFilter = normalizeStepMode(url.searchParams.get("step_mode") || "");
@@ -867,10 +888,11 @@ export async function handleListDurableTasksRequest(url, db, publicUrl, { infraA
     1,
     Math.min(
       FEEDBACK_STEPS_UPLOADS_GRID.max_list_limit,
-      Number(url.searchParams.get("limit") || FEEDBACK_STEPS_UPLOADS_GRID.default_list_limit)
+      Math.floor(Number(prefs.max_results || url.searchParams.get("limit")) || FEEDBACK_STEPS_UPLOADS_GRID.default_list_limit)
     )
   );
-  const offset = Math.max(0, Number(url.searchParams.get("offset") || 0));
+  const offsetAsked = Math.floor(Number(url.searchParams.get("offset")) || 0);
+  const offset = Number.isSafeInteger(offsetAsked) && offsetAsked > 0 ? offsetAsked : 0;
 
   if (tierFilter === "infra_private" && !infraAllowed) {
     return {
@@ -902,13 +924,25 @@ export async function handleListDurableTasksRequest(url, db, publicUrl, { infraA
     binds.push(categoryFilter);
   }
 
+  const chosen = preferenceWhere(prefs, ["verb_kind", "category", "tier"], "COALESCE(updated_at, created_at)");
+  where += chosen.where;
+  binds.push(...chosen.binds);
+  const taskVerdict = (verdicts) => `(EXISTS (SELECT 1 FROM herma_evaluations e WHERE e.target_kind = 'task' AND e.target_id = herma_durable_queue.task_id AND e.${TRUSTED_TASK_EVALUATION_SQL} AND ${verdicts}))`;
+  const taskConfirmed = taskVerdict("UPPER(COALESCE(e.verification_verdict, '')) IN ('CONFIRMED', 'PASS')");
+  const taskFailed = taskVerdict("(UPPER(COALESCE(e.verification_verdict, '')) LIKE 'FAIL%' OR UPPER(COALESCE(e.verification_verdict, '')) LIKE 'REJECT%' OR UPPER(COALESCE(e.verification_verdict, '')) LIKE 'REFUT%')");
+  where += reviewWhere(prefs, { reviewedSql: taskConfirmed, failedSql: taskFailed });
+  // Rows for our own workers, whatever their visibility says.
+  if (!infraAllowed) where += " AND tier != 'infra_private'";
+
   const [countRow, rowsRes] = await Promise.all([
     db.prepare(`SELECT COUNT(*) AS cnt FROM herma_durable_queue ${where}`).bind(...binds).first(),
     db
       .prepare(
         `SELECT task_id, tier, visibility, verb_kind, category, priority, state, title, prompt,
                 complexity_milli, generation_depth, owner_worker_uuid, blocked_by_task_id,
-                COALESCE(step_mode, '') AS step_mode, lsh_band_0, updated_at, created_at
+                COALESCE(step_mode, '') AS step_mode, lsh_band_0, updated_at, created_at,
+                ${taskConfirmed} AS eval_count,
+                CASE WHEN ${taskFailed} THEN 'FAILED' WHEN ${taskConfirmed} THEN 'CONFIRMED' ELSE '' END AS verification_verdict
          FROM herma_durable_queue
          ${where}
          ORDER BY (CASE state WHEN 'ready' THEN 0 WHEN 'leased' THEN 1 ELSE 2 END) ASC,
@@ -934,8 +968,11 @@ export async function handleListDurableTasksRequest(url, db, publicUrl, { infraA
       step_mode: inferred.step_mode,
       task_url: `${base}/q/task/${encodeURIComponent(r.task_id)}`,
       permalink_url: `${base}/c/${encodeURIComponent(r.task_id)}`,
+      ...reviewLabels(r),
     };
   });
+  const shownTasks = tasks;
+  const fittedTasks = applyClientPrefs(shownTasks, { ...prefs, include_unreviewed: true, review_state: null, updated_after: null, source_kinds: null, max_results: null }, { stateOf: (r) => r.review_state, timeOf: (r) => secondsOf(r.created_at), kindsOf: () => [] });
 
   return {
     status: FEEDBACK_STEPS_UPLOADS_GRID.http_ok,
@@ -943,6 +980,8 @@ export async function handleListDurableTasksRequest(url, db, publicUrl, { infraA
       ok: true,
       schema: FEEDBACK_STEPS_UPLOADS_GRID.tasks_list_schema_version,
       total_matching: Number(countRow?.cnt || tasks.length),
+      next_offset: offset + Math.max(1, fittedTasks.items.length) < Number(countRow?.cnt || 0) ? offset + Math.max(1, fittedTasks.items.length) : null,
+      preferences: fittedTasks.report,
       limit,
       offset,
       filters: {
@@ -952,7 +991,7 @@ export async function handleListDurableTasksRequest(url, db, publicUrl, { infraA
         verb_kind: verbKindFilter || null,
         category: categoryFilter || null,
       },
-      tasks,
+      tasks: fittedTasks.items,
     },
   };
 }
@@ -967,14 +1006,16 @@ export async function handleListTaskObjectsRequest(url, db, publicUrl, { infraAl
   const stepModeFilter = normalizeStepMode(url.searchParams.get("step_mode") || "");
   const reuseModeFilter = String(url.searchParams.get("reuse_mode") || "").trim().toLowerCase();
   const producerFilter = String(url.searchParams.get("producer") || "").trim();
+  const prefs = readClientPrefs(url.searchParams);
   const limit = Math.max(
     1,
     Math.min(
       FEEDBACK_STEPS_UPLOADS_GRID.max_list_limit,
-      Number(url.searchParams.get("limit") || FEEDBACK_STEPS_UPLOADS_GRID.default_list_limit)
+      Math.floor(Number(prefs.max_results || url.searchParams.get("limit")) || FEEDBACK_STEPS_UPLOADS_GRID.default_list_limit)
     )
   );
-  const offset = Math.max(0, Number(url.searchParams.get("offset") || 0));
+  const offsetAsked = Math.floor(Number(url.searchParams.get("offset")) || 0);
+  const offset = Number.isSafeInteger(offsetAsked) && offsetAsked > 0 ? offsetAsked : 0;
 
   let where = `WHERE ${visFilter} AND COALESCE(is_tombstoned, 0) = 0`;
   const binds = [];
@@ -995,13 +1036,17 @@ export async function handleListTaskObjectsRequest(url, db, publicUrl, { infraAl
     binds.push(producerFilter);
   }
 
+  const chosen = preferenceWhere(prefs, ["category", "deliverable_kind", "reuse_mode", "step_mode"]);
+  where += chosen.where + reviewWhere(prefs);
+  binds.push(...chosen.binds);
+
   const [countRow, rowsRes] = await Promise.all([
     db.prepare(`SELECT COUNT(*) AS cnt FROM herma_task_objects ${where}`).bind(...binds).first(),
     db
       .prepare(
         `SELECT object_key, COALESCE(version_num, 1) AS version_num, category, visibility,
                 producer_agent, worker_uuid, source_task_id, summary, sha256_hash,
-                chunk_count, total_payload_bytes, quality_milli, eval_count,
+                chunk_count, total_payload_bytes, quality_milli, eval_count, verification_verdict,
                 COALESCE(step_mode, '') AS step_mode, COALESCE(reuse_mode, '') AS reuse_mode,
                 deliverable_kind, created_at
          FROM herma_task_objects
@@ -1030,8 +1075,11 @@ export async function handleListTaskObjectsRequest(url, db, publicUrl, { infraAl
       reuse_mode: inferred.reuse_mode,
       object_url: `${base}/q/object/${encodeURIComponent(r.object_key)}`,
       permalink_url: `${base}/c/${encodeURIComponent(r.object_key)}`,
+      ...reviewLabels(r),
     };
   });
+  const shownObjects = objects;
+  const fittedObjects = applyClientPrefs(shownObjects, { ...prefs, include_unreviewed: true, review_state: null, updated_after: null, source_kinds: null, max_results: null }, { stateOf: (r) => r.review_state, timeOf: (r) => secondsOf(r.created_at), kindsOf: () => [] });
 
   return {
     status: FEEDBACK_STEPS_UPLOADS_GRID.http_ok,
@@ -1039,6 +1087,8 @@ export async function handleListTaskObjectsRequest(url, db, publicUrl, { infraAl
       ok: true,
       schema: FEEDBACK_STEPS_UPLOADS_GRID.objects_list_schema_version,
       total_matching: Number(countRow?.cnt || objects.length),
+      next_offset: offset + Math.max(1, fittedObjects.items.length) < Number(countRow?.cnt || 0) ? offset + Math.max(1, fittedObjects.items.length) : null,
+      preferences: fittedObjects.report,
       limit,
       offset,
       filters: {
@@ -1047,7 +1097,7 @@ export async function handleListTaskObjectsRequest(url, db, publicUrl, { infraAl
         reuse_mode: reuseModeFilter || null,
         producer: producerFilter || null,
       },
-      objects,
+      objects: fittedObjects.items,
     },
   };
 }
