@@ -183,13 +183,14 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
 | [scripts/repo_rows_refresh.py](scripts/repo_rows_refresh.py) | Build the rows behind GET /q/repos: feed exports plus a fresh scan of GitHub's public search, as SQL for D1. |
 
-## test/ (32)
+## test/ (33)
 
 | File | What it is |
 |---|---|
 | [test/banned_words_filter.test.js](test/banned_words_filter.test.js) |  |
 | [test/bilateral_bridge.test.js](test/bilateral_bridge.test.js) |  |
 | [test/bilateral_chat_and_feedback.test.mjs](test/bilateral_chat_and_feedback.test.mjs) |  |
+| [test/busy_database.test.js](test/busy_database.test.js) |  |
 | [test/canonical_host.test.js](test/canonical_host.test.js) |  |
 | [test/claim_token.test.js](test/claim_token.test.js) |  |
 | [test/contributor_printout.test.js](test/contributor_printout.test.js) |  |
