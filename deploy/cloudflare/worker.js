@@ -2441,10 +2441,34 @@ export default {
   async fetch(request, env, ctx) {
     // Herma's own pages carry the one thin agent banner (page_shell.js), so the older "Put your agent to work" block is
     // not injected into the home page any more; the /agent-start.* files stay available.
-    if (env.PUBLIC_NAMES_FILTER !== "on") return agentStartAsset(request) || onboardingApplication.fetch(request, env, ctx);
-    return serveWithPublicNames(request, env, ctx);
+    return answerThroughBusyDatabase(request, async () => {
+      if (env.PUBLIC_NAMES_FILTER !== "on") return agentStartAsset(request) || onboardingApplication.fetch(request, env, ctx);
+      return serveWithPublicNames(request, env, ctx);
+    });
   },
 };
+
+// D1 answers "overloaded" for a moment under a burst. A read is asked again, up to twice, after a short wait. A write isn't, since
+// it may have partly happened. If it's still busy the caller gets a 503 that says to try again, in place of a 500 and D1's own words.
+const READ_ONLY_ROUTES = /^\/(?:c|w)\/|^\/dashboard\/?$|^\/q\/(?:object|search|tasks|task|pulse|network|repos|dashboard)(?:\/|$)/;
+const BUSY_RETRY_WAITS_MS = [200, 600];
+const isBusyDatabase = async (response) =>
+  response.status === 500 && /D1 DB is overloaded/i.test(await response.clone().text().catch(() => ""));
+export async function answerThroughBusyDatabase(request, answer, waits = BUSY_RETRY_WAITS_MS) {
+  const method = request.method.toUpperCase();
+  const canRetry = (method === "GET" || method === "HEAD") && READ_ONLY_ROUTES.test(new URL(request.url).pathname);
+  let response = await answer();
+  for (const wait of canRetry ? waits : []) {
+    if (!(await isBusyDatabase(response))) return response;
+    await new Promise((resolve) => setTimeout(resolve, wait + Math.random() * wait));
+    response = await answer();
+  }
+  if (!(await isBusyDatabase(response))) return response;
+  return new Response(
+    JSON.stringify({ type: "about:blank", title: "Busy", status: 503, detail: "The database is busy for a moment. Please try again in a few seconds.", code: "busy_try_again" }),
+    { status: 503, headers: { "content-type": "application/problem+json", "retry-after": "5", "access-control-allow-origin": "*" } }
+  );
+}
 
 // Who holds a lease and its fence go only to the worker that claimed it, so a stranger can't act as that worker.
 // A refusal says what's wrong without naming the holder or the right number.
