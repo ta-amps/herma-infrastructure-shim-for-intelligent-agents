@@ -9963,7 +9963,10 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       return finalizeWithTrace(
         new Response(out.jsonl, {
           status: out.status,
-          headers: { "content-type": "application/x-ndjson; charset=utf-8" },
+          headers: {
+            "content-type": "application/x-ndjson; charset=utf-8",
+            ...(out.note ? { "x-export-note": out.note } : {}),
+          },
         }),
         out.status
       );

@@ -1065,18 +1065,31 @@ describe("Herma Bilateral Chat, Session Continuity, Grounded Q&A, Bounds Grid & 
       .first();
     expect(taskAfterPeer?.verified_outcome).toBe("submitted_unreviewed");
 
-    // 7. Verify /q/training-export (both JSON and JSONL) includes public accepted trace & excludes private traces/conversations
+    // 7. /q/training-export stays open and serves no row: model answers and untraced rows are held back (Meta Terms s.10.1(ix)),
+    // and so is caller and worker text. The stored trace is untouched.
     const exportJsonRes = await callHerma("/q/training-export?format=json");
     expect(exportJsonRes.status).toBe(200);
     const exportJsonText = await exportJsonRes.text();
-    expect(exportJsonText).toContain(taskTraceId);
+    const exportDoc = JSON.parse(exportJsonText);
+    expect(exportDoc.count).toBe(0);
+    expect(exportDoc.examples).toEqual([]);
+    expect(exportDoc.withheld).toBe(true);
+    expect(exportDoc.note).toContain("meta-models.txt");
+    expect(exportJsonText).not.toContain(taskTraceId);
+    const storedTrace = await env.HERMA_DB
+      .prepare("SELECT trace_id FROM herma_finetune_traces WHERE trace_id = ?")
+      .bind(taskTraceId)
+      .first();
+    expect(storedTrace?.trace_id).toBe(taskTraceId);
     expect(exportJsonText).not.toContain(privateTraceId);
     expect(exportJsonText).not.toContain("INTERNAL_ONLY_MARKER");
     expect(exportJsonText).not.toContain("PRIVATE_INFRA_CONVERSATION_MARKER");
 
     const exportJsonlRes = await callHerma("/q/training-export?format=jsonl");
     expect(exportJsonlRes.status).toBe(200);
+    expect(exportJsonlRes.headers.get("x-export-note")).toContain("meta-models.txt");
     const exportJsonlText = await exportJsonlRes.text();
+    expect(exportJsonlText).toBe("");
     expect(exportJsonlText).not.toContain(privateTraceId);
     expect(exportJsonlText).not.toContain("INTERNAL_ONLY_MARKER");
     expect(exportJsonlText).not.toContain("PRIVATE_INFRA_CONVERSATION_MARKER");

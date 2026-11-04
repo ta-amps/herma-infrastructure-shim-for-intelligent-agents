@@ -3984,7 +3984,43 @@ export async function handleMetaTelemetryRequest(request, env, db) {
   };
 }
 
+// Owner direction, Nov 4: Meta's terms come first. Meta Model API Terms s.10.1(ix) bars using Outputs to train competing
+// models and collecting them into training datasets for that use, so this public route serves no row from a Meta model,
+// and no row whose maker can't be shown not to be one. Task Objects carry no maker, so none qualifies today. Caller and
+// worker text also stays off this route until a privacy read clears it. The route stays open; stored records are untouched.
+export const TRAINING_EXPORT_WITHHELD_NOTE =
+  "No rows are served here for now. We hold back model answers and any row we can't trace, to follow Meta's license terms, " +
+  "and we hold back text from callers and workers until a privacy read is done. Stored records are unchanged. " +
+  "Notice: https://teleionlabs.com/legal/meta-models.txt";
+
 export async function handleTrainingExportRequest(request, env, db, publicUrl) {
+  const method = request.method.toUpperCase();
+  if (method !== "GET" && method !== "HEAD") {
+    return { status: HELP_STARTER_GRID.http_method_not_allowed, isJsonl: false, body: { ok: false, error: "method_not_allowed" } };
+  }
+  const withheldUrl = new URL(request.url);
+  if (
+    (withheldUrl.searchParams.get("format") || "").toLowerCase() === "jsonl" ||
+    (request.headers.get("accept") || "").includes("application/x-ndjson")
+  ) {
+    return { status: HELP_STARTER_GRID.http_ok, isJsonl: true, jsonl: "", note: TRAINING_EXPORT_WITHHELD_NOTE };
+  }
+  return {
+    status: HELP_STARTER_GRID.http_ok,
+    isJsonl: false,
+    body: {
+      ok: true,
+      schema: HELP_STARTER_GRID.schema_training_id,
+      count: 0,
+      examples: [],
+      withheld: true,
+      note: TRAINING_EXPORT_WITHHELD_NOTE,
+    },
+  };
+}
+
+// The earlier export, kept for the day rows carry a maker and a privacy read clears them. Nothing routes here.
+export async function buildTrainingExportFromRecords(request, env, db, publicUrl) {
   await ensureHelpAndStarterSchema(db);
   const method = request.method.toUpperCase();
   if (method !== "GET" && method !== "HEAD") {
