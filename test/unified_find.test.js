@@ -131,6 +131,11 @@ describe("GET /q/find on a real database", () => {
     expect((await (await call(`/q/find?q=${after.hits[0].id}`)).json()).hits[0].id).toBe(after.hits[0].id);
     expect((await (await call("/q/find?q=find_family_b_v1")).json()).hits[0].id).toBe("find_family_b_v1");
   });
+  it("a hyphen name not in the index still reads by its exact name, but can't beat a real match", async () => {
+    await env.HERMA_DB.prepare("INSERT INTO herma_task_objects (object_key, category, summary, visibility, is_tombstoned, reuse_count, producer_agent, payload_json, simhash64_hex, sha256_hash, created_at, verification_verdict) VALUES ('walrus-plan', 'spec', 'x', 'public_commons', 0, 0, 'find-test', '{}', '0', 'walrus-plan', '2026-11-04T00:00:00Z', 'REFUTED')").run();
+    expect((await (await call("/q/find?q=walrus-plan")).json()).hits[0].id).toBe("walrus-plan");
+    await env.HERMA_DB.prepare("DELETE FROM herma_task_objects WHERE object_key = 'walrus-plan'").run();
+  });
   it("asks for q, and refuses other methods", async () => {
     expect((await call("/q/find")).status).toBe(400);
     const p = await exports.default.fetch(new Request("https://shim.teleionlabs.com/q/find?q=x", { method: "POST" }));

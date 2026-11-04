@@ -5,6 +5,7 @@ import { publicNames } from "./public_names.js";
 import CATALOG from "./find_catalog.generated.json" with { type: "json" };
 
 const INDEX_TTL_MS = 10 * 60 * 1000;
+const MAX_TOKENS = 1500000;
 const COLD_WAIT_MS = 3000;
 const SPARE_HITS = 3;
 const HINT_CHECK_MS = 300;
@@ -41,6 +42,7 @@ const ALSO = Object.assign(Object.create(null), {
 const ASK_KIND = [[/\b(?:repos?|repositor(?:y|ies)|github|projects?)\b/i, "repo"], [/\b(?:seed[- ]?packs?|packs?)\b/i, "pack"], [/\bkits?\b/i, "kit"], [/\b(?:task[- ]?objects?|objects?)\b/i, "obj"]];
 const KIND_WORDS = /\b(?:repos?|repositor(?:y|ies)|github|seed[- ]?packs?|packs?|kits?|task[- ]?objects?)\b/gi;
 const ID_LOOKUP = /^(?=.{3,128}$)(?=.*(?:[_:]|[0-9]{2}))[A-Za-z0-9]+(?:[-_.:][A-Za-z0-9]+)+$/;
+const NAME_SHAPE = /^[A-Za-z0-9]+(?:[-_.:][A-Za-z0-9]+)+$/;
 const ID_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{2,127}$/;
 
 export function stem(t) {
@@ -85,11 +87,15 @@ function editWithin(a, b, limit) {
 export function buildIndex({ objects = [], repos = [], kits = [], packs = [], feedWords = {}, terms = {} }) {
   const docs = [];
   const tfs = [];
+  let spent = 0;
   const add = (d, fields) => {
     const tf = new Map();
     let len = 0;
     for (const [text, w] of fields) {
+      // Anyone may store text, so the index has a size it won't pass: past it, only names go in. Live rows use a fraction of this.
+      if (w !== TUNE.name && spent >= MAX_TOKENS) continue;
       for (const t of tokens(text)) {
+        spent += 1;
         tf.set(t, (tf.get(t) || 0) + w);
         len += w;
       }
@@ -446,7 +452,9 @@ export async function findResponse(url, db, { waitUntil } = {}) {
   // Tasks aren't in the index, and a new object may not be yet: a query shaped like an ID asks the rows directly.
   // An exact object name is a read by id: it follows that rule, not the rule for what's offered for reuse.
   const exactObject = out.match === "exact" && out.hits[0]?.kind === "obj";
-  if (exactObject || (out.match !== "exact" && ID_LOOKUP.test(q.trim()))) {
+  // A name with no ID shape can't take first place from a real match, since anyone may store an object under a common name.
+  const askRows = ID_LOOKUP.test(q.trim()) || (!out.found && NAME_SHAPE.test(q.trim()));
+  if (exactObject || (out.match !== "exact" && askRows)) {
     const direct = await lookupId(db, q.trim().toLowerCase());
     if (direct) out = { found: true, match: "exact", hits: [direct], read: true };
     else if (exactObject) out = { found: false, match: "none", hits: [] };
