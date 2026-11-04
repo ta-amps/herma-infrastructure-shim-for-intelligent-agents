@@ -245,7 +245,7 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     });
     expect(beat1SubRes.status).toBe(200);
     const beat1Sub = await beat1SubRes.json();
-    expect(beat1Sub.applied_evaluations.length).toBe(2);
+    expect(beat1Sub.applied_evaluations.length).toBe(0); // a maker's scores on its own work are dropped
     expect(beat1Sub.worker_iteration_state.next_honor_beat_slot).toBe("own");
 
     // 4. Beat 2 (iteration 2 -> own): Worker A automatically claims its own UUID-tagged continuation verb!

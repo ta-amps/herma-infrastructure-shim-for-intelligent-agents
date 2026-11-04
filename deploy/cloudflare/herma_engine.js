@@ -1438,13 +1438,17 @@ export async function authenticateHarness(db, request, { isAdmin = false, env = 
     const rawDeclared = (request.headers.get("x-herma-harness") || "").trim().toLowerCase();
     const harnessKind = ALLOWED_HARNESS_KINDS.has(rawDeclared) ? rawDeclared : "custom-harness";
     const openSlug = sanitizeOpenAgentLabel(request);
+    // A label alone is not an identity: strangers who send the same label, or none, must not share rules or memory.
+    const seen = `${env?.BOOTSTRAP_SECRET || ""}|${request.headers.get("cf-connecting-ip") || ""}|${request.headers.get("user-agent") || ""}`;
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(seen));
+    const who = Array.from(new Uint8Array(digest).slice(0, 10), (b) => b.toString(16).padStart(2, "0")).join("");
     return {
       key_id: "open_free_agent",
       label: openSlug,
       harness_kind: harnessKind,
       scopes: new Set(["route", "configure"]),
       is_admin: false,
-      caller_scope: `open:${openSlug}`,
+      caller_scope: `open:${openSlug}:${who}`,
     };
   }
   const errStatus = openMode && suppliedExplicitly ? 401 : 403;
@@ -2646,7 +2650,7 @@ export async function reserveRouteRequest(db, callerScope, limit = 60, env = nul
   await db.prepare("DELETE FROM route_quotas WHERE hour < ?").bind(hour - 24).run();
 }
 
-export function resolveUpstream(request, env, path) {
+export function resolveUpstream(request, env, path, { openCaller = false } = {}) {
   const override = request.headers.get("x-upstream-base-url") || request.headers.get("x-herma-upstream-url") || "";
   const configured = env.UPSTREAM_LLM_URL || "";
   const raw = (override || configured).replace(/\/+$/, "");
@@ -2657,6 +2661,8 @@ export function resolveUpstream(request, env, path) {
   const allowed = String(env.HERMA_ALLOWED_UPSTREAM_HOSTS || "api.meta.ai,api.openai.com,api.anthropic.com,127.0.0.1,localhost").split(",").map(s => s.trim().toLowerCase());
   if (override && !allowed.includes(target.hostname.toLowerCase()) && (!configured || target.origin !== new URL(configured).origin)) throw new HermaErr(403, "upstream_not_allowed", "Upstream Not Allowed", "Provider hostname is not allowlisted.");
   const callerKey = request.headers.get("x-upstream-api-key") || "";
+  // A caller with no key of ours never spends the operator's model key: it brings its own.
+  if (openCaller && !callerKey) throw new HermaErr(402, "bring_your_own_model_key", "Your Own Model Key Needed", "The shim forwards with no key of ours, but a model call needs your own provider key: send it as X-Upstream-Api-Key. /api/preview and /v1/dry-run need no model key.");
   const operatorKey = env.UPSTREAM_LLM_API_KEY || "";
   if (operatorKey && !callerKey && (!configured || target.origin !== new URL(configured).origin)) throw new HermaErr(403, "upstream_credential_origin_mismatch", "Credential Origin Mismatch", "Server credentials are bound to the configured provider origin. Supply your own key for an alternate provider.");
   if (operatorKey && !callerKey) {

@@ -1063,7 +1063,7 @@ describe("Herma Bilateral Chat, Session Continuity, Grounded Q&A, Bounds Grid & 
       .prepare("SELECT verified_outcome FROM herma_finetune_traces WHERE trace_id = ?")
       .bind(taskTraceId)
       .first();
-    expect(taskAfterPeer?.verified_outcome).toBe("accepted");
+    expect(taskAfterPeer?.verified_outcome).toBe("submitted_unreviewed");
 
     // 7. Verify /q/training-export (both JSON and JSONL) includes public accepted trace & excludes private traces/conversations
     const exportJsonRes = await callHerma("/q/training-export?format=json");

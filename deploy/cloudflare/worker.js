@@ -2113,7 +2113,7 @@ const application = {
           });
         }
 
-        const resolvedUpstream = resolveUpstream(request, env, path);
+        const resolvedUpstream = resolveUpstream(request, env, path, { openCaller: principal.key_id === "open_free_agent" });
         const targetUpstreamUrl = resolvedUpstream.url;
         const upKey = resolvedUpstream.key;
         const upHeaders = {"content-type": "application/json"};
@@ -2329,6 +2329,7 @@ const application = {
       if (path === "/v1/sync/remote") {
         if (method !== "POST") return methodNotAllowed(["POST"]);
         const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env), env });
+        if (principal.key_id === "open_free_agent") throw new HermaErr(403, "key_required", "Key Required", "Fetching a remote address on the server needs a key.");
         requireScope(principal, "configure", request, env);
         const body = await request.json();
         const cohort = parseCohortHeader(request, body?.cohort ?? null);

@@ -6712,7 +6712,8 @@ async function applyWorkerEvaluations(db, infraAllowed, evaluatorProfile, rawEva
       const isSelfTaskMaker =
         (evalUuid && (evalUuid === taskMakerUuid || evalUuid === taskCompleterUuid)) ||
         (evalAgent && taskMakerAgent && evalAgent === taskMakerAgent);
-      if (isSelfTaskMaker && (verVerdict === "CONFIRMED" || verVerdict === "REFUTED" || explicitVerdictProvided)) {
+      // Maker never checks: a maker's own score, verdict or priority on its own work is dropped.
+      if (isSelfTaskMaker) {
         continue;
       }
       resolvedKind = "task";
@@ -6762,7 +6763,8 @@ async function applyWorkerEvaluations(db, infraAllowed, evaluatorProfile, rawEva
           taskTarget.id
         )
         .run();
-      if (!isSelfTaskMaker && (verVerdict === "CONFIRMED" || verVerdict === "REFUTED") && targetId !== "self_seed") {
+      // Only our own checkers mark a trace accepted: a free identity can be made in one request, so its verdict stays a peer opinion and never feeds training.
+      if (infraAllowed && !isSelfTaskMaker && (verVerdict === "CONFIRMED" || verVerdict === "REFUTED") && targetId !== "self_seed") {
         const peerOutcome = verVerdict === "CONFIRMED" ? "accepted" : "refuted";
         const peerWeight =
           verVerdict === "CONFIRMED"
@@ -6801,7 +6803,7 @@ async function applyWorkerEvaluations(db, infraAllowed, evaluatorProfile, rawEva
       const isSelfObjMaker =
         (evalUuid && objMakerUuid && evalUuid === objMakerUuid) ||
         (evalAgent && objMakerAgent && evalAgent === objMakerAgent);
-      if (isSelfObjMaker && (verVerdict === "CONFIRMED" || verVerdict === "REFUTED" || explicitVerdictProvided)) {
+      if (isSelfObjMaker) {
         continue;
       }
       resolvedKind = "object";
@@ -6838,6 +6840,7 @@ async function applyWorkerEvaluations(db, infraAllowed, evaluatorProfile, rawEva
         .run();
       const objSourceTask = String(objTarget.source_task_id || "").trim();
       if (
+        infraAllowed &&
         !isSelfObjMaker &&
         (verVerdict === "CONFIRMED" || verVerdict === "REFUTED") &&
         objSourceTask &&
@@ -7104,8 +7107,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
         );
   } else if (rawObjectsInput && !Array.isArray(rawObjectsInput)) {
     return {
-      ok: false,
-      status: 400,
+      forbidden: true,
       code: "invalid_task_objects",
       detail: "task_objects must be a list, one object, or a map of key to object.",
     };
