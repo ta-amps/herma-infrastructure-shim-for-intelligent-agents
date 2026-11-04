@@ -3,7 +3,7 @@
 // by scripts/repo_rows_refresh.py). A repository the scans never saw is read through to GitHub's public API with no credential;
 // that answer is kept only in the edge cache, never in D1, and each request makes at most one upstream call.
 import { tidyText } from "./page_shell.js";
-import { scrubSensitiveText } from "./bilateral_bridge.js";
+import { nameLooksLikeToken } from "./credential_shapes.js";
 import { publicNames } from "./public_names.js";
 
 const COLS = ["repo", "license", "language", "created", "stars", "feed", "seen"];
@@ -11,10 +11,6 @@ const SEEN = 6;
 const DIRECT_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
 const BACKOFF_MIN_S = 30;
 const BACKOFF_MAX_S = 3600;
-// Something shaped like a credential is never sent to GitHub, whatever route it arrived on.
-// The shared scrubber errs on the safe side: a real project with a long name starting sk- is refused too, and the refusal says so.
-const SECRET_SHAPE = /(?:^|[/_-])(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{12,}|sk-[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{20,}|AKIA[A-Z0-9]{16}|eyJ[A-Za-z0-9_-]{20,})|(?:^|[/_-])[A-Fa-f0-9]{32,}(?:$|[/_-])/;
-const looksSecret = (text) => SECRET_SHAPE.test(text) || scrubSensitiveText(text) !== text;
 const isFresh = (row) => {
   const at = Date.parse(row[SEEN] || "");
   return Number.isFinite(at) && Date.now() - at <= DIRECT_MAX_AGE_MS;
@@ -117,6 +113,8 @@ async function upstream({ repo, name }, fetchImpl) {
     const hit = await cache.match(cacheKey).catch(() => null);
     if (hit) return hit.json();
   }
+  // The rows were read first, so a real repository is still found. Only the trip to GitHub stops here.
+  if (nameLooksLikeToken(repo || name)) return { rows: [], state: "not_sent" };
   const kind = repo ? "repos" : "search";
   if (await inBackoff(kind)) return { rows: [], state: "rate_limited" };
   let res;
@@ -128,7 +126,8 @@ async function upstream({ repo, name }, fetchImpl) {
   } catch {
     return { rows: [], state: "unavailable" };
   }
-  const limited = res.status === 429 || (res.status === 403 && (res.headers.get("x-ratelimit-remaining") === "0" || res.headers.has("retry-after")));
+  const refusal = res.status === 403 ? await res.clone().text().catch(() => "") : "";
+  const limited = res.status === 429 || (res.status === 403 && (res.headers.get("x-ratelimit-remaining") === "0" || res.headers.has("retry-after") || /rate limit|abuse detection/i.test(refusal)));
   if (limited) {
     await startBackoff(kind, res);
     return { rows: [], state: "rate_limited" };
@@ -240,6 +239,7 @@ const missNote = {
   rate_limited: "Not in the feed rows. GitHub's public limit is used up for now, so this is not a statement that it does not exist.",
   refused: "Not in the feed rows. GitHub refused to show this repository, so this is not a statement that it does not exist.",
   unavailable: "Not in the feed rows. GitHub did not answer, so this is not a statement that it does not exist.",
+  not_sent: "Not in the feed rows. It looks like a credential, so it was not sent to GitHub. If it is a real repository name, ask GitHub directly.",
   withheld: "A repository matches, but its name can't be shown here.",
 };
 
@@ -254,9 +254,6 @@ export async function repoRowsResponse(url, db, { fetchImpl = (...a) => fetch(..
   const base = { ok: true, as_of, cols: COLS };
 
   if (repo || name) {
-    if (looksSecret(repo || name)) {
-      return [{ ok: false, code: "looks_like_a_secret", detail: "That looks like a credential, so it was not sent to GitHub. If it is a real repository name, ask GitHub directly." }, 400];
-    }
     if (repo ? !FULL_NAME.test(repo) : !BARE_NAME.test(name)) {
       return [{ ok: false, code: "bad_name", detail: "Use repo=owner/name or name=repo-name." }, 400];
     }
@@ -316,7 +313,7 @@ export async function repoRowsResponse(url, db, { fetchImpl = (...a) => fetch(..
 export async function repoMatchesForSearch(db, query) {
   const text = String(query || "").trim();
   const target = FULL_NAME.test(text) ? { repo: text } : BARE_NAME.test(text) ? { name: text } : null;
-  if (!target || looksSecret(text)) return null;
+  if (!target) return null;
   try {
     const all = (await exactFromDb(db, target)).map(rowFromDb).slice(0, MAX_LIMIT);
     if (!all.length) return null;
@@ -335,7 +332,7 @@ export async function repoMatchesForSearch(db, query) {
 /** The one call that can look further, for a query shaped like a repository name. */
 export function repoLookupHint(query) {
   const text = String(query || "").trim();
-  if (!/[/_-]/.test(text) || looksSecret(text)) return null;
+  if (!/[/_-]/.test(text) || nameLooksLikeToken(text)) return null;
   if (FULL_NAME.test(text)) return `/q/repos?repo=${text}`;
   return BARE_NAME.test(text) ? `/q/repos?name=${text}` : null;
 }

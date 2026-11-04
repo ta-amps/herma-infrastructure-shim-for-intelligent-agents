@@ -17,6 +17,7 @@
 //     trigrams, `O(1)` SymSpell 1..2-edit typo recovery, 4-band SimHash LSH, 64-bit semantic concept
 //     hyperplane sketches, and Weighted Reciprocal Rank Fusion (RRF) + Quality/Tombstone reranking.
 
+import { textHasCredential } from "./credential_shapes.js";
 import { repoLookupHint, repoMatchesForSearch, repoRowsResponse } from "./repo_rows.js";
 import { computeTaskFingerprint, scrubSensitiveText } from "./bilateral_bridge.js";
 import { clientFamily } from "./client_family.js";
@@ -2656,7 +2657,25 @@ async function reassembleTaskObjectPayload(db, objRow) {
 }
 
 const SEARCH_NEARBY_LIMIT = 5;
-const SEARCH_ID_SHAPE = /^(?=.{3,128}$)[A-Za-z0-9]+(?:[-_.:][A-Za-z0-9]+)+$/;
+// An ID has a separator and an underscore, dot, colon or digit: a hyphenated phrase such as agent-memory is something people type.
+const SEARCH_ID_SHAPE = /^(?=.{3,128}$)(?=.*[_.:0-9])[A-Za-z0-9]+(?:[-_.:][A-Za-z0-9]+)+$/;
+
+// The gateway's setup stops early on a database already at its schema version, so these two reach a live database here: once per
+// isolate, only when an exact lookup is about to use them. If this fails, the lookup still works, by a scan.
+let exactLookupIndexesChecked = false;
+export function resetExactLookupIndexCheck() {
+  exactLookupIndexesChecked = false;
+}
+async function ensureExactLookupIndexes(db) {
+  if (exactLookupIndexesChecked) return;
+  exactLookupIndexesChecked = true;
+  await db
+    .batch([
+      db.prepare("CREATE INDEX IF NOT EXISTS idx_hto_lower_key ON herma_task_objects (LOWER(object_key))"),
+      db.prepare("CREATE INDEX IF NOT EXISTS idx_hdq_lower_task ON herma_durable_queue (LOWER(task_id))"),
+    ])
+    .catch(() => {});
+}
 const SEARCH_WORD_CHANNELS = new Set(["stem_bm25", "typo_symspell_stem", "label_exact", "worker_phrase_or_facet", "facet_partition", "io_port_shape"]);
 
 // A search result is a real match only if it matched on words. Everything fuzzier goes to `nearby`, because some agents want
@@ -3027,6 +3046,7 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
   }
 
   // The same SELECTs as the candidates, so the visibility rules are the same. Both columns have an index on LOWER().
+  if (exactId) await ensureExactLookupIndexes(db);
   if (exactId && (scope === "all" || scope === "tasks")) {
     const hit = await db.prepare(`${selectTasks} AND LOWER(task_id) = ? ORDER BY id DESC LIMIT 1`).bind(exactId).all();
     candidates.push(...(hit?.results || []));
@@ -10298,7 +10318,8 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     } else if (method !== "GET") {
       return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
-    traceCtx.detail = { q: String(params.q || params.query || "").slice(0, QUEUE_GATEWAY_GRID.facet_max_len) };
+    const tracedQuery = String(params.q || params.query || "");
+    traceCtx.detail = { q: textHasCredential(tracedQuery) ? "[REDACTED]" : tracedQuery.slice(0, QUEUE_GATEWAY_GRID.facet_max_len) };
     // Default: the reply existing callers know, with new fields beside the old ones. compact=1: the short reply, only real matches
     // in `results`. full=1: the older reply with nothing added.
     const flag = (v) => v === "1" || v === 1 || v === true;
