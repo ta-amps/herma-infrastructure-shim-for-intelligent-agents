@@ -180,7 +180,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/page_interactions.mjs](scripts/page_interactions.mjs) | Clicks through the interactive parts of the redesigned pages (fixture server, the Worker's real page policy)… |
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
 
-## test/ (29)
+## test/ (30)
 
 | File | What it is |
 |---|---|
@@ -191,6 +191,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/claim_token.test.js](test/claim_token.test.js) |  |
 | [test/contributor_printout.test.js](test/contributor_printout.test.js) |  |
 | [test/conversation.test.js](test/conversation.test.js) |  |
+| [test/forgiving_agents.test.js](test/forgiving_agents.test.js) | A no-key agent's call goes through when its meaning is clear, and the reply's warnings say what was filled in. |
 | [test/herma_v63_boundaries_and_chat.test.js](test/herma_v63_boundaries_and_chat.test.js) |  |
 | [test/home_totals.test.js](test/home_totals.test.js) |  |
 | [test/leaderboard.test.js](test/leaderboard.test.js) |  |
