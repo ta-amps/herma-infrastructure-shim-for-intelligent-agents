@@ -114,3 +114,22 @@ describe("public reads with the live filter on", () => {
     expect(done.status).toBe(200);
   });
 });
+
+describe("the older review_status field and client score choice", () => {
+  it("never calls refuted or name-only work peer reviewed", async () => {
+    const { reviewStatusOf, reviewLabels } = await import("../deploy/cloudflare/public_read.js");
+    expect(reviewStatusOf({ eval_count: 5, verification_verdict: "REFUTED" })).toBe("failed");
+    expect(reviewStatusOf({ eval_count: 5, verification_verdict: "UNREVIEWED" })).toBe("unreviewed");
+    expect(reviewStatusOf({ eval_count: 1, verification_verdict: "CONFIRMED" })).toBe("peer_reviewed");
+    expect(reviewLabels({ eval_count: 5, verification_verdict: "REFUTED" }).confidence).toBe(0.05);
+  });
+  it("min_confidence filters and bad values only warn", async () => {
+    const { applyClientPrefs, readClientPrefs } = await import("../deploy/cloudflare/client_prefs.js");
+    const items = [{ confidence: 0.05 }, { confidence: 0.72 }];
+    const opts = { stateOf: () => "reviewed", timeOf: () => 0, kindsOf: () => [] };
+    expect(applyClientPrefs(items, readClientPrefs(new URLSearchParams("min_confidence=0.5")), opts).items).toEqual([{ confidence: 0.72 }]);
+    const bad = readClientPrefs(new URLSearchParams("min_confidence=lots"));
+    expect(bad.min_confidence).toBeNull();
+    expect(bad.warnings.length).toBe(1);
+  });
+});

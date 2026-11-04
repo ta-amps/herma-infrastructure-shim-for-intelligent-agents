@@ -18,7 +18,7 @@
 //     hyperplane sketches, and Weighted Reciprocal Rank Fusion (RRF) + Quality/Tombstone reranking.
 
 import { readClientPrefs, reviewAllowed } from "./client_prefs.js";
-import { TRUSTED_TASK_EVALUATION_SQL, fitReply, reviewLabels, reviewStateOf } from "./public_read.js";
+import { TRUSTED_TASK_EVALUATION_SQL, fitReply, reviewLabels, reviewStateOf, reviewStatusOf } from "./public_read.js";
 import { stripPiiDeep } from "./pii_strip.js";
 import { textHasCredential } from "./credential_shapes.js";
 import { repoLookupHint, repoMatchesForSearch, repoRowsResponse } from "./repo_rows.js";
@@ -2760,6 +2760,7 @@ async function applySearchPrefs(db, searchOut, prefs, max, infraAllowed) {
   const label = (hit) => Object.assign(hit, reviewLabels(hit));
   const wanted = (hit) => {
     if (!reviewAllowed(hit.review_state, prefs)) return false;
+    if (prefs.min_confidence != null && !(Number(hit.confidence) >= prefs.min_confidence)) return false;
     if (!infraAllowed && (hit.is_tombstoned || hit.tier === "infra_private")) return false;
     if (prefs.updated_after != null && !(Date.parse(String(hit.created_at || hit.updated_at || "")) / 1000 >= prefs.updated_after)) return false;
     if (prefs.source_kinds && ![hit.artifact_kind, hit.category, hit.tier, hit.deliverable_kind, hit.artifact_kind === "task_object" ? "object" : "task"].some((kind) => prefs.source_kinds.includes(String(kind || "").toLowerCase()))) return false;
@@ -2789,7 +2790,7 @@ async function applySearchPrefs(db, searchOut, prefs, max, infraAllowed) {
 }
 
 function compactSearchHit(r, summaryChars, { withPayload = false } = {}) {
-  const out = { artifact_kind: r.artifact_kind, id: r.id, tier: r.tier, category: r.category, state: r.state, title: r.title, review_state: r.review_state, reviewed: r.reviewed };
+  const out = { artifact_kind: r.artifact_kind, id: r.id, tier: r.tier, category: r.category, state: r.state, title: r.title, confidence: r.confidence, review_state: r.review_state, reviewed: r.reviewed };
   out.summary = String(r.summary || "").slice(0, summaryChars);
   for (const k of ["quality_milli", "reuse_mode", "reuse_count", "used_by_count", "builds_on", "reuse_weighted_quality_milli", ...(withPayload ? ["payload", "payload_sha256_verified"] : [])]) {
     if (r[k] !== undefined && r[k] !== "" && !(Array.isArray(r[k]) && r[k].length === 0)) out[k] = r[k];
@@ -3539,7 +3540,7 @@ async function lookupTaskObjectByKey(db, infraAllowed, objectKey, publicUrl, que
       deliverable_kind: row.deliverable_kind || null,
     },
     search_hints: searchHints,
-    review_status: evalCount > 0 ? "peer_reviewed" : "unreviewed",
+    review_status: reviewStatusOf(row),
     verification_verdict: cleanVerificationVerdict(row.verification_verdict),
     quality_milli: honestQualityMilli,
     reuse_weighted_quality_milli: computeReuseWeightedQualityMilli(
@@ -3672,7 +3673,7 @@ async function buildDashboardSnapshot(db, env, infraAllowed, { includeDiagnostic
     db
       .prepare(
         `SELECT object_key, category, producer_agent, worker_uuid, source_task_id, summary,
-                quality_milli, novelty_milli, eval_count, generation_depth,
+                quality_milli, novelty_milli, eval_count, verification_verdict, generation_depth,
                 opt_goal, prog_lang, locale_country, deliverable_kind,
                 chunk_count, total_payload_bytes, sha256_hash, created_at
          FROM herma_task_objects
@@ -3730,7 +3731,7 @@ async function buildDashboardSnapshot(db, env, infraAllowed, { includeDiagnostic
     .slice(0, QUEUE_GATEWAY_GRID.max_pulse_items)
     .map((o) => ({
       ...o,
-      review_status: Number(o.eval_count || 0) > 0 ? "peer_reviewed" : "unreviewed",
+      review_status: reviewStatusOf(o),
       quality_milli: Number(o.eval_count || 0) > 0 ? Number(o.quality_milli || 0) : QUEUE_GATEWAY_GRID.unreviewed_quality_milli,
     }));
 
@@ -5285,7 +5286,7 @@ async function buildPulseSnapshot(db, env, infraAllowed, publicUrl = "https://sh
   const recentObjects = await db
     .prepare(
       `SELECT object_key, category, producer_agent, worker_uuid, source_task_id, summary,
-              lsh_band_0, quality_milli, novelty_milli, eval_count, generation_depth, sha256_hash,
+              lsh_band_0, quality_milli, novelty_milli, eval_count, verification_verdict, generation_depth, sha256_hash,
               COALESCE(step_mode, 'atomic_cognitive_step') AS step_mode,
               COALESCE(reuse_mode, 'semantic_rubric_prior') AS reuse_mode,
               created_at
@@ -10271,7 +10272,10 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     if (!reviewAllowed(objectState, objectPrefs)) {
       return sendJson({ ok: false, code: "not_in_chosen_review_state", object_key: objKey, review_state: objectState, detail: "Drop include_unreviewed=false or widen review_state to read it." }, QUEUE_GATEWAY_GRID.http_not_found);
     }
-    Object.assign(out, { review_state: objectState, reviewed: objectState === "reviewed" });
+    Object.assign(out, reviewLabels({ eval_count: out.eval_count, verification_verdict: out.verification_verdict }));
+    if (objectPrefs.min_confidence != null && !(out.confidence >= objectPrefs.min_confidence)) {
+      return sendJson({ ok: false, code: "not_in_chosen_review_state", object_key: objKey, review_state: objectState, confidence: out.confidence, detail: "Below your min_confidence. Lower it to read this Task Object." }, QUEUE_GATEWAY_GRID.http_not_found);
+    }
     if (url.searchParams.get("download") === "1") {
       return sendJson(out.payload, QUEUE_GATEWAY_GRID.http_ok, {
         "content-disposition": `attachment; filename="${String(out.object_key).replace(/[^A-Za-z0-9_.-]+/g, "_")}.json"`,

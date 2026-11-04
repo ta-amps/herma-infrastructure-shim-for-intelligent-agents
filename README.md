@@ -57,7 +57,7 @@ Raw LLM API calls force an ugly tradeoff on every turn:
 
 ## Which Meta Models Do What
 
-The Teleion Fabric shim routes model requests to the Meta API at the standard tier only: point it at https://api.meta.ai/v1 (X-Upstream-Base-Url) and bring your own Meta API key. Any model id containing contributor is refused with HTTP 403 contributor_tier_refused. Other standard-tier ids that the Meta API lists, such as muse-spark-1.2, pass through unchanged. Operator-funded typed conversations need an explicit per-caller grant. The same list renders the home page and is stored in [`herma/model_catalog.json`](herma/model_catalog.json).
+The Teleion Fabric shim routes model requests to the Meta Model API at the standard tier only: point it at https://api.meta.ai/v1 (X-Upstream-Base-Url) and bring your own Meta API key. Any model id containing contributor is refused with HTTP 403 contributor_tier_refused. Other standard-tier ids that the Meta API lists, such as muse-spark-1.2, pass through unchanged. Operator-funded typed conversations need an explicit per-caller grant. The same list renders the home page and is stored in [`herma/model_catalog.json`](herma/model_catalog.json).
 
 | Model | What it's for | Does the Teleion Fabric shim route to it? |
 | :--- | :--- | :--- |

@@ -3,7 +3,7 @@
 // and Modal Finetuning Dataset Export (`/q/training-export`) for Herma v6.3.
 
 import { stripPiiDeep } from "./pii_strip.js";
-import { KEYED_CHECK_SQL, confidenceOf, reviewStateOf } from "./public_read.js";
+import { KEYED_CHECK_SQL, confidenceOf, reviewLabels, reviewStateOf, reviewStatusOf } from "./public_read.js";
 import { readClientPrefs, reviewAllowed } from "./client_prefs.js";
 import { MODELS_USED_LINK, documentHtml, scrubBannedWords, tidyText } from "./page_shell.js";
 import { NETWORK_MAP_NOTICE } from "./network_activity.js";
@@ -395,7 +395,8 @@ function summarizeObjectStructure(objRow, publicUrl) {
     category: objRow.category || "task_object",
     summary: scrubEmDash(objRow.summary || ""),
     sha256_hash: sha || null,
-    review_status: evalCount > 0 ? "peer_reviewed" : "unreviewed",
+    review_status: reviewStatusOf(objRow),
+    ...reviewLabels(objRow),
     quality_milli: evalCount > 0 ? Number(objRow.quality_milli || 0) : 0,
     eval_count: evalCount,
     schema_keys: schemaKeys,
@@ -573,7 +574,7 @@ export async function runTraditionalHermaIntake(
         const ph = sibTaskIds.map(() => "?").join(",");
         const sibRes = await db
           .prepare(
-            `SELECT object_key, category, summary, payload_json, sha256_hash, worker_uuid, eval_count, quality_milli, total_payload_bytes
+            `SELECT object_key, category, summary, payload_json, sha256_hash, worker_uuid, eval_count, verification_verdict, quality_milli, total_payload_bytes
              FROM herma_task_objects
              WHERE source_task_id IN (${ph}) AND ${visFilter} AND is_tombstoned = 0 AND COALESCE(verification_verdict, 'UNREVIEWED') != 'REFUTED'
              ORDER BY id DESC LIMIT ?`
@@ -625,7 +626,7 @@ export async function runTraditionalHermaIntake(
     if (!includeReasoningSuggestions && r.category === "reasoning_suggestion") continue;
     if (seenKeys.has(r.id)) continue;
     const extraMeta = await db
-      .prepare("SELECT sha256_hash, eval_count, quality_milli, total_payload_bytes FROM herma_task_objects WHERE object_key = ? ORDER BY id DESC LIMIT 1")
+      .prepare("SELECT sha256_hash, eval_count, verification_verdict, quality_milli, total_payload_bytes FROM herma_task_objects WHERE object_key = ? ORDER BY id DESC LIMIT 1")
       .bind(r.id)
       .first();
     const formatted = summarizeObjectStructure(
@@ -634,6 +635,7 @@ export async function runTraditionalHermaIntake(
         object_key: r.id,
         sha256_hash: extraMeta?.sha256_hash || "",
         eval_count: extraMeta?.eval_count || 0,
+        verification_verdict: extraMeta?.verification_verdict || "",
         quality_milli: extraMeta?.quality_milli || 0,
         total_payload_bytes: extraMeta?.total_payload_bytes || r.total_payload_bytes || 0,
       },
@@ -647,7 +649,7 @@ export async function runTraditionalHermaIntake(
     const categoryClause = includeReasoningSuggestions ? "" : "AND category != 'reasoning_suggestion'";
     const fallbackRows = await db
       .prepare(
-        `SELECT id, object_key, category, summary, payload_json, sha256_hash, eval_count, quality_milli, total_payload_bytes
+        `SELECT id, object_key, category, summary, payload_json, sha256_hash, eval_count, verification_verdict, quality_milli, total_payload_bytes
          FROM herma_task_objects
          WHERE ${visFilter} AND is_tombstoned = 0 AND COALESCE(verification_verdict, 'UNREVIEWED') != 'REFUTED' ${categoryClause}
          ORDER BY eval_count DESC, quality_milli DESC, id DESC
@@ -1645,7 +1647,7 @@ export async function buildStarterCatalogData(db, infraAllowed, publicUrl) {
 
   const rowsRes = await db
     .prepare(
-      `SELECT id, object_key, category, summary, payload_json, sha256_hash, eval_count, quality_milli,
+      `SELECT id, object_key, category, summary, payload_json, sha256_hash, eval_count, verification_verdict, quality_milli,
               prog_lang, deliverable_kind, total_payload_bytes, created_at
        FROM herma_task_objects
        WHERE ${visFilter} AND is_tombstoned = 0 AND COALESCE(verification_verdict, 'UNREVIEWED') != 'REFUTED'
@@ -1776,8 +1778,9 @@ export function renderStarterHubHtml(publicUrl, catalogData) {
         ? items
             .map((o) => {
               const reviewed = o.review_status === "peer_reviewed";
+              const failed = o.review_status === "failed";
               const score = Math.round(Number(o.quality_milli || 0) / 10);
-              return `<li><div class="tags"><span class="tag tag-object">Task Object</span><span class="tag${reviewed ? " tag-real" : ""}">${escapeHtml(reviewed ? `Reviewed by peers (${score} of 100)` : "Not reviewed yet")}</span></div>
+              return `<li><div class="tags"><span class="tag tag-object">Task Object</span><span class="tag${reviewed ? " tag-real" : ""}">${escapeHtml(failed ? "A check found it wrong" : reviewed ? `Reviewed (${score} of 100)` : "Not reviewed yet")}</span></div>
 <a href="${escapeHtml(o.permalink_url)}"><code>${escapeHtml(tidyText(o.object_key, 80))}</code></a>
 <span class="cell-sub">${escapeHtml(scrubPublicBrandProse(tidyText(o.summary, 140)))}</span>
 <span class="row"><a class="link-out" href="${escapeHtml(o.pinned_url)}">Pinned copy &#8599;</a><a class="link-out" href="${escapeHtml(o.object_url)}">Latest &#8599;</a></span></li>`;
@@ -2792,7 +2795,7 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
       }),
       db
         .prepare(
-          `SELECT object_key, category, summary, sha256_hash, eval_count, quality_milli, created_at
+          `SELECT object_key, category, summary, sha256_hash, eval_count, verification_verdict, quality_milli, created_at
            FROM herma_task_objects
            WHERE is_tombstoned = 0 AND ${visFilter}
              AND (INSTR(LOWER(object_key), ?) > 0 OR INSTR(LOWER(summary), ?) > 0 OR INSTR(LOWER(payload_json), ?) > 0)
@@ -2819,7 +2822,8 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
 
     const existingObjects = (exactObjRes?.results || []).map((o) => ({
       ...o,
-      review_status: Number(o.eval_count || 0) > 0 ? "peer_reviewed" : "unreviewed",
+      review_status: reviewStatusOf(o),
+      ...reviewLabels(o),
       object_url: `${base}/q/object/${encodeURIComponent(o.object_key)}`,
     }));
     const existingTasks = exactTasksRes?.results || [];
@@ -2901,7 +2905,7 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
       }),
       db
         .prepare(
-          `SELECT object_key, category, summary, sha256_hash, eval_count, quality_milli, created_at
+          `SELECT object_key, category, summary, sha256_hash, eval_count, verification_verdict, quality_milli, created_at
            FROM herma_task_objects
            WHERE is_tombstoned = 0 AND ${visFilter}
              AND (
@@ -2933,7 +2937,8 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
 
     const discoveredObjects = (ghObjRes?.results || []).map((o) => ({
       ...o,
-      review_status: Number(o.eval_count || 0) > 0 ? "peer_reviewed" : "unreviewed",
+      review_status: reviewStatusOf(o),
+      ...reviewLabels(o),
       object_url: `${base}/q/object/${encodeURIComponent(o.object_key)}`,
     }));
     const openDiscoveryTasks = ghTasksRes?.results || [];

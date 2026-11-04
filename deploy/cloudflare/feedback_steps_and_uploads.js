@@ -100,6 +100,13 @@ const STEP_MODE_ALIAS_MAP = Object.freeze({
 
 const INITIALIZED_FSU_DBS = new WeakSet();
 
+// With a score filter a page can come back short, so the next page starts after the rows read, not the rows kept. Rows cut for size are read again.
+function rowsReadFor(prefs, rows, fitted) {
+  if (prefs.min_confidence == null) return fitted.items.length;
+  if (!fitted.report.left_out_by_max_bytes) return rows.length;
+  return fitted.items.length ? rows.indexOf(fitted.items[fitted.items.length - 1]) + 1 : 1;
+}
+
 export function normalizeStepMode(raw) {
   const key = String(raw || "")
     .trim()
@@ -980,7 +987,7 @@ export async function handleListDurableTasksRequest(url, db, publicUrl, { infraA
       ok: true,
       schema: FEEDBACK_STEPS_UPLOADS_GRID.tasks_list_schema_version,
       total_matching: Number(countRow?.cnt || tasks.length),
-      next_offset: offset + Math.max(1, fittedTasks.items.length) < Number(countRow?.cnt || 0) ? offset + Math.max(1, fittedTasks.items.length) : null,
+      next_offset: offset + Math.max(1, rowsReadFor(prefs, tasks, fittedTasks)) < Number(countRow?.cnt || 0) ? offset + Math.max(1, rowsReadFor(prefs, tasks, fittedTasks)) : null,
       preferences: fittedTasks.report,
       limit,
       offset,
@@ -1087,7 +1094,7 @@ export async function handleListTaskObjectsRequest(url, db, publicUrl, { infraAl
       ok: true,
       schema: FEEDBACK_STEPS_UPLOADS_GRID.objects_list_schema_version,
       total_matching: Number(countRow?.cnt || objects.length),
-      next_offset: offset + Math.max(1, fittedObjects.items.length) < Number(countRow?.cnt || 0) ? offset + Math.max(1, fittedObjects.items.length) : null,
+      next_offset: offset + Math.max(1, rowsReadFor(prefs, objects, fittedObjects)) < Number(countRow?.cnt || 0) ? offset + Math.max(1, rowsReadFor(prefs, objects, fittedObjects)) : null,
       preferences: fittedObjects.report,
       limit,
       offset,

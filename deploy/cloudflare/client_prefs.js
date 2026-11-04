@@ -37,7 +37,7 @@ function wholeNumber(value, name, warnings) {
 
 export function readClientPrefs(source, nowSeconds = Date.now() / 1000) {
   const warnings = [];
-  const out = { include_unreviewed: true, review_state: null, updated_after: null, source_kinds: null, max_results: null, max_bytes: null, warnings };
+  const out = { include_unreviewed: true, review_state: null, updated_after: null, source_kinds: null, max_results: null, max_bytes: null, min_confidence: null, warnings };
   const unreviewed = pick(source, "include_unreviewed");
   if (unreviewed !== null) {
     const word = String(unreviewed).toLowerCase();
@@ -76,6 +76,12 @@ export function readClientPrefs(source, nowSeconds = Date.now() / 1000) {
   if (results !== null) out.max_results = wholeNumber(results, "max_results", warnings);
   const bytes = pick(source, "max_bytes");
   if (bytes !== null) out.max_bytes = wholeNumber(bytes, "max_bytes", warnings);
+  const confidence = pick(source, "min_confidence");
+  if (confidence !== null) {
+    const score = Number(confidence);
+    if (Number.isFinite(score) && score >= 0 && score <= 1) out.min_confidence = score;
+    else warnings.push("min_confidence should be a number from 0 to 1; ignored");
+  }
   return out;
 }
 
@@ -89,6 +95,7 @@ export function applyClientPrefs(items, prefs, { stateOf, timeOf, kindsOf, defau
   const encoder = new TextEncoder();
   const matched = items.filter((item) => {
     if (!reviewAllowed(stateOf(item), prefs)) return false;
+    if (prefs?.min_confidence != null && !(Number(item?.confidence) >= prefs.min_confidence)) return false;
     if (prefs?.updated_after != null && !(Number(timeOf(item)) >= prefs.updated_after)) return false;
     if (prefs?.source_kinds && !kindsOf(item).some((kind) => prefs.source_kinds.includes(String(kind).toLowerCase()))) return false;
     return true;

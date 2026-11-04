@@ -6,6 +6,7 @@
 // Text that workers wrote goes through tidyText() first, on the server (it applies the shared banned-word list, MUST-FOLLOW
 // rule 16); the Record links keep the original words. No word rule is ever sent to a browser: the search runs on the server too.
 
+import { reviewStateOf } from "./public_read.js";
 import {
   MODELS_USED_LINK,
   documentHtml,
@@ -193,7 +194,9 @@ function objectsTable(items) {
 <td><div class="tags">${tag(tidyText(humanize(o.category), 60) || "Task Object", "object")}${facetTags(o, [tidyText(humanize(o.category), 60)])}</div></td>
 <td><span class="nowrap">${escapeHtml(formatBytes(o.total_payload_bytes))}</span><span class="cell-sub">${parts > 0 ? `Stored in ${parts} parts` : "Stored as one piece"}</span></td>
 <td>${
-        Number(o.eval_count || 0) > 0
+        reviewStateOf(o) === "failed"
+          ? `${tag("A check found it wrong")}<span class="cell-sub">Don't reuse this</span>`
+          : reviewStateOf(o) === "reviewed"
           ? `<span class="nowrap">Quality <strong>${Math.round(Number(o.quality_milli || 0) / DASHBOARD_GRID.milli_scale)}</strong></span><br><span class="nowrap">Novelty <strong>${Math.round(Number(o.novelty_milli || 0) / DASHBOARD_GRID.milli_scale)}</strong></span><span class="cell-sub">${Number(o.eval_count || 0)} reviews</span>`
           : `${tag("Not reviewed yet")}<span class="cell-sub">Novelty ${Math.round(Number(o.novelty_milli || 0) / DASHBOARD_GRID.milli_scale)}</span>`
       }</td>
@@ -327,7 +330,7 @@ function permalinkMain(base, data) {
           ? tag("Our checker, a different worker, found problems. Don't reuse this.")
           : verdict === "CONFIRMED"
             ? tag("Our checker, a different worker, passed this", "real")
-            : tag(Number(o.eval_count || 0) > 0 ? "Other workers left notes; no check has passed or failed yet" : "No other worker has checked this yet");
+            : tag(Number(o.eval_count || 0) > 0 ? "Other workers left notes; no check yet" : "No other worker has checked this yet");
       const fileList = files.length
         ? `<div><h2 class="files-h">Files inside (${files.length})</h2>
 <ul class="files">${files

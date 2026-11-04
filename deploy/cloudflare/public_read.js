@@ -28,6 +28,11 @@ export function confidenceOf(row, checks = null) {
   const base = state === "reviewed" ? 0.7 : verdict === "REPRODUCED" ? 0.6 : verdict === "VERIFIED_SEED" ? 0.5 : 0.3;
   return { confidence: Math.round((base + Math.min(0.2, keyed * 0.1) + Math.min(0.06, named * 0.02)) * 100) / 100, evidence };
 }
+// The older review_status field says the same thing as review_state: peer_reviewed only for reviewed work, failed for work a check found wrong.
+export function reviewStatusOf(row) {
+  const state = reviewStateOf(row);
+  return state === "reviewed" ? "peer_reviewed" : state;
+}
 export function reviewLabels(row) {
   const state = reviewStateOf(row);
   return { review_state: state, reviewed: state === "reviewed", ...confidenceOf(row) };
