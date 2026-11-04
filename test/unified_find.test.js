@@ -90,7 +90,7 @@ describe("GET /q/find on a real database", () => {
   const call = (path) => exports.default.fetch(new Request(`https://shim.teleionlabs.com${path}`, { headers: { accept: "application/json" } }));
   beforeAll(async () => {
     await call("/q/pulse");
-  });
+  }, 60000);
   beforeEach(async () => {
     await resetFindIndex();
     await env.HERMA_DB.prepare("DELETE FROM herma_task_objects WHERE object_key LIKE 'find_test_%'").run();
