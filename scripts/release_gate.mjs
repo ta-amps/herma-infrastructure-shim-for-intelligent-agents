@@ -270,6 +270,15 @@ async function workerRoutes(problems) {
   return fetched;
 }
 
+// The one legal notice file (owner, Nov 4, MUST-FOLLOW rule 6) holds license wording and exact model names. Only this exact
+// path skips the word rules, and it still answers to the private names.
+export const NOTICE_FILE = "NOTICE-META-MODELS.txt";
+
+export function trackedFileProblems(file, text) {
+  if (file !== NOTICE_FILE) return dataProblems(`file ${file}`, text);
+  return privateTokens(text, RULES.privateSha256).length ? [`file ${file}: contains a private name`] : [];
+}
+
 function trackedFiles() {
   const out = execFileSync("git", ["ls-files", "-co", "--exclude-standard", "-z"], { cwd: ROOT, encoding: "utf8", maxBuffer: 1 << 28 });
   return out.split("\0").filter(Boolean).filter((f) => !/\.(png|jpe?g|gif|webp|ico|pdf|woff2?|ttf)$/i.test(f) && !f.startsWith("node_modules/") && f !== "package-lock.json" && f !== "uv.lock");
@@ -290,7 +299,7 @@ export async function runGate() {
     let text;
     try { text = fs.readFileSync(path.join(ROOT, file), "utf8"); } catch { continue; }
     files += 1;
-    problems.push(...dataProblems(`file ${file}`, text));
+    problems.push(...trackedFileProblems(file, text));
   }
   return { problems: [...new Set(problems)], fetched, pages: Object.keys(site.pages).length, dirty: Object.keys(dirtyRendered).length, files };
 }
