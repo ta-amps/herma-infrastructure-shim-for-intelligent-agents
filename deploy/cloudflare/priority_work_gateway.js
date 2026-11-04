@@ -10443,6 +10443,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       dashboard_url: `${publicUrl}/dashboard`,
       prompts_hub_url: `${publicUrl}/prompts`,
       onboard_url: `${publicUrl}/q/onboard`,
+      find_url: `${publicUrl}/q/find`,
       search_url: `${publicUrl}/q/search`,
       repos_url: `${publicUrl}/q/repos`,
       routing_url: `${publicUrl}/q/routing`,
