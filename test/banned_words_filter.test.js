@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTidy, tidyText } from "../deploy/cloudflare/page_shell.js";
+import { buildPageScrubber, buildTidy, tidyText } from "../deploy/cloudflare/page_shell.js";
 import { sha256Hex } from "../deploy/cloudflare/sha256_sync.js";
 
 // The display filter that worker-written text passes through before a page shows it (MUST-FOLLOW rule 16). The real banned words
@@ -75,5 +75,22 @@ describe("tidyText (built from the shared list at build time)", () => {
   it("is a working filter whichever list built it", () => {
     expect(tidyText("a   b")).toBe("a b");
     expect(tidyText("see 969951471abf3c")).toBe("see …");
+  });
+});
+
+describe("the last step on a whole page", () => {
+  const scrub = buildPageScrubber({ displayRules: [{ re: "\\bzorp\\b", flags: "i", to: "item" }], privateSha256: [] });
+
+  it("changes the text people read, and keeps tags, attributes, code and spacing", () => {
+    expect(scrub('<h2 title="zorp">Warm zorp  index</h2> <a href="/c/zorp">a zorp</a>\n')).toBe(
+      '<h2 title="zorp">Warm item  index</h2> <a href="/c/zorp">a item</a>\n'
+    );
+    expect(scrub("<p><code>zorp</code> and <pre>zorp\n zorp</pre> zorp</p>")).toBe("<p><code>zorp</code> and <pre>zorp\n zorp</pre> item</p>");
+    expect(scrub("<script>const a = 'zorp';</script>")).toBe("<script>const a = 'zorp';</script>");
+  });
+
+  it("leaves a page with no listed word exactly as it was", () => {
+    const page = '<main class="a">\n  <p>Tom &amp; Ann &lt;ok&gt;</p>\n</main>';
+    expect(scrub(page)).toBe(page);
   });
 });

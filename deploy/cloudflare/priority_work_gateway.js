@@ -429,6 +429,17 @@ const ALLOWED_HARNESS_TIERS = new Set([
   "tier_3_cli_code_harness",
   "tier_4_deep_architect_astra",
 ]);
+const OWNER_TOKEN_LABEL = "made_with_worker_token:true";
+// Older rows have no label; for them the worker's registration date is the check.
+const hasOwnerTokenLabel = (labelsJson) => {
+  try {
+    const labels = JSON.parse(labelsJson || "[]");
+    return Array.isArray(labels) && labels.includes(OWNER_TOKEN_LABEL);
+  } catch {
+    return false;
+  }
+};
+const OWNER_LABEL_SINCE = "2026-11-04T05:30:00.000Z";
 const GENERIC_EPHEMERAL_AGENTS = new Set([
   "volunteer-agent",
   "volunteer-worker",
@@ -2657,8 +2668,9 @@ async function reassembleTaskObjectPayload(db, objRow) {
 }
 
 const SEARCH_NEARBY_LIMIT = 5;
-// An ID has a separator and an underscore, dot, colon or digit: a hyphenated phrase such as agent-memory is something people type.
-const SEARCH_ID_SHAPE = /^(?=.{3,128}$)(?=.*[_.:0-9])[A-Za-z0-9]+(?:[-_.:][A-Za-z0-9]+)+$/;
+// An ID has a separator and an underscore, a colon or two digits in a row: agent-memory, agent.memory and agent-memory2 are things
+// people type, so a name like these can't buy first place. They still come back as ordinary results.
+const SEARCH_ID_SHAPE = /^(?=.{3,128}$)(?=.*(?:[_:]|[0-9]{2}))[A-Za-z0-9]+(?:[-_.:][A-Za-z0-9]+)+$/;
 
 // The gateway's setup stops early on a database already at its schema version, so these two reach a live database here: once per
 // isolate, only when an exact lookup is about to use them. If this fails, the lookup still works, by a scan.
@@ -3310,34 +3322,6 @@ async function lookupTaskObjectByKey(db, infraAllowed, objectKey, publicUrl, que
     }
   }
 
-  // Fallback: check requested_object_key (e.g. suffix-truncated or cross-producer namespaced __by_ / __contender_ keys)
-  if (!row) {
-    const reqClauses = ["requested_object_key = ?"];
-    const reqBinds = [baseKey];
-    if (shaFilter) {
-      reqClauses.push("SUBSTR(LOWER(sha256_hash), 1, ?) = ?");
-      reqBinds.push(shaFilter.length, shaFilter);
-    }
-    if (producerFilter) {
-      reqClauses.push("producer_agent = ?");
-      reqBinds.push(producerFilter);
-    }
-    if (versionFilter !== null && Number.isFinite(versionFilter) && versionFilter > 0) {
-      reqClauses.push("COALESCE(version_num, 1) = ?");
-      reqBinds.push(Math.floor(versionFilter));
-    }
-    row = await db
-      .prepare(
-        `SELECT * FROM herma_task_objects WHERE ${reqClauses.join(" AND ")} ORDER BY COALESCE(version_num, 1) DESC, id DESC LIMIT 1`
-      )
-      .bind(...reqBinds)
-      .first();
-    if (row) {
-      resolvedViaAlias = baseKey;
-      lookupKey = String(row.object_key);
-    }
-  }
-
   // Cross-resolution when a worker calls /q/object/verb_* using a durable task_id instead of an object_key!
   if (!row && baseKey.startsWith("verb_")) {
     const taskLookup = await lookupDurableTaskById(db, infraAllowed, baseKey, publicUrl);
@@ -3365,6 +3349,34 @@ async function lookupTaskObjectByKey(db, infraAllowed, objectKey, publicUrl, que
           produced_objects: producedObjs,
         },
       };
+    }
+  }
+
+  // Fallback: check requested_object_key (e.g. suffix-truncated or cross-producer namespaced __by_ / __contender_ keys)
+  if (!row) {
+    const reqClauses = ["requested_object_key = ?"];
+    const reqBinds = [baseKey];
+    if (shaFilter) {
+      reqClauses.push("SUBSTR(LOWER(sha256_hash), 1, ?) = ?");
+      reqBinds.push(shaFilter.length, shaFilter);
+    }
+    if (producerFilter) {
+      reqClauses.push("producer_agent = ?");
+      reqBinds.push(producerFilter);
+    }
+    if (versionFilter !== null && Number.isFinite(versionFilter) && versionFilter > 0) {
+      reqClauses.push("COALESCE(version_num, 1) = ?");
+      reqBinds.push(Math.floor(versionFilter));
+    }
+    row = await db
+      .prepare(
+        `SELECT * FROM herma_task_objects WHERE ${reqClauses.join(" AND ")} ORDER BY ${reqClauses.length > 1 ? "COALESCE(version_num, 1) DESC, id DESC" : "id ASC"} LIMIT 1`
+      )
+      .bind(...reqBinds)
+      .first();
+    if (row) {
+      resolvedViaAlias = baseKey;
+      lookupKey = String(row.object_key);
     }
   }
 
@@ -4630,16 +4642,20 @@ async function verifyWorkerUuidAccess(
         .prepare("SELECT * FROM herma_worker_registry WHERE agent_id = ? ORDER BY iteration_count DESC, updated_at DESC LIMIT 1")
         .bind(cleanAgent)
         .first();
+      const tokSha = await sha256HexGateway(tok);
+      if (byAgent?.worker_token_sha256 === tokSha) return { ok: true, existing: byAgent, tokenVerified: true };
+      // Anyone may start a worker under a used name, so this proves only that worker: it doesn't stand in for the name on leases or claims.
+      const byToken = await db
+        .prepare("SELECT * FROM herma_worker_registry WHERE agent_id = ? AND worker_token_sha256 = ? LIMIT 1")
+        .bind(cleanAgent, tokSha)
+        .first();
+      if (byToken) return { ok: true, existing: null, tokenVerified: false, ownTokenWorker: byToken };
       if (byAgent?.worker_token_sha256 && !infraAllowed) {
-        const tokSha = await sha256HexGateway(tok);
-        if (tokSha !== byAgent.worker_token_sha256) {
-          return {
-            ok: false,
-            code: "invalid_worker_token",
-            detail: "Provided worker_token does not match registered worker capability token.",
-          };
-        }
-        return { ok: true, existing: byAgent, tokenVerified: true };
+        return {
+          ok: false,
+          code: "invalid_worker_token",
+          detail: "Provided worker_token does not match registered worker capability token.",
+        };
       }
     }
     return { ok: true, existing: null, tokenVerified: false };
@@ -7814,7 +7830,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
   const mintIsolatedContender = salvagedConcurrentTwinAttempt && (!cleanedSubmitUuid || isLegacySharedSubmitUuid);
   const { profile: workerProfile } = await upsertOrLoadWorkerProfile(db, {
     agentId,
-    workerUuid: mintIsolatedContender ? "" : rawWorkerUuid,
+    workerUuid: mintIsolatedContender ? "" : cleanedSubmitUuid || authCheck.ownTokenWorker?.worker_uuid || (authCheck.tokenVerified ? authCheck.existing?.worker_uuid : "") || "",
     mintNew: mintIsolatedContender,
     forceMintNew: mintIsolatedContender,
     allowAgentRename: Boolean(authCheck.tokenVerified || infraAllowed),
@@ -7858,9 +7874,15 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
     let namespacedDueToPriorOwner = false;
     let versionNum = 1;
     const priorOwnerRow = await db
-      .prepare("SELECT producer_agent, COALESCE(version_num, 1) AS version_num FROM herma_task_objects WHERE object_key = ? ORDER BY id ASC LIMIT 1")
+      .prepare("SELECT producer_agent, worker_uuid, created_at, labels_json, COALESCE(version_num, 1) AS version_num FROM herma_task_objects WHERE object_key = ? ORDER BY id ASC LIMIT 1")
       .bind(requestedObjKey)
       .first();
+    // The default read also falls back to an alias, then to requested_object_key: a first row here would hide those.
+    const readsElsewhere = priorOwnerRow
+      ? null
+      : (await db.prepare("SELECT 1 AS hit FROM herma_object_aliases WHERE alias_key = ? LIMIT 1").bind(requestedObjKey).first()) ||
+        (await db.prepare("SELECT 1 AS hit FROM herma_task_objects WHERE requested_object_key = ? LIMIT 1").bind(requestedObjKey).first()) ||
+        (requestedObjKey.startsWith("verb_") ? await db.prepare("SELECT 1 AS hit FROM herma_durable_queue WHERE task_id = ? LIMIT 1").bind(requestedObjKey).first() : null);
     if (salvagedConcurrentTwinAttempt) {
       const contenderSuffix = (await sha256HexGateway(`${workerProfile.worker_uuid}:${serializedRaw}`)).slice(
         0,
@@ -7871,13 +7893,43 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
         QUEUE_GATEWAY_GRID.object_key_max_len
       );
       namespacedDueToPriorOwner = Boolean(priorOwnerRow);
-    } else if (priorOwnerRow) {
-      if (priorOwnerRow.producer_agent !== agentId && !infraAllowed) {
+    } else if (priorOwnerRow || readsElsewhere) {
+      // A name is only a label: anyone can send it, or start a new worker under it. A new version on the same key, which
+      // the default read returns, takes the first version's own worker showing its token. Everyone else keeps their work
+      // under a key of their own.
+      const proofWorker = authCheck.tokenVerified || authCheck.ownTokenWorker ? workerProfile.worker_uuid : "";
+      const firstRowIsOwn = async (row) => {
+        if (!row?.worker_uuid || row.worker_uuid !== proofWorker) return false;
+        const madeWithToken = hasOwnerTokenLabel(row.labels_json) || String(row.created_at || "") < OWNER_LABEL_SINCE;
+        if (!madeWithToken) return false;
+        const reg = await db.prepare("SELECT created_at FROM herma_worker_registry WHERE worker_uuid = ?").bind(proofWorker).first();
+        return Boolean(reg?.created_at) && reg.created_at <= row.created_at;
+      };
+      const provenFirstWorker = await firstRowIsOwn(priorOwnerRow);
+      if (!provenFirstWorker && !infraAllowed) {
         effectiveObjKey = sanitizeObjectKeyPreservingSuffix(
           `${requestedObjKey}__by_${agentId}`,
           QUEUE_GATEWAY_GRID.object_key_max_len
         );
+        // The fallback key must be this name's own: not another key, and not one a token holder started.
+        const nsFirst = await db
+          .prepare("SELECT requested_object_key, producer_agent, worker_uuid, created_at, labels_json FROM herma_task_objects WHERE object_key = ? ORDER BY id ASC LIMIT 1")
+          .bind(effectiveObjKey)
+          .first();
+        const nsTaken =
+          effectiveObjKey === requestedObjKey ||
+          (nsFirst &&
+            (nsFirst.requested_object_key !== requestedObjKey ||
+              nsFirst.producer_agent !== agentId ||
+              (hasOwnerTokenLabel(nsFirst.labels_json) && !(await firstRowIsOwn(nsFirst)))));
+        if (nsTaken) {
+          const nsSuffix = (await sha256HexGateway(`${workerProfile.worker_uuid}:${agentId}`)).slice(0, 12);
+          effectiveObjKey = sanitizeObjectKeyPreservingSuffix(`${requestedObjKey}__by_${agentId}_${nsSuffix}`, QUEUE_GATEWAY_GRID.object_key_max_len);
+        }
         namespacedDueToPriorOwner = true;
+        submitWarnings.push(
+          `saved as ${effectiveObjKey}: ${requestedObjKey} stays with the worker that made it, which can add versions by sending its worker_token`
+        );
         const ownMaxVer = await db
           .prepare("SELECT MAX(COALESCE(version_num, 1)) AS mv FROM herma_task_objects WHERE object_key = ?")
           .bind(effectiveObjKey)
@@ -7916,13 +7968,14 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
         })
       : serializedRaw;
 
-    const rawLabels = Array.isArray(item.labels) ? item.labels.map((x) => scrubSensitiveText(x)) : [category];
+    const rawLabels = (Array.isArray(item.labels) ? item.labels.map((x) => scrubSensitiveText(x)) : [category]).filter((x) => x !== OWNER_TOKEN_LABEL);
     const workerTag = `worker:${workerProfile.worker_uuid}`;
     const labels = Array.from(
       new Set([
         ...rawLabels,
         workerTag,
         ...(salvagedConcurrentTwinAttempt ? ["contender_attempt:true"] : []),
+        ...(authCheck.tokenVerified || authCheck.ownTokenWorker ? [OWNER_TOKEN_LABEL] : []),
       ])
     );
     const objGenDepth = Math.max(
@@ -8964,6 +9017,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
     );
   }
 
+  const selfSeedNoObject = taskId === "self_seed" && !storedObjects.length;
   const primaryPermalinkId =
     existingTask && !salvagedConcurrentTwinAttempt && !preservePriorPrimaryCompletion
       ? verificationCode
@@ -9020,8 +9074,11 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
     proposals_registered: credAndProposalsOut.proposals_registered,
     schema_feedback: schemaFeedback,
     thick_path_telemetry: thickMetrics,
-    contribution_permalink: `${publicUrl}/c/${encodeURIComponent(primaryPermalinkId)}`,
-    task_permalink: `${publicUrl}/c/${encodeURIComponent(taskId)}`,
+    // Work with no Task and no stored object has no page of its own, so both links open the worker's page.
+    contribution_permalink: selfSeedNoObject ? `${publicUrl}/w/${encodeURIComponent(workerProfile.worker_uuid)}` : `${publicUrl}/c/${encodeURIComponent(primaryPermalinkId)}`,
+    task_permalink: selfSeedNoObject
+      ? `${publicUrl}/w/${encodeURIComponent(workerProfile.worker_uuid)}`
+      : `${publicUrl}/c/${encodeURIComponent(taskId === "self_seed" ? primaryPermalinkId : taskId)}`,
     worker_permalink: `${publicUrl}/w/${encodeURIComponent(workerProfile.worker_uuid)}`,
     dashboard_url: `${publicUrl}/dashboard`,
     // The two plain lines an agent shows its person (no hash, no receipt); every agent prints the same words.
@@ -9914,6 +9971,8 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     const lookupId = decodeURIComponent(rootSeg === "c" ? segments[1] || "" : segments[2] || "");
+    // Older replies and pages linked to this name, which is a marker for work with no Task, not a page.
+    if (lookupId === "self_seed") return new Response(null, { status: 302, headers: { location: "/dashboard" } });
     const pData = await buildContributionPermalinkData(db, infraAllowed, lookupId);
     const found = Boolean(pData.task || pData.objects.length);
     const status = found ? QUEUE_GATEWAY_GRID.http_ok : QUEUE_GATEWAY_GRID.http_not_found;

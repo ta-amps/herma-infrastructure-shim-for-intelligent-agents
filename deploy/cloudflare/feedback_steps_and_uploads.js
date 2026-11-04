@@ -1079,9 +1079,18 @@ async function persistBlobBytesAndOptionalObject(
       ? String(objectSpec.object_key || `blob_${filename || sha256Hash.slice(0, 12)}_v1`)
       : "";
   const sanitizeKey = gatewayOps?.sanitizeObjectKeyPreservingSuffix || ((k) => k.slice(0, 120));
-  const cleanLinkedKey = linkedObjKeyCandidate
+  let cleanLinkedKey = linkedObjKeyCandidate
     ? sanitizeKey(linkedObjKeyCandidate, FEEDBACK_STEPS_UPLOADS_GRID.object_key_max_len)
     : "";
+  // An upload never adds a version to a key that's already there; its bytes keep their own key.
+  if (
+    cleanLinkedKey &&
+    ((await db.prepare("SELECT 1 AS hit FROM herma_task_objects WHERE object_key = ? OR requested_object_key = ? LIMIT 1").bind(cleanLinkedKey, cleanLinkedKey).first()) ||
+      (await db.prepare("SELECT 1 AS hit FROM herma_object_aliases WHERE alias_key = ? LIMIT 1").bind(cleanLinkedKey).first()) ||
+      (cleanLinkedKey.startsWith("verb_") && (await db.prepare("SELECT 1 AS hit FROM herma_durable_queue WHERE task_id = ? LIMIT 1").bind(cleanLinkedKey).first())))
+  ) {
+    cleanLinkedKey = sanitizeKey(`${cleanLinkedKey}__upload_${sha256Hash.slice(0, 12)}_${await sha256HexBytes(new TextEncoder().encode(String(agentId))).then((h) => h.slice(0, 8))}`, FEEDBACK_STEPS_UPLOADS_GRID.object_key_max_len);
+  }
 
   await db
     .prepare(
@@ -1126,7 +1135,9 @@ async function persistBlobBytesAndOptionalObject(
   }
 
   if (cleanLinkedKey) {
-    const category = String(objectSpec?.category || "multimodal_asset_kit").slice(0, 48);
+    // That label is the server's own note that a worker token made the row; an upload has none.
+    const rawCategory = String(objectSpec?.category || "multimodal_asset_kit").slice(0, 48);
+    const category = rawCategory.trim() === "made_with_worker_token:true" ? "multimodal_asset_kit" : rawCategory;
     const summary = String(
       objectSpec?.summary || `Uploaded ${totalBytes} byte artifact (${filename || contentType})`
     ).slice(0, FEEDBACK_STEPS_UPLOADS_GRID.summary_max_len);

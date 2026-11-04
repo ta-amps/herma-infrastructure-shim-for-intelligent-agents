@@ -68,6 +68,24 @@ describe("GET /q/repos", () => {
     expect(low.rows.map((r) => r[0])).toEqual(["other/memfold"]);
   });
 
+  it("falls back to GitHub's search when the direct lookup's limit is used up, and only an exact name counts", async () => {
+    const item = (full_name) => ({ full_name, name: full_name.split("/")[1], license: { spdx_id: "MIT" }, language: "Go", created_at: "2026-11-02T01:00:00Z", stargazers_count: 0 });
+    const limitedThenSearch = (items) =>
+      vi.fn(async (url) =>
+        String(url).includes("/search/")
+          ? new Response(JSON.stringify({ total_count: items.length, incomplete_results: false, items }), { status: 200 })
+          : new Response("{}", { status: 403, headers: { "x-ratelimit-remaining": "0" } })
+      );
+    const found = await call("repo=fallback/thing-a", limitedThenSearch([item("fallback/thing-a"), item("other/thing-a")]));
+    expect(found[0].rows.map((r) => r[0])).toEqual(["fallback/thing-a"]);
+    expect(found[0].source).toBe("github");
+    await clearUpstreamBackoff();
+    const other = await call("repo=fallback/thing-b", limitedThenSearch([item("other/thing-b")]));
+    expect(other[0].rows).toEqual([]);
+    expect(other[0].miss).toBe("not_in_github_search");
+    await clearUpstreamBackoff();
+  });
+
   it("reads a repository the scans never saw through GitHub, and keeps its licence honest", async () => {
     const fetchImpl = github(200, { full_name: "new/thing", license: { spdx_id: "NOASSERTION" }, language: "Go", created_at: "2026-11-02T01:00:00Z", stargazers_count: 0 });
     const [body] = await call("repo=new/thing", fetchImpl);
@@ -403,6 +421,10 @@ describe("review findings, November 4", () => {
     const phrase = await raw("agent-memory");
     expect(phrase.match).not.toBe("exact_id");
     expect(phrase.exact_match).toBeUndefined();
+    await put("agent.memory");
+    expect((await raw("agent.memory")).match).not.toBe("exact_id");
+    await put("agent-memory2");
+    expect((await raw("agent-memory2")).match).not.toBe("exact_id");
     await put("agent-memory-2026");
     expect((await raw("agent-memory-2026")).match).toBe("exact_id");
   });

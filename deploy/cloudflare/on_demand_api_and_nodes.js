@@ -1918,7 +1918,7 @@ export async function handleEndpointsCatalogRequest(request, db, publicUrl, infr
   const submitOut = await gatewayOps.submitTaskFromChat({
     agent_id: agentId,
     worker_uuid: workerUuid,
-    worker_token: workerToken,
+    worker_token: workerToken || (scopedAuth.ok && scopedAuth.key_class !== "endpoint" ? presentedScoped : ""),
     task_id: "self_seed",
     summary: body.summary || `Published on-demand TaskObject API endpoint ${objectKey}`,
     task_objects: [
@@ -2362,7 +2362,7 @@ export async function handleOnDemandObjectApiInvocation(
     const compactOut = await gatewayOps.submitTaskFromChat({
       agent_id: objDoc.producer_agent || scopedAuth.owner_agent_id || "snapshot-compactor",
       worker_uuid: objWorkerUuid,
-      worker_token: workerToken,
+      worker_token: workerToken || (scopedAuth.ok && scopedAuth.key_class !== "endpoint" ? presentedScoped : ""),
       task_id: "self_seed",
       summary: `Compacted ${pendingDeltas} intraday deltas into snapshot watermark=${newWatermark} for ${objDoc.object_key}`,
       task_objects: [
@@ -2376,6 +2376,10 @@ export async function handleOnDemandObjectApiInvocation(
         },
       ],
     });
+    // A refused or conflicting submit wrote nothing, so the reply can't say it did.
+    if (!compactOut?.stored_task_objects?.length) {
+      return { status: 403, body: { ok: false, code: compactOut?.code || "compact_not_stored", detail: compactOut?.detail || "The snapshot was not stored." } };
+    }
     const storedObj = compactOut?.stored_task_objects?.[0] || {};
     return {
       status: ON_DEMAND_API_GRID.http_ok,

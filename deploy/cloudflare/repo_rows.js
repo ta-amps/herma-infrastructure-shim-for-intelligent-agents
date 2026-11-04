@@ -164,7 +164,16 @@ function withFeeds(rows, feedRows) {
 async function exactLookup(db, target, fetchImpl, { needFresh = false } = {}) {
   const fromDb = (await exactFromDb(db, target)).map(rowFromDb);
   if (fromDb.length && (!needFresh || fromDb.every(isFresh))) return { rows: fromDb, source: "feed", state: "found", complete: Boolean(target.repo) };
-  const up = await upstream(target, fetchImpl);
+  let up = await upstream(target, fetchImpl);
+  // GitHub's direct lookup and its search have separate limits. When the first is used up, the search can still find the exact repository.
+  if (target.repo && !up.rows.length && up.state === "rate_limited") {
+    const wanted = target.repo.toLowerCase();
+    const found = await upstream({ name: target.repo.split("/")[1] }, fetchImpl);
+    const exact = found.rows.filter((r) => String(r[0]).toLowerCase() === wanted);
+    if (exact.length) up = { rows: exact, state: "found", complete: true };
+    else if (found.state === "rate_limited") up = found;
+    else up = { rows: [], state: "not_in_github_search", complete: false };
+  }
   if (fromDb.length && !up.rows.length) return { rows: fromDb, source: "feed", state: "found", complete: false };
   return { rows: withFeeds(up.rows, fromDb), source: "github", state: up.state, complete: Boolean(up.complete) };
 }

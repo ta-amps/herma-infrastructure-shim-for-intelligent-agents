@@ -183,7 +183,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
 | [scripts/repo_rows_refresh.py](scripts/repo_rows_refresh.py) | Build the rows behind GET /q/repos: feed exports plus a fresh scan of GitHub's public search, as SQL for D1. |
 
-## test/ (31)
+## test/ (32)
 
 | File | What it is |
 |---|---|
@@ -204,6 +204,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/node/help_burst.node-test.mjs](test/node/help_burst.node-test.mjs) | q/help spends Meta calls only inside its caps, even when many requests arrive at once (owner rule 8: an allow… |
 | [test/node/network_merge.node-test.mjs](test/node/network_merge.node-test.mjs) | Tests of the network map's merge (networkmerge.mjs), with a made-up place table and made-up worker ids. |
 | [test/node/network_merge_hostile.node-test.mjs](test/node/network_merge_hostile.node-test.mjs) |  |
+| [test/object_key_owner.test.js](test/object_key_owner.test.js) | A name is only a label. |
 | [test/on_demand_api_keys_and_nodes.test.js](test/on_demand_api_keys_and_nodes.test.js) |  |
 | [test/priority_work_gateway.test.js](test/priority_work_gateway.test.js) |  |
 | [test/privacy_logs.test.js](test/privacy_logs.test.js) |  |
