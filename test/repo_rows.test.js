@@ -67,6 +67,13 @@ describe("GET /q/repos", () => {
     expect(body.rows.map((r) => r[0])).toEqual(["a/fresh-tool"]);
   });
 
+  it("withholds a repository whose name the public-name filter would change, rather than serve a false name", async () => {
+    const f = github(200, { full_name: "someone/tessera", license: null, language: "Go", created_at: "2026-11-02T01:00:00Z", stargazers_count: 0 });
+    const [body] = await call("repo=someone/tessera", f);
+    expect(body.rows).toEqual([]);
+    expect(body.miss).toBe("withheld");
+  });
+
   it("tells a missing repository apart from a limit it could not get past", async () => {
     const [gone] = await call("repo=nobody/never-was-here", github(404, {}));
     expect(gone.miss).toBe("no_such_repo");

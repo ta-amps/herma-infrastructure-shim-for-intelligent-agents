@@ -3,6 +3,7 @@
 // by scripts/repo_rows_refresh.py). A repository the scans never saw is read through to GitHub's public API with no credential;
 // that answer is kept only in the edge cache, never in D1, and each request makes at most one upstream call.
 import { tidyText } from "./page_shell.js";
+import { publicNames } from "./public_names.js";
 
 const COLS = ["repo", "license", "language", "created", "stars", "feed"];
 const FULL_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
@@ -13,8 +14,9 @@ const NEGATIVE_TTL_S = 3600;
 const MAX_LIMIT = 20;
 const UPSTREAM_MS = 4000;
 
-// A name the shared banned-word list would change is not served at all: changing it would make the row false.
-const servable = (repo) => tidyText(repo, 400) === repo;
+// A name the shared banned-word list or the last-step public-name filter would change is not served at all: changing it would
+// make the row false.
+const servable = (repo) => tidyText(repo, 400) === repo && publicNames(repo) === repo;
 
 function rowFromDb(r) {
   return [r.repo, r.license || null, r.language || null, r.created || null, r.stars ?? null, r.feed || ""];
