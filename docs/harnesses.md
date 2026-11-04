@@ -26,8 +26,8 @@ For an explicitly selected Meta provider, set `X-Upstream-Base-Url` to
 `https://api.meta.ai/v1` with a caller-owned upstream key. The allowed hostname
 does not let the request borrow an operator credential configured for another
 origin. In Workers the generic proxy uses `UPSTREAM_LLM_URL` and
-`UPSTREAM_LLM_API_KEY`; the paid conversation API uses separate `META_API_KEY`
-and `OLLAMA_API_KEY` secrets. These are different configuration paths.
+`UPSTREAM_LLM_API_KEY`; the paid conversation API uses separate provider secrets,
+`META_API_KEY` first. These are different configuration paths.
 
 ## 3. Muse Code / Responses-Compatible Harnesses (`/v1/responses`)
 

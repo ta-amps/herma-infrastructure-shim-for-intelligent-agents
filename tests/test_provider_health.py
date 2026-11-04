@@ -56,7 +56,7 @@ HEALTH_SCOPES = (
 def configured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HERMA_CONVERSATION_MAX_OUTPUT", "16384")
     monkeypatch.setenv("HERMA_META_BUDGET_USD", "5")
-    monkeypatch.setenv("META_API_KEY", "synthetic-provider-key")
+    monkeypatch.setenv("META_API_KEY", "example-provider-key")
     monkeypatch.setenv("HERMA_CONVERSATION_DISABLED_PROVIDERS", "[]")
     # Each principal holds its own exact grant; uncertainty still needs a plan opt-in too.
     grant(
@@ -73,7 +73,7 @@ def test_operator_pause_retains_keys_and_does_not_change_byo_proxy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("HERMA_CONVERSATION_DISABLED_PROVIDERS", '["anthropic","openrouter"]')
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-retained-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "example-retained-key")
     store = ProvisionStore(tmp_path / "state.db")
     seed(store, "key:alice")
 
@@ -82,7 +82,7 @@ def test_operator_pause_retains_keys_and_does_not_change_byo_proxy(
 
     config = ProviderConfig(
         "anthropic",
-        "synthetic-claude",
+        "example-claude",
         max_output=1000,
         anthropic_rates=(1, 3),
         anthropic_budget_usd=1,
@@ -100,13 +100,13 @@ def test_operator_pause_retains_keys_and_does_not_change_byo_proxy(
         _resolve_upstream_headers(
             "messages",
             {
-                "x-upstream-api-key": "synthetic-worker-key",
+                "x-upstream-api-key": "example-worker-key",
                 "x-upstream-base-url": "https://api.anthropic.com",
             },
         )["x-api-key"]
-        == "synthetic-worker-key"
+        == "example-worker-key"
     )
-    assert __import__("os").environ["ANTHROPIC_API_KEY"] == "synthetic-retained-key"
+    assert __import__("os").environ["ANTHROPIC_API_KEY"] == "example-retained-key"
 
 
 @pytest.mark.parametrize(
@@ -131,18 +131,18 @@ def test_operator_proxy_fallback_is_paused_but_caller_key_precedence_is_unchange
 ) -> None:
     monkeypatch.setenv("HERMA_CONVERSATION_DISABLED_PROVIDERS", '["anthropic","openrouter"]')
     monkeypatch.setenv(variable, url)
-    monkeypatch.setenv("HERMA_UPSTREAM_API_KEY", "synthetic-operator-key")
+    monkeypatch.setenv("HERMA_UPSTREAM_API_KEY", "example-operator-key")
     with pytest.raises(HermaError) as paused:
         _resolve_upstream_headers(wire, {})
     assert paused.value.code == "provider_operator_disabled"
-    expected = "synthetic-worker-key" if header == "x-api-key" else "Bearer synthetic-worker-key"
+    expected = "example-worker-key" if header == "x-api-key" else "Bearer example-worker-key"
     assert (
-        _resolve_upstream_headers(wire, {"X-Upstream-Api-Key": "synthetic-worker-key"})[header]
+        _resolve_upstream_headers(wire, {"X-Upstream-Api-Key": "example-worker-key"})[header]
         == expected
     )
     monkeypatch.setenv("HERMA_CONVERSATION_DISABLED_PROVIDERS", "malformed operator setting")
     assert (
-        _resolve_upstream_headers(wire, {"X-Upstream-Api-Key": "synthetic-worker-key"})[header]
+        _resolve_upstream_headers(wire, {"X-Upstream-Api-Key": "example-worker-key"})[header]
         == expected
     )
 
@@ -151,11 +151,11 @@ def test_proxy_pause_uses_exact_known_hosts_and_preserves_operator_origin_bindin
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("HERMA_CONVERSATION_DISABLED_PROVIDERS", '["anthropic"]')
-    monkeypatch.setenv("HERMA_UPSTREAM_API_KEY", "synthetic-operator-key")
+    monkeypatch.setenv("HERMA_UPSTREAM_API_KEY", "example-operator-key")
     monkeypatch.setenv(
-        "HERMA_UPSTREAM_MESSAGES_URL", "https://api.anthropic.com.synthetic.example/v1/messages"
+        "HERMA_UPSTREAM_MESSAGES_URL", "https://api.anthropic.com.example.example/v1/messages"
     )
-    assert _resolve_upstream_headers("messages", {})["x-api-key"] == "synthetic-operator-key"
+    assert _resolve_upstream_headers("messages", {})["x-api-key"] == "example-operator-key"
     with pytest.raises(HermaError) as mismatch:
         _resolve_upstream_headers("messages", {"X-Upstream-Base-Url": "https://api.anthropic.com"})
     assert mismatch.value.code == "upstream_credential_origin_mismatch"
@@ -229,9 +229,7 @@ def test_concurrent_principals_get_only_one_explicit_recovery_probe(
                 )
             entered.set()
             await release.wait()
-            return tool_reply(
-                {"value": {"message": "SYNTHETIC", "synthetic": True}}, provider="meta"
-            )
+            return tool_reply({"value": {"message": "EXAMPLE", "example": True}}, provider="meta")
 
         engine = ConversationEngine(store, call=call)
         await engine.turn("key:first", prepare_plan(store, "key:first"))
@@ -406,9 +404,7 @@ def test_late_failure_cannot_admit_a_second_probe_through_durable_turns(
                 raise ProviderFailure(
                     "provider_rate_limited", outcome="rejected", retry_after_seconds=1
                 )
-            return tool_reply(
-                {"value": {"message": "SYNTHETIC", "synthetic": True}}, provider="meta"
-            )
+            return tool_reply({"value": {"message": "EXAMPLE", "example": True}}, provider="meta")
 
         engine = ConversationEngine(store, call=call)
 

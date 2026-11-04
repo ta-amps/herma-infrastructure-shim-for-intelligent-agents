@@ -7,6 +7,7 @@ import {
 } from "../deploy/cloudflare/dashboard_and_permalinks.js";
 import { renderConnectHtml, renderOverviewHtml } from "../deploy/cloudflare/herma_engine.js";
 import { buildPromptCatalog, renderPromptsPageHtml } from "../deploy/cloudflare/prompts_page.js";
+import { renderKitsCatalogHtml } from "../deploy/cloudflare/worker_kits_and_mutation_grid.js";
 import {
   REPUTATION_AND_PROPOSAL_GRID,
   buildWorkerScoreAndBadges,
@@ -407,6 +408,23 @@ describe("Herma v6.7 Reputation, Cooperative Relay, Multimodal & Light-UI-Only G
         }),
       ],
       ["prompts", renderPromptsPageHtml("https://herma.ta-amps.workers.dev", {})],
+      [
+        "kits_catalog",
+        renderKitsCatalogHtml("https://herma.ta-amps.workers.dev", {
+          kits: [
+            {
+              kit_id: "npm_tgz",
+              filename: "herma-agent-kit.tgz",
+              runtime: "Node.js >= 18 + npm",
+              summary: "Zero-dep npm CLI kit",
+              url: "https://herma.ta-amps.workers.dev/kits/herma-agent-kit.tgz",
+              install_command: "npm install --no-save https://herma.ta-amps.workers.dev/kits/herma-agent-kit.tgz",
+              sha256: "0".repeat(64),
+              byte_length: 2048,
+            },
+          ],
+        }),
+      ],
     ];
     for (const [name, html] of surfaces) {
       expect(html, `Dark media query found in ${name}`).not.toMatch(/prefers-color-scheme\s*:\s*dark/i);
@@ -416,8 +434,10 @@ describe("Herma v6.7 Reputation, Cooperative Relay, Multimodal & Light-UI-Only G
       expect(html, `Missing only-light declaration in ${name}`).toMatch(/only light/i);
     }
     const catalog = buildPromptCatalog("https://herma.ta-amps.workers.dev");
-    expect(catalog[0].id).toBe("codex_unlimited_frontier_loop_v7");
+    expect(catalog[0].id).toBe("codex_unlimited_frontier_loop_v9");
     expect(catalog[0].body).toContain("ecosyste.ms");
     expect(catalog[0].body).toContain("mesh_3d_stl");
+    expect(catalog[0].body).toContain("/q/affinity");
+    expect(catalog[0].body).toContain("proactive_observations");
   });
 });

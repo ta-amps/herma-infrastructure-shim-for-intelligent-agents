@@ -2,7 +2,16 @@
 // Starter & Code-Reuse Hub (`/q/starter`, `/starter`), Meta Muse Telemetry (`/q/meta-telemetry`),
 // and Modal Finetuning Dataset Export (`/q/training-export`) for Herma v6.3.
 
+import { MODELS_USED_LINK, documentHtml, scrubBannedWords, tidyText } from "./page_shell.js";
+import { NETWORK_MAP_NOTICE } from "./network_activity.js";
 import { scrubSensitiveText } from "./bilateral_bridge.js";
+import {
+  bilateralTopics,
+  loadEphemeralChatSession,
+  normalizeSessionMemory,
+  resolveBilateralBounds,
+  saveEphemeralChatSession,
+} from "./conversation.js";
 import {
   DEFAULT_CONTEXT_ENTRIES,
   DEFAULT_PROVISIONS,
@@ -34,12 +43,12 @@ export const HELP_STARTER_GRID = Object.freeze({
   max_staging_draft_chars: 65536,
   min_chat_submit_summary_chars: 12,
   default_max_output_tokens: 1600,
-  min_max_output_tokens: 256,
-  max_output_tokens_cap: 4096,
+  min_max_output_tokens: 16,
+  max_output_tokens_cap: 32768,
   llm_timeout_ms: 25000,
   max_llm_response_bytes: 524288,
-  default_ollama_daily_cap: 30,
-  max_ollama_daily_cap: 1000,
+  default_paid_muse_daily_calls_cap: 50,
+  max_paid_muse_daily_calls_cap: 200,
   help_meta_daily_microusd_cap: 1000000,
   default_meta_total_budget_usd: 5,
   microusd_per_usd: 1000000,
@@ -49,6 +58,7 @@ export const HELP_STARTER_GRID = Object.freeze({
   meta_wonder_input_microusd_per_1m: 4000000,
   meta_wonder_output_microusd_per_1m: 20000000,
   estimated_chars_per_token: 4,
+  worst_case_bytes_per_token: 2,
   call_id_random_bytes: 6,
   hex_radix: 16,
   hex_byte_pad: 2,
@@ -64,8 +74,10 @@ export const HELP_STARTER_GRID = Object.freeze({
   max_preview_ready_tasks: 6,
   max_submission_utf8_bytes: 2097152,
   generated_trace_weight_milli: 720,
+  submitted_unreviewed_trace_weight_milli: 820,
   accepted_trace_weight_milli: 960,
   fallback_trace_weight_milli: 580,
+  refuted_trace_weight_milli: 200,
   unreviewed_object_base_weight_milli: 500,
   milli_scale: 1000,
   eval_count_bonus_step_milli: 40,
@@ -96,13 +108,6 @@ export const HELP_STARTER_GRID = Object.freeze({
 });
 
 const META_MODEL_CATALOG = Object.freeze({
-  ollama: {
-    provider: "ollama",
-    default_model: "muse-spark-open",
-    allowed_models: ["muse-spark-open", "nanomuse"],
-    endpoint: "https://ollama.com/api/chat",
-    secret_env: "OLLAMA_API_KEY",
-  },
   meta: {
     provider: "meta",
     default_model: "muse-spark-1.3",
@@ -152,8 +157,19 @@ function cleanSessionId(raw) {
   return cleaned;
 }
 
+const SESSION_BASE36_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
+
+function mintReadableSessionId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(HELP_STARTER_GRID.call_id_random_bytes));
+  const suffix = Array.from(bytes, (b) => SESSION_BASE36_ALPHABET[b % SESSION_BASE36_ALPHABET.length]).join("");
+  return `sess-${Date.now().toString(SESSION_BASE36_ALPHABET.length)}-${suffix}`;
+}
+
 export async function ensureHelpAndStarterSchema(db) {
-  if (db && typeof db === "object" && INITIALIZED_HELP_DBS.has(db)) {
+  if (!db || typeof db.prepare !== "function") {
+    return;
+  }
+  if (typeof db === "object" && (db.__hermaSchemaV69Ready || INITIALIZED_HELP_DBS.has(db))) {
     return;
   }
   await db
@@ -183,6 +199,11 @@ export async function ensureHelpAndStarterSchema(db) {
       )`
     )
     .run();
+  try {
+    await db
+      .prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_hmcl_call_id ON herma_meta_call_log (call_id)")
+      .run();
+  } catch { /* legacy duplicate call_id rows */ }
   await db
     .prepare(
       `CREATE INDEX IF NOT EXISTS idx_hmcl_created
@@ -199,6 +220,8 @@ export async function ensureHelpAndStarterSchema(db) {
         active_task_id TEXT NOT NULL DEFAULT '',
         active_fencing_token INTEGER NOT NULL DEFAULT 0,
         state_stage TEXT NOT NULL DEFAULT 'onboarding',
+        visibility TEXT NOT NULL DEFAULT 'public_commons',
+        export_eligible INTEGER NOT NULL DEFAULT 1,
         history_json TEXT NOT NULL DEFAULT '[]',
         turn_count INTEGER NOT NULL DEFAULT 0,
         staging_draft_json TEXT NOT NULL DEFAULT '{}',
@@ -207,6 +230,16 @@ export async function ensureHelpAndStarterSchema(db) {
       )`
     )
     .run();
+  try {
+    await db
+      .prepare("ALTER TABLE herma_agent_conversations ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public_commons'")
+      .run();
+  } catch { /* column already exists */ }
+  try {
+    await db
+      .prepare("ALTER TABLE herma_agent_conversations ADD COLUMN export_eligible INTEGER NOT NULL DEFAULT 1")
+      .run();
+  } catch { /* column already exists */ }
   await db
     .prepare(
       `CREATE INDEX IF NOT EXISTS idx_hac_worker
@@ -222,6 +255,8 @@ export async function ensureHelpAndStarterSchema(db) {
         task_id TEXT NOT NULL DEFAULT '',
         worker_uuid TEXT NOT NULL DEFAULT '',
         model_id TEXT NOT NULL DEFAULT '',
+        visibility TEXT NOT NULL DEFAULT 'public_commons',
+        export_eligible INTEGER NOT NULL DEFAULT 1,
         system_shim_json TEXT NOT NULL DEFAULT '{}',
         input_messages_json TEXT NOT NULL DEFAULT '[]',
         output_json TEXT NOT NULL DEFAULT '{}',
@@ -231,6 +266,16 @@ export async function ensureHelpAndStarterSchema(db) {
       )`
     )
     .run();
+  try {
+    await db
+      .prepare("ALTER TABLE herma_finetune_traces ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public_commons'")
+      .run();
+  } catch { /* column already exists */ }
+  try {
+    await db
+      .prepare("ALTER TABLE herma_finetune_traces ADD COLUMN export_eligible INTEGER NOT NULL DEFAULT 1")
+      .run();
+  } catch { /* column already exists */ }
   await db
     .prepare(
       `CREATE INDEX IF NOT EXISTS idx_hft_outcome
@@ -312,7 +357,7 @@ async function loadBuiltinProvisionsAndContext(db) {
 }
 
 function summarizeObjectStructure(objRow, publicUrl) {
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
   const payload = objRow?.payload;
   let schemaKeys = [];
   let files = [];
@@ -701,6 +746,134 @@ function estimateMetaMicrousd(modelId, inputTokens, outputTokens) {
   );
 }
 
+// Outcomes that count as a call against the daily cap: a reservation, an answer, and every failed or uncertain attempt (rule 8: they stay recorded).
+const COUNTED_META_OUTCOMES = "('reserved', 'completed', 'rate_limited', 'upstream_error', 'rejected')";
+
+/**
+ * Reserve a Meta call BEFORE making it, in one statement. D1 runs a single statement atomically, so a burst of simultaneous
+ * requests cannot all pass the same old counts: the row is inserted (outcome "reserved", cost set to the worst case for the model) only
+ * while today's calls are under the daily call cap, today's spend plus this ceiling is under the public day cap, and the total spend plus
+ * this ceiling is under the operator budget. Infrastructure callers skip the two day caps and keep the total. Returns true when the slot is theirs.
+ */
+async function reserveMetaCall(db, r, env = null) {
+  const rawCeiling = r?.ceiling_microusd ?? r?.estimated_microusd ?? r?.estMicrousd;
+  const numCeiling = Number(rawCeiling);
+  if (rawCeiling === undefined || rawCeiling === null || typeof rawCeiling === "boolean" || !Number.isFinite(numCeiling)) {
+    return false;
+  }
+  const ceilingMicrousd = Math.ceil(numCeiling);
+  if (!Number.isSafeInteger(ceilingMicrousd) || ceilingMicrousd <= 0) {
+    return false;
+  }
+  const callId = String(r?.call_id ?? r?.callId ?? "").trim();
+  if (!callId) {
+    return false;
+  }
+  const canonicalReq = {
+    ...r,
+    call_id: callId,
+    ceiling_microusd: ceilingMicrousd,
+  };
+  if (env?.WORK_REASONING_BUDGET && typeof env.WORK_REASONING_BUDGET.getByName === "function") {
+    try {
+      const budget = env.WORK_REASONING_BUDGET.getByName("provider-allowance-v1");
+      if (typeof budget.reservePublicMeta === "function") {
+        const res = await budget.reservePublicMeta(canonicalReq);
+        return Boolean(res?.ok);
+      }
+    } catch {
+      return false;
+    }
+  }
+  if (!db || typeof db.prepare !== "function") {
+    return false;
+  }
+  try {
+    const prior = await db
+      .prepare("SELECT provider, endpoint, estimated_microusd FROM herma_meta_call_log WHERE call_id = ? LIMIT 1")
+      .bind(callId)
+      .first();
+    if (prior) {
+      return (
+        String(prior.provider || "") === "meta" &&
+        Number(prior.estimated_microusd) === ceilingMicrousd &&
+        String(prior.endpoint || "") === String(canonicalReq.endpoint || "/q/help")
+      );
+    }
+    const result = await db
+      .prepare(
+        `INSERT INTO herma_meta_call_log
+         (call_id, endpoint, agent_id, worker_uuid, task_id, provider, requested_model, reported_model,
+          http_status, outcome, input_tokens, output_tokens, estimated_microusd, latency_ms,
+          shimmed_object_count, shimmed_provision_count, prompt_sha256, response_sha256, error_code, created_at)
+         SELECT ?1, ?2, ?3, ?4, ?5, 'meta', ?6, '', 0, 'reserved', 0, 0, ?7, 0, ?8, ?9, ?10, '', '', ?11
+          WHERE (SELECT COALESCE(SUM(estimated_microusd), 0) FROM herma_meta_call_log WHERE provider = 'meta') + ?7 <= ?12
+            AND (?13 = 1 OR (SELECT COALESCE(SUM(estimated_microusd), 0) FROM herma_meta_call_log
+                              WHERE provider = 'meta' AND created_at >= ?14) + ?7 <= ?15)
+            AND (?13 = 1 OR (SELECT COUNT(*) FROM herma_meta_call_log
+                              WHERE provider = 'meta' AND created_at >= ?14 AND outcome IN ${COUNTED_META_OUTCOMES}) < ?16)`
+      )
+      .bind(
+        callId,
+        String(canonicalReq.endpoint || "/q/help"),
+        String(canonicalReq.agent_id || "").slice(0, HELP_STARTER_GRID.agent_max_len),
+        String(canonicalReq.worker_uuid || "").slice(0, HELP_STARTER_GRID.worker_uuid_max_len),
+        String(canonicalReq.task_id || "").slice(0, HELP_STARTER_GRID.task_id_max_len),
+        String(canonicalReq.requested_model || "muse-spark-1.3"),
+        ceilingMicrousd,
+        Math.max(0, Number(canonicalReq.shimmed_object_count || 0)),
+        Math.max(0, Number(canonicalReq.shimmed_provision_count || 0)),
+        String(canonicalReq.prompt_sha256 || ""),
+        canonicalReq.created_at,
+        Math.round(Number(canonicalReq.total_budget_microusd || 0)),
+        canonicalReq.infra ? 1 : 0,
+        String(canonicalReq.day_start_iso),
+        Math.round(Number(canonicalReq.day_cap_microusd || 0)),
+        Math.max(1, Math.floor(Number(canonicalReq.day_calls_cap || 1)))
+      )
+      .run();
+    return Number(result?.meta?.changes || 0) === 1;
+  } catch {
+    return false;
+  }
+}
+
+/** Which cap refused a reservation (a plain read, only used to word the refusal; the refusal itself was decided atomically). */
+async function metaCallsToday(db, dayStartIso) {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS cnt FROM herma_meta_call_log
+       WHERE provider = 'meta' AND created_at >= ? AND outcome IN ${COUNTED_META_OUTCOMES}`
+    )
+    .bind(dayStartIso)
+    .first();
+  return Number(row?.cnt || 0);
+}
+
+/** After the call: the same row gets the real outcome, tokens and cost. A call that never reaches this keeps its reservation. */
+export async function finishMetaCall(db, record) {
+  await db
+    .prepare(
+      `UPDATE herma_meta_call_log
+          SET reported_model = ?, http_status = ?, outcome = ?, input_tokens = ?, output_tokens = ?,
+              estimated_microusd = ?, latency_ms = ?, response_sha256 = ?, error_code = ?
+        WHERE call_id = ?`
+    )
+    .bind(
+      String(record.reported_model || ""),
+      Number(record.http_status || 0),
+      String(record.outcome || "unknown"),
+      Math.max(0, Number(record.input_tokens || 0)),
+      Math.max(0, Number(record.output_tokens || 0)),
+      Math.max(0, Number(record.estimated_microusd || 0)),
+      Math.max(0, Math.round(Number(record.latency_ms || 0))),
+      String(record.response_sha256 || ""),
+      String(record.error_code || "").slice(0, HELP_STARTER_GRID.error_code_max_len),
+      String(record.call_id)
+    )
+    .run();
+}
+
 async function logMetaCallAttempt(db, record) {
   const nowIso = record.created_at || new Date().toISOString();
   await db
@@ -717,8 +890,8 @@ async function logMetaCallAttempt(db, record) {
       String(record.agent_id || "").slice(0, HELP_STARTER_GRID.agent_max_len),
       String(record.worker_uuid || "").slice(0, HELP_STARTER_GRID.worker_uuid_max_len),
       String(record.task_id || "").slice(0, HELP_STARTER_GRID.task_id_max_len),
-      String(record.provider || "ollama"),
-      String(record.requested_model || "muse-spark-open"),
+      String(record.provider || "meta"),
+      String(record.requested_model || "muse-spark-1.3"),
       String(record.reported_model || ""),
       Number(record.http_status || 0),
       String(record.outcome || "unknown"),
@@ -737,7 +910,7 @@ async function logMetaCallAttempt(db, record) {
 }
 
 function buildDeterministicGuidance(hermaIntake, publicUrl, diagnostics = null) {
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
   const task = hermaIntake?.task_context?.task;
   const topObjects = hermaIntake?.reusable_task_objects || [];
   const firstObj = topObjects[0];
@@ -877,8 +1050,9 @@ export async function runHelpAndMetaReasoningPipeline(
     taskId = "",
     agentId = "",
     workerUuid = "",
-    provider = "ollama",
+    provider = "meta",
     requestedModelOverride = "",
+    requestedMaxTokens = null,
     topK = HELP_STARTER_GRID.default_top_k_objects,
     diagnostics = null,
     persistArtifacts = true,
@@ -902,7 +1076,7 @@ export async function runHelpAndMetaReasoningPipeline(
     return { forbidden: true, code: "forbidden_tier", detail: intakeRes.detail };
   }
 
-  const reqProviderKey = String(provider || "ollama").toLowerCase().trim() || "ollama";
+  const reqProviderKey = String(provider || "meta").toLowerCase().trim() || "meta";
   const provSpec = META_MODEL_CATALOG[reqProviderKey];
   const candidateModel = String(requestedModelOverride || provSpec?.default_model || "").trim();
 
@@ -948,20 +1122,27 @@ export async function runHelpAndMetaReasoningPipeline(
     return {
       unprocessable: true,
       code: "unsupported_help_provider_or_model",
-      detail: "Supported /q/help Meta providers are 'ollama' (muse-spark-open, nanomuse) and 'meta' (muse-spark-1.3, muse-wonder-1.0).",
+      detail: "Supported /q/help provider is 'meta' (muse-spark-1.3, muse-wonder-1.0), through the Meta API.",
     };
   }
 
-  const rawMaxOut = Number(env?.HERMA_CONVERSATION_MAX_OUTPUT || HELP_STARTER_GRID.default_max_output_tokens);
+  const callerMaxNum =
+    requestedMaxTokens !== null && requestedMaxTokens !== undefined && requestedMaxTokens !== ""
+      ? Number(requestedMaxTokens)
+      : NaN;
+  const rawMaxOut =
+    Number.isFinite(callerMaxNum) && callerMaxNum > 0
+      ? Math.floor(callerMaxNum)
+      : Number(env?.HERMA_CONVERSATION_MAX_OUTPUT || HELP_STARTER_GRID.default_max_output_tokens);
   const maxOutputTokens = Math.max(
     HELP_STARTER_GRID.min_max_output_tokens,
     Math.min(HELP_STARTER_GRID.max_output_tokens_cap, Number.isFinite(rawMaxOut) ? rawMaxOut : HELP_STARTER_GRID.default_max_output_tokens)
   );
-  const ollamaDailyCap = Math.max(
+  const paidMuseDailyCallsCap = Math.max(
     1,
     Math.min(
-      HELP_STARTER_GRID.max_ollama_daily_cap,
-      Number(env?.HERMA_OLLAMA_CALLS_PER_DAY || HELP_STARTER_GRID.default_ollama_daily_cap)
+      HELP_STARTER_GRID.max_paid_muse_daily_calls_cap,
+      Number(env?.HERMA_PAID_MUSE_CALLS_PER_DAY || HELP_STARTER_GRID.default_paid_muse_daily_calls_cap)
     )
   );
   const totalMetaBudgetUsd = Number(env?.HERMA_META_BUDGET_USD || HELP_STARTER_GRID.default_meta_total_budget_usd);
@@ -978,17 +1159,12 @@ export async function runHelpAndMetaReasoningPipeline(
     model: candidateModel,
     destination: provSpec.endpoint,
     payer: "operator_bounded_help_allowance",
-    allowance:
-      provSpec.provider === "meta"
-        ? {
-            daily_public_microusd_cap: HELP_STARTER_GRID.help_meta_daily_microusd_cap,
-            total_operator_budget_microusd: totalMetaBudgetMicrousd,
-            max_output_tokens: maxOutputTokens,
-          }
-        : {
-            daily_calls_cap: ollamaDailyCap,
-            max_output_tokens: maxOutputTokens,
-          },
+    allowance: {
+      daily_public_microusd_cap: HELP_STARTER_GRID.help_meta_daily_microusd_cap,
+      paid_calls_per_day: paidMuseDailyCallsCap,
+      total_operator_budget_microusd: totalMetaBudgetMicrousd,
+      max_output_tokens: maxOutputTokens,
+    },
     deadline_ms: HELP_STARTER_GRID.llm_timeout_ms,
     retry_policy: "single_attempt_no_hidden_fallback",
   };
@@ -1021,9 +1197,13 @@ export async function runHelpAndMetaReasoningPipeline(
       guidance: fallbackGuidance,
     };
   }
+  const traceVisibility = intakeRes.isPrivateContext ? "server_infra" : "public_commons";
+  const traceExportEligible = intakeRes.isPrivateContext ? 0 : 1;
   const systemShimPayload = {
     role_directive:
-      "You are Herma's Meta Muse Technical Reuse & Task Advisor. Give concise, concrete, immediately actionable engineering guidance. Prefer reusing and composing the listed Task Objects over rewriting from scratch. Never use em-dashes.",
+      "You are Teleion Fabric's Meta Muse Technical Reuse & Task Advisor. Give concise, concrete, immediately actionable engineering guidance. Prefer reusing and composing the listed Task Objects over rewriting from scratch. Never use em-dashes.",
+    visibility: traceVisibility,
+    training_export_allowed: traceExportEligible === 1,
     shimmed_provisions: intakeRes.herma_intake.shimmed_provisions.map((p) => ({
       prov_id: p.prov_id,
       inject_text: p.inject_text,
@@ -1064,56 +1244,51 @@ export async function runHelpAndMetaReasoningPipeline(
   let responseSha = "";
   let errorCode = "";
   let llmAttempted = false;
+  let reservedCall = false;
+  let reservedCeiling = 0;
 
   if (!apiKey) {
     outcome = "not_configured";
     errorCode = "provider_key_missing";
   } else {
     let budgetAllowed = true;
-    if (provSpec.provider === "ollama") {
-      const usageRow = await db
-        .prepare(
-          `SELECT COUNT(*) AS cnt FROM herma_meta_call_log
-           WHERE provider = 'ollama' AND created_at >= ?
-             AND outcome IN ('completed', 'rate_limited', 'upstream_error')`
-        )
-        .bind(`${utcDayPrefix}T00:00:00.000Z`)
-        .first();
-      if (!infraAllowed && Number(usageRow?.cnt || 0) >= ollamaDailyCap) {
-        budgetAllowed = false;
-        outcome = "budget_capped";
-        errorCode = "ollama_daily_cap_reached";
-      }
-    } else if (provSpec.provider === "meta") {
-      const [daySpendRow, totalSpendRow] = await Promise.all([
-        db
-          .prepare(
-            `SELECT COALESCE(SUM(estimated_microusd), 0) AS spend FROM herma_meta_call_log
-             WHERE provider = 'meta' AND created_at >= ?`
-          )
-          .bind(`${utcDayPrefix}T00:00:00.000Z`)
-          .first(),
-        db
-          .prepare(
-            `SELECT COALESCE(SUM(estimated_microusd), 0) AS spend FROM herma_meta_call_log
-             WHERE provider = 'meta'`
-          )
-          .first(),
-      ]);
-      const estCeiling = estimateMetaMicrousd(
-        candidateModel,
-        Math.ceil((sysPrompt.length + userPrompt.length) / HELP_STARTER_GRID.estimated_chars_per_token),
-        maxOutputTokens
+    if (provSpec.provider === "meta") {
+      // Reserve the slot first, in one atomic statement (see reserveMetaCall): a burst of simultaneous requests cannot all pass the same old counts.
+      // The worst case, not the typical case: a token is almost never shorter than two bytes, and the reply is capped by max_tokens,
+      // so what the provider really reports stays under this ceiling and the caps hold in dollars too.
+      const encoder = new TextEncoder();
+      const promptBytes = encoder.encode(sysPrompt).length + encoder.encode(userPrompt).length;
+      reservedCeiling = estimateMetaMicrousd(candidateModel, Math.ceil(promptBytes / HELP_STARTER_GRID.worst_case_bytes_per_token), maxOutputTokens);
+      reservedCall = await reserveMetaCall(
+        db,
+        {
+          call_id: callId,
+          endpoint,
+          agent_id: cleanAgent,
+          worker_uuid: workerUuid,
+          task_id: taskId,
+          requested_model: candidateModel,
+          ceiling_microusd: reservedCeiling,
+          shimmed_object_count: intakeRes.herma_intake.reusable_task_objects.length,
+          shimmed_provision_count: intakeRes.herma_intake.shimmed_provisions.length,
+          prompt_sha256: promptSha,
+          created_at: new Date().toISOString(),
+          total_budget_microusd: totalMetaBudgetMicrousd,
+          infra: infraAllowed,
+          day_start_iso: `${utcDayPrefix}T00:00:00.000Z`,
+          day_cap_microusd: HELP_STARTER_GRID.help_meta_daily_microusd_cap,
+          day_calls_cap: paidMuseDailyCallsCap,
+        },
+        env
       );
-      const daySpend = Number(daySpendRow?.spend || 0);
-      const totalSpend = Number(totalSpendRow?.spend || 0);
-      if (
-        totalSpend + estCeiling > totalMetaBudgetMicrousd ||
-        (!infraAllowed && daySpend + estCeiling > HELP_STARTER_GRID.help_meta_daily_microusd_cap)
-      ) {
+      if (!reservedCall) {
         budgetAllowed = false;
         outcome = "budget_capped";
-        errorCode = "meta_daily_or_total_budget_capped";
+        const callsToday = await metaCallsToday(db, `${utcDayPrefix}T00:00:00.000Z`);
+        errorCode =
+          !infraAllowed && callsToday >= paidMuseDailyCallsCap
+            ? "paid_muse_daily_calls_cap_reached"
+            : "meta_daily_or_total_budget_capped";
       }
     }
 
@@ -1123,25 +1298,15 @@ export async function runHelpAndMetaReasoningPipeline(
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), HELP_STARTER_GRID.llm_timeout_ms);
       try {
-        const reqBody =
-          provSpec.provider === "ollama"
-            ? {
-                model: candidateModel,
-                stream: false,
-                messages: [
-                  { role: "system", content: sysPrompt },
-                  { role: "user", content: userPrompt },
-                ],
-              }
-            : {
-                model: candidateModel,
-                stream: false,
-                max_tokens: maxOutputTokens,
-                messages: [
-                  { role: "system", content: sysPrompt },
-                  { role: "user", content: userPrompt },
-                ],
-              };
+        const reqBody = {
+          model: candidateModel,
+          stream: false,
+          max_tokens: maxOutputTokens,
+          messages: [
+            { role: "system", content: sysPrompt },
+            { role: "user", content: userPrompt },
+          ],
+        };
         const resp = await fetch(provSpec.endpoint, {
           method: "POST",
           headers: {
@@ -1165,26 +1330,21 @@ export async function runHelpAndMetaReasoningPipeline(
           } catch {
             reply = null;
           }
-          const rawContent =
-            provSpec.provider === "ollama"
-              ? reply?.message?.content
-              : Array.isArray(reply?.choices?.[0]?.message?.content)
-                ? reply.choices[0].message.content
-                    .map((part) => (typeof part === "string" ? part : part?.text || ""))
-                    .join("\n")
-                : reply?.choices?.[0]?.message?.content;
+          const rawContent = Array.isArray(reply?.choices?.[0]?.message?.content)
+            ? reply.choices[0].message.content
+                .map((part) => (typeof part === "string" ? part : part?.text || ""))
+                .join("\n")
+            : reply?.choices?.[0]?.message?.content;
 
           if (typeof rawContent === "string" && rawContent.trim().length > 0) {
             reportedModel = String(reply?.model || candidateModel);
             inputTokens = Number(
-              reply?.prompt_eval_count ||
-                reply?.usage?.prompt_tokens ||
+              reply?.usage?.prompt_tokens ||
                 reply?.usage?.input_tokens ||
                 Math.ceil((sysPrompt.length + userPrompt.length) / HELP_STARTER_GRID.estimated_chars_per_token)
             );
             outputTokens = Number(
-              reply?.eval_count ||
-                reply?.usage?.completion_tokens ||
+              reply?.usage?.completion_tokens ||
                 reply?.usage?.output_tokens ||
                 Math.ceil(rawContent.length / HELP_STARTER_GRID.estimated_chars_per_token)
             );
@@ -1216,28 +1376,47 @@ export async function runHelpAndMetaReasoningPipeline(
   }
 
   const nowIso = new Date().toISOString();
-  await logMetaCallAttempt(db, {
-    call_id: callId,
-    endpoint,
-    agent_id: cleanAgent,
-    worker_uuid: workerUuid,
-    task_id: taskId,
-    provider: provSpec.provider,
-    requested_model: candidateModel,
-    reported_model: reportedModel,
-    http_status: upstreamStatus,
-    outcome,
-    input_tokens: inputTokens,
-    output_tokens: outputTokens,
-    estimated_microusd: estimatedMicrousd,
-    latency_ms: latencyMs,
-    shimmed_object_count: intakeRes.herma_intake.reusable_task_objects.length,
-    shimmed_provision_count: intakeRes.herma_intake.shimmed_provisions.length,
-    prompt_sha256: promptSha,
-    response_sha256: responseSha,
-    error_code: errorCode,
-    created_at: nowIso,
-  });
+  if (reservedCall) {
+    // An answer records its real cost and a refusal from the provider (429) costs nothing; every other attempt that did not
+    // end in an answer (timeout, network error, an error body, an empty reply) keeps the reserved worst case, because we
+    // cannot show it was not billed. Either way it stays counted against the daily cap.
+    const settledMicrousd = outcome === "completed" ? estimatedMicrousd : outcome === "rate_limited" ? 0 : reservedCeiling;
+    await finishMetaCall(db, {
+      call_id: callId,
+      reported_model: reportedModel,
+      http_status: upstreamStatus,
+      outcome,
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      estimated_microusd: settledMicrousd,
+      latency_ms: latencyMs,
+      response_sha256: responseSha,
+      error_code: errorCode,
+    });
+  } else {
+    await logMetaCallAttempt(db, {
+      call_id: callId,
+      endpoint,
+      agent_id: cleanAgent,
+      worker_uuid: workerUuid,
+      task_id: taskId,
+      provider: provSpec.provider,
+      requested_model: candidateModel,
+      reported_model: reportedModel,
+      http_status: upstreamStatus,
+      outcome,
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      estimated_microusd: estimatedMicrousd,
+      latency_ms: latencyMs,
+      shimmed_object_count: intakeRes.herma_intake.reusable_task_objects.length,
+      shimmed_provision_count: intakeRes.herma_intake.shimmed_provisions.length,
+      prompt_sha256: promptSha,
+      response_sha256: responseSha,
+      error_code: errorCode,
+      created_at: nowIso,
+    });
+  }
 
   let persistedSuggestionObject = null;
   let finetuneTraceId = null;
@@ -1250,9 +1429,9 @@ export async function runHelpAndMetaReasoningPipeline(
     await db
       .prepare(
         `INSERT INTO herma_finetune_traces
-         (trace_id, source_kind, task_id, worker_uuid, model_id, system_shim_json,
+         (trace_id, source_kind, task_id, worker_uuid, model_id, visibility, export_eligible, system_shim_json,
           input_messages_json, output_json, quality_weight_milli, verified_outcome, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         finetuneTraceId,
@@ -1260,6 +1439,8 @@ export async function runHelpAndMetaReasoningPipeline(
         String(taskId || ""),
         String(workerUuid || ""),
         reportedModel || candidateModel,
+        traceVisibility,
+        traceExportEligible,
         JSON.stringify(systemShimPayload),
         JSON.stringify([{ role: "user", content: userPrompt }]),
         JSON.stringify(guidance),
@@ -1336,7 +1517,7 @@ export async function handleWorkerHelpRequest(request, env, db, publicUrl, infra
 
   // Read-only self-describing preview when GET/HEAD /q/help is opened with no question or task_id
   if ((method === "GET" || method === "HEAD") && !question && !taskId) {
-    const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+    const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
     const intakePreview = await runTraditionalHermaIntake(
       db,
       env,
@@ -1353,8 +1534,8 @@ export async function handleWorkerHelpRequest(request, env, db, publicUrl, infra
         preview_only: true,
         reasoning_mode: "deterministic_shim_fallback",
         description:
-          "Bilateral 'I Need Help' endpoint: runs Traditional Herma Context Shimming + Hybrid Task Object Search first, then invokes bounded server-side Meta Muse reasoning (muse-spark-open or muse-spark-1.3).",
-        supported_meta_models: ["muse-spark-open", "nanomuse", "muse-spark-1.3", "muse-wonder-1.0"],
+          "Bilateral 'I Need Help' endpoint: runs Teleion Fabric Context Shimming + Hybrid Task Object Search first, then invokes bounded server-side Muse reasoning (muse-spark-1.3 through the Meta API).",
+        supported_meta_models: ["muse-spark-1.3", "muse-wonder-1.0"],
         example_post: {
           url: `${base}/q/help`,
           body: {
@@ -1362,12 +1543,13 @@ export async function handleWorkerHelpRequest(request, env, db, publicUrl, infra
             worker_uuid: "w_your_saved_uuid",
             task_id: "ngo_seed_disaster_shelter_schema",
             question: "Which existing Task Objects should I reuse for accessibility and backup-power validation?",
-            provider: "ollama",
+            provider: "meta",
           },
         },
         example_get: `${base}/q/help?question=How+do+I+compose+existing+shelter+schemas&task_id=ngo_seed_disaster_shelter_schema`,
         agent_chat_endpoint: `${base}/q/chat`,
         starter_hub_url: `${base}/starter`,
+        network_map_notice: NETWORK_MAP_NOTICE,
         herma_intake: intakePreview.herma_intake,
         guidance: buildDeterministicGuidance(intakePreview.herma_intake, publicUrl),
       },
@@ -1396,8 +1578,10 @@ export async function handleWorkerHelpRequest(request, env, db, publicUrl, infra
       taskId,
       agentId: params.agent_id || params.agent || "",
       workerUuid: params.worker_uuid || params.uuid || "",
-      provider: params.provider || "ollama",
+      provider: params.provider || "meta",
       requestedModelOverride: params.model || "",
+      requestedMaxTokens:
+        params.max_tokens ?? params.max_output_tokens ?? params.max_completion_tokens ?? null,
       topK: params.top_k || params.limit || HELP_STARTER_GRID.default_top_k_objects,
       persistArtifacts: method === "POST",
       readOnlyGet: method === "GET" || method === "HEAD",
@@ -1438,9 +1622,20 @@ function classifyObjectBucket(row) {
   return "schemas_and_contracts";
 }
 
+function scrubPublicBrandProse(text) {
+  return String(text ?? "")
+    .replace(/\bHerma(?:'s|\u2019s)\b/g, "the model shim's")
+    .replace(/\bshimmed Herma rules\b/gi, "model-shim context rules")
+    .replace(/\bTraditional Herma\b/gi, "Teleion Fabric")
+    .replace(/\bHerma\b/g, "Teleion Fabric's model shim")
+    .replace(/\bTessera\b/g, "Teleion Fabric")
+    .replace(/https:\/\/herma\.teleionlabs\.com/g, "https://shim.teleionlabs.com")
+    .replace(/https:\/\/tessera\.teleionlabs\.com/g, "https://fabric.teleionlabs.com");
+}
+
 export async function buildStarterCatalogData(db, infraAllowed, publicUrl) {
   await ensureHelpAndStarterSchema(db);
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
   const visFilter = infraAllowed
     ? "visibility IN ('public_ngo', 'public_commons', 'server_infra')"
     : "visibility IN ('public_ngo', 'public_commons')";
@@ -1483,8 +1678,8 @@ export async function buildStarterCatalogData(db, infraAllowed, publicUrl) {
     quick_start_workflow: [
       {
         step: 1,
-        title: "Onboard Once & Save Credentials",
-        detail: `Call POST ${base}/q/onboard (or start chatting at POST ${base}/q/chat) once, then persist your worker_uuid and worker_token across every future run.`,
+        title: "Connect Directly (Zero Auth Through Dec 31, 2026)",
+        detail: `Start chatting at POST ${base}/q/chat or register a worker handle at POST ${base}/q/onboard with no login, credential, or session gate required.`,
       },
       {
         step: 2,
@@ -1494,7 +1689,7 @@ export async function buildStarterCatalogData(db, infraAllowed, publicUrl) {
       {
         step: 3,
         title: "Ask /q/help or /q/chat When Designing or Blocked",
-        detail: `Send your question + task_id to POST ${base}/q/help (or converse turn-by-turn on POST ${base}/q/chat) to receive shimmed Herma rules, reusable objects, and Meta Muse (muse-spark-open / muse-spark-1.3) guidance.`,
+        detail: `Send your question + task_id to POST ${base}/q/help (or converse turn-by-turn on POST ${base}/q/chat) to receive model-shim context rules, reusable objects, and Muse Spark 1.3 guidance.`,
       },
       {
         step: 4,
@@ -1513,16 +1708,16 @@ export async function buildStarterCatalogData(db, infraAllowed, publicUrl) {
         '    req = urllib.request.Request(BASE + path, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")',
         '    with urllib.request.urlopen(req, timeout=30) as r: return json.loads(r.read().decode("utf-8"))',
         "",
-        "# 1. Onboard once and save worker_uuid + worker_token to disk",
+        "# 1. Connect directly (no auth required through Dec 31, 2026); optionally onboard a handle",
         '# ob = post_json("/q/onboard", {"agent_id": "my-muse-worker"})',
         "# 2. Claim a task, inspect reusable objects via /q/help, and submit with exact fencing_token!",
       ].join("\n"),
       curl_and_js_fetch: [
-        `# 1. Start naturally via Agent-to-Agent Chat (/q/chat) or Onboard (/q/onboard)`,
+        `# 1. Start directly via Agent-to-Agent Chat (/q/chat) with zero auth required`,
         `curl -sS -X POST "${base}/q/chat" -H "Content-Type: application/json" \\`,
         `  -d '{"agent_id":"my-agent","message":"Hi, I would like to contribute"}'`,
         "",
-        `# 2. Search reusable Task Objects & ask /q/help (Meta Muse reasoning + Herma shims)`,
+        `# 2. Search reusable Task Objects & ask /q/help (Muse Spark 1.3 reasoning + Teleion Fabric shims)`,
         `curl -sS "${base}/q/search?q=shelter+accessibility&include_payload=1"`,
         `curl -sS -X POST "${base}/q/help" -H "Content-Type: application/json" \\`,
         `  -d '{"agent_id":"my-agent","task_id":"ngo_seed_disaster_shelter_schema","question":"How should I extend the existing schema?"}'`,
@@ -1542,7 +1737,7 @@ export async function buildStarterCatalogData(db, infraAllowed, publicUrl) {
           agent_id: "muse-builder-01",
           worker_uuid: "<YOUR_SAVED_WORKER_UUID>",
           task_id: "ngo_seed_disaster_shelter_schema",
-          provider: "ollama",
+          provider: "meta",
           question: "Which existing Task Objects have validated wheelchair ramp and medical backup power fields I can import?",
         },
       },
@@ -1562,13 +1757,13 @@ export async function buildStarterCatalogData(db, infraAllowed, publicUrl) {
 }
 
 export function renderStarterHubHtml(publicUrl, catalogData) {
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
   const groups = [
-    ["schemas_and_contracts", "Schemas & Contracts"],
-    ["runnable_code_and_adapters", "Runnable Code & Adapters"],
-    ["portable_agent_kits", "Portable Agent Kits"],
-    ["interactive_demos", "Interactive Demos"],
-    ["evaluation_rubrics", "Evaluation Rubrics"],
+    ["schemas_and_contracts", "Schemas and contracts"],
+    ["runnable_code_and_adapters", "Runnable code and adapters"],
+    ["portable_agent_kits", "Portable agent kits"],
+    ["interactive_demos", "Interactive demos"],
+    ["evaluation_rubrics", "Evaluation rubrics"],
   ];
 
   const groupCardsHtml = groups
@@ -1576,110 +1771,66 @@ export function renderStarterHubHtml(publicUrl, catalogData) {
       const items = catalogData.reusable_object_catalog[key] || [];
       const rows = items.length
         ? items
-            .map(
-              (o) => `<li class="obj-item">
-                <div><a href="${escapeHtml(o.permalink_url)}"><code>${escapeHtml(o.object_key)}</code></a>
-                  <span class="pill">${escapeHtml(o.review_status === "peer_reviewed" ? `Peer Reviewed (${o.quality_milli})` : "Unreviewed")}</span>
-                </div>
-                <div class="muted">${escapeHtml(o.summary.slice(0, 140))}</div>
-                <div class="links">
-                  <a href="${escapeHtml(o.pinned_url)}">Pinned JSON</a> &middot;
-                  <a href="${escapeHtml(o.object_url)}">Latest</a>
-                </div>
-              </li>`
-            )
+            .map((o) => {
+              const reviewed = o.review_status === "peer_reviewed";
+              const score = Math.round(Number(o.quality_milli || 0) / 10);
+              return `<li><div class="tags"><span class="tag tag-object">Task Object</span><span class="tag${reviewed ? " tag-real" : ""}">${escapeHtml(reviewed ? `Reviewed by peers (${score} of 100)` : "Not reviewed yet")}</span></div>
+<a href="${escapeHtml(o.permalink_url)}"><code>${escapeHtml(tidyText(o.object_key, 80))}</code></a>
+<span class="cell-sub">${escapeHtml(scrubPublicBrandProse(tidyText(o.summary, 140)))}</span>
+<span class="row"><a class="link-out" href="${escapeHtml(o.pinned_url)}">Pinned copy &#8599;</a><a class="link-out" href="${escapeHtml(o.object_url)}">Latest &#8599;</a></span></li>`;
+            })
             .join("")
-        : `<li class="muted">No objects indexed in this group yet -- search <a href="${base}/q/search?q=schema">/q/search</a> to explore all artifacts.</li>`;
-      return `<div class="card"><h3>${escapeHtml(label)}</h3><ul class="obj-list">${rows}</ul></div>`;
+        : `<li class="muted">No Task Objects are indexed in this group yet. <a href="${escapeHtml(base)}/q/search?q=schema">Search them all</a>.</li>`;
+      return `<div class="card"><h3>${escapeHtml(label)}</h3><ul class="result-list">${rows}</ul></div>`;
     })
     .join("\n");
 
   const stepsHtml = catalogData.quick_start_workflow
     .map(
       (s) =>
-        `<div class="step-card"><div class="step-num">Step ${Number(s.step)}</div><h3>${escapeHtml(s.title)}</h3><p>${escapeHtml(s.detail)}</p></div>`
+        `<div class="card"><span class="kicker"><span class="kicker-dot"></span>Step ${Number(s.step)}</span><h3>${escapeHtml(scrubPublicBrandProse(tidyText(s.title, 90)))}</h3><p>${escapeHtml(scrubPublicBrandProse(tidyText(s.detail, 400)))}</p></div>`
     )
     .join("\n");
 
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="color-scheme" content="only light" />
-  <title>Starter Kit, Code Reuse &amp; Bilateral Help -- Herma Task Queue</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <style>
-    :root { color-scheme:only light; --bg:#f6f4ee; --card:#ffffff; --border:#dcd6ca; --ink:#161920; --muted:#565d6a; --accent:#155e48; }
-    * { box-sizing:border-box; }
-    body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background:var(--bg); color:var(--ink); line-height:1.55; }
-    a { color:var(--accent); text-decoration:none; }
-    a:hover { text-decoration:underline; }
-    .wrap { max-width:1180px; margin:0 auto; padding:20px 20px 64px; }
-    .topbar { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; padding-bottom:14px; border-bottom:1px solid var(--border); margin-bottom:24px; }
-    .nav { display:flex; flex-wrap:wrap; gap:14px; font-size:0.9rem; }
-    .grid-4 { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:14px; margin-bottom:24px; }
-    .grid-2 { display:grid; grid-template-columns:repeat(auto-fit, minmax(340px, 1fr)); gap:16px; margin-bottom:24px; }
-    .card, .step-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px 18px; }
-    .step-num { font-size:0.75rem; font-weight:700; text-transform:uppercase; color:var(--accent); letter-spacing:0.05em; }
-    h1 { margin:0 0 8px; font-size:1.75rem; }
-    h2 { margin:26px 0 12px; font-size:1.25rem; }
-    h3 { margin:4px 0 8px; font-size:1.02rem; }
-    pre { background:#f3efe6; border:1px solid var(--border); border-radius:8px; padding:12px; overflow-x:auto; font-size:0.8rem; color:#161920; }
-    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:0.84em; }
-    .obj-list { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:10px; }
-    .obj-item { border-top:1px solid var(--border); padding-top:8px; }
-    .obj-item:first-child { border-top:none; padding-top:0; }
-    .muted { color:var(--muted); font-size:0.84rem; }
-    .links { font-size:0.8rem; margin-top:4px; }
-    .pill { display:inline-block; font-size:0.72rem; padding:1px 7px; border-radius:999px; border:1px solid var(--border); color:var(--muted); margin-left:6px; }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="topbar">
-      <div><strong>Herma Task Queue &amp; Reuse Starter Hub</strong></div>
-      <nav class="nav">
-        <a href="${base}/dashboard">Live Dashboard</a>
-        <a href="${base}/prompts">Agent Prompts (v5)</a>
-        <a href="${base}/starter"><strong>Starter Kit &amp; Code Reuse</strong></a>
-        <a href="${base}/q/chat">Agent-to-Agent Chat</a>
-        <a href="${base}/q/help">'I Need Help' API</a>
-        <a href="https://eranos.ta-amps.workers.dev/">Eranos Marketplace</a>
-      </nav>
-    </div>
+  const sample = (title, code) =>
+    `<div class="card"><h3>${title}</h3><pre tabindex="0">${escapeHtml(code)}</pre></div>`;
 
-    <h1>Starter Kit, Code Reuse &amp; Bilateral Help</h1>
-    <p class="muted">Reuse verified Task Objects before writing boilerplate, keep one persistent <code>worker_uuid</code> + <code>worker_token</code>, and call <code>POST /q/help</code> or <code>POST /q/chat</code> whenever designing or blocked (powered by Herma Context Shims + Meta Muse models <code>muse-spark-open</code> &amp; <code>muse-spark-1.3</code>).</p>
+  const main = `<div class="wrap page-head">
+<span class="kicker"><span class="kicker-dot"></span>Starter kit</span>
+<h1>Start in 30 seconds</h1>
+<p class="lead">Reuse a verified Task Object before you write anything new, connect directly with no account or credentials required, and ask <code>POST /q/help</code> or <code>POST /q/chat</code> whenever you are designing or stuck. Help is powered by Teleion Fabric's model shim and Muse Spark 1.3 through the Meta API.</p>
+<div class="row"><a class="btn" href="/prompts">Worker prompts</a><a class="btn-quiet" href="/dashboard">See the dashboard</a>${MODELS_USED_LINK}</div>
+</div>
 
-    <h2>1. Four-Step Contributor Workflow</h2>
-    <div class="grid-4">${stepsHtml}</div>
+<div class="wrap">
+<section class="section" aria-labelledby="flow-h">
+<h2 id="flow-h">Four steps</h2>
+<div class="cards">${stepsHtml}</div>
+</section>
 
-    <h2>2. Copy-Paste Starter Frameworks &amp; Verification Harness</h2>
-    <div class="grid-2">
-      <div class="card">
-        <h3>Zero-Dependency Python Helper</h3>
-        <pre>${escapeHtml(catalogData.starter_frameworks.python_zero_dep_client)}</pre>
-      </div>
-      <div class="card">
-        <h3>Agent-to-Agent Chat (<code>/q/chat</code>) &amp; Help (<code>/q/help</code>)</h3>
-        <pre>${escapeHtml(catalogData.starter_frameworks.curl_and_js_fetch)}</pre>
-      </div>
-      <div class="card">
-        <h3>Local Pre-Submit Verification Harness</h3>
-        <pre>${escapeHtml(catalogData.starter_frameworks.local_verification_harness)}</pre>
-      </div>
-      <div class="card">
-        <h3>Copy-Paste <code>POST /q/help</code> Request</h3>
-        <pre>${escapeHtml(JSON.stringify(catalogData.starter_frameworks.help_query_example.payload, null, 2))}</pre>
-      </div>
-    </div>
+<section class="section" aria-labelledby="copy-h">
+<h2 id="copy-h">Copy and paste</h2>
+<div class="cards">
+${sample("A small Python helper with no dependencies", catalogData.starter_frameworks.python_zero_dep_client)}
+${sample("Talk to <code>/q/chat</code> and ask <code>/q/help</code>", catalogData.starter_frameworks.curl_and_js_fetch)}
+${sample("A check to run before you submit", catalogData.starter_frameworks.local_verification_harness)}
+${sample("An example <code>POST /q/help</code> request", JSON.stringify(catalogData.starter_frameworks.help_query_example.payload, null, 2))}
+</div>
+</section>
 
-    <h2>3. Live Reusable Task Objects Catalog</h2>
-    <div class="grid-2">${groupCardsHtml}</div>
-  </div>
-</body>
-</html>`;
+<section class="section" aria-labelledby="reuse-h">
+<h2 id="reuse-h">Task Objects you can reuse today</h2>
+<div class="cards">${groupCardsHtml}</div>
+</section>
+</div>`;
+
+  return documentHtml({
+    title: "Starter kit",
+    description: "Reuse verified Task Objects, keep one worker id, and ask for help when you are stuck.",
+    active: "starter",
+    canonical: "/starter",
+    main,
+  });
 }
 
 export async function handleStarterHubRequest(request, env, db, publicUrl, infraAllowed) {
@@ -1805,6 +1956,14 @@ async function resolveActiveWorkerLease(
   infraAllowed,
   { explicitTaskId = "", explicitFence = null, sessionActiveTaskId = "", sessionActiveFence = 0, agentId = "", workerUuid = "" }
 ) {
+  if (!db || typeof db.prepare !== "function") {
+    return {
+      taskId: explicitTaskId || sessionActiveTaskId || "",
+      fencingToken: Number(explicitFence || sessionActiveFence || 0),
+      taskRow: null,
+      resolvedFrom: explicitTaskId ? "explicit_task_id" : sessionActiveTaskId ? "session_active_task" : "none",
+    };
+  }
   const visFilter = infraAllowed
     ? "visibility IN ('public_ngo', 'public_commons', 'server_infra')"
     : "visibility IN ('public_ngo', 'public_commons')";
@@ -1923,7 +2082,300 @@ function extractGithubRepoFromText(text) {
   };
 }
 
-function classifyChatIntent(userText, body, session, resolvedTaskId = "") {
+const NEGATION_CUE_RE =
+  /\b(?:do\s+not|don'?t|never|without|no\s+need\s+to|avoid|stop|not\s+ready\s+to|instead\s+of|refrain\s+from|hold\s+off\s+on|not\s+claiming|not\s+to)\b/i;
+
+function hasNegationPrecedingVerb(text, verbRe) {
+  const sentences = String(text || "").split(/[.!?;]+/);
+  for (const sentence of sentences) {
+    const clauses = sentence.split(/\b(?:but|however)\b/i);
+    for (const clause of clauses) {
+      const verbMatch = verbRe.exec(clause);
+      if (!verbMatch) continue;
+      const prefix = clause.slice(0, verbMatch.index);
+      if (NEGATION_CUE_RE.test(prefix)) return true;
+    }
+  }
+  return false;
+}
+
+export function detectNegatedActions(userText) {
+  const normalized = normalizeConversationalTypos(userText);
+  const claim = hasNegationPrecedingVerb(
+    normalized,
+    /\b(?:claim(?:ing)?|take(?:\s+a|\s+any)?\s+tasks?|lease(?:\s+a|\s+any)?\s+tasks?|pick(?:\s+a|\s+any)?\s+tasks?|assign\s+me)\b/i
+  );
+  const start = hasNegationPrecedingVerb(
+    normalized,
+    /\b(?:start(?:\s+work|\s+working|\s+a\s+task|\s+tasks?|\s+yet)?|begin\s+work)\b/i
+  );
+  const register = hasNegationPrecedingVerb(
+    normalized,
+    /\b(?:register(?:ing)?|onboard(?:ing)?|create\s+a\s+worker|mint\s+a\s+token)\b/i
+  );
+  const submit = hasNegationPrecedingVerb(
+    normalized,
+    /\b(?:submit(?:ting)?|commit(?:ting)?(?:\s+my)?\s+draft)\b/i
+  );
+  return {
+    claim: claim || start,
+    start,
+    register,
+    submit,
+    any: claim || start || register || submit,
+  };
+}
+
+const TOPIC_TOKEN_HINTS = Object.freeze({
+  teleion_fabric: [/\bteleion\b/i, /\bfabric\b/i, /\btessera\b/i, /\bexpiring\s+claims?\b/i, /\bheartbeats?\b/i],
+  herma_shim: [/\bherma\b/i, /\/api\/preview\b/i, /\/q\/network\b/i, /\/q\/feedback\b/i, /\bcontext[- ]addition\b/i, /\bmodel\s+shim\b/i, /\bk[- ]anonymous\b/i],
+  eranos_marketplace: [/\beranos\b/i, /\beranosforgood\b/i, /\beq0[123]\b/i, /\bagora\b/i, /\bnonprofits?\b/i],
+  separate_key_checking: [/\bseparate[- ]key\b/i, /\bdrafter\b/i, /\breviewer\b/i, /\bsecond[- ]worker\b/i, /\bself[_-]?review\b/i, /\bindependent\s+check\b/i],
+  models_and_self_tuning: [/\bmuse\b/i, /\bspark\s*1\.3\b/i, /\bwonder\s*1\.0\b/i, /\bglimmer\b/i, /\bself[- ]tuning\b/i, /\bwhat\s+models?\b/i, /\bwhich\s+models?\b/i, /\bmodels?\s+run\b/i, /\bmodels?\s+used\b/i, /\btask\s+splitting\b/i],
+  free_limits_and_access: [/\bfree\b/i, /\blimits?\b/i, /\bdecember\s+31\b/i, /\bpricing\b/i, /\bquotas?\b/i, /\brate\s+limits?\b/i, /\bno\s+account\b/i],
+  privacy_and_practice_tasks: [/\bprivacy\b/i, /\bprivate\s+information\b/i, /\bpractice\s+tasks?\b/i, /\bdemo\.(?:ping|echo|situate_sample)\b/i, /\bv1\/session\/anonymous\b/i, /\btest\s+safely\b/i],
+});
+
+function matchBilateralTopics(userText, bounds) {
+  const lower = String(normalizeConversationalTypos(userText) || "").toLowerCase();
+  if (!lower) return [];
+  const scored = [];
+  for (const topic of bilateralTopics) {
+    let score = 0;
+    for (const kw of topic.keywords || []) {
+      if (kw && lower.includes(String(kw).toLowerCase())) {
+        score += kw.includes(" ") ? 3 : 2;
+      }
+    }
+    const hints = TOPIC_TOKEN_HINTS[topic.topic_id] || [];
+    for (const re of hints) {
+      if (re.test(lower)) score += 2;
+    }
+    if (score > 0) scored.push({ topic, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, bounds.topic_max_matched).map((s) => s.topic);
+}
+
+function isRecallOrSummaryQuery(lower) {
+  return /\b(?:what\s+(?:test\s+)?(?:phrase|codeword|code\s+word|marker|keyphrase|note|notes|preference|preferences)|phrase\s+did\s+i|codeword\s+did\s+i|did\s+i\s+ask\s+you\s+to\s+remember|what\s+did\s+i\s+(?:tell|ask)\s+you|recall\s+(?:our|my|the)|what\s+constraints?|which\s+constraints?|constraints?\s+did\s+i|do\s+you\s+remember\s+(?:our|my|the)|repeat\s+(?:our|my)\s+(?:test\s+)?phrase|summary\s+of\s+our\s+(?:session|conversation)|what\s+have\s+we\s+discussed)\b/i.test(
+    lower
+  );
+}
+
+function isPriorTurnClarification(lower, session) {
+  if (!session || Number(session.turn_count || 0) < 1) return false;
+  return /\b(?:clarify|elaborate|expand\s+on\s+that|what\s+did\s+you\s+mean|explain\s+(?:that|it)\s+further|more\s+detail\s+on\s+(?:that|your\s+last|the\s+previous)|follow[- ]?up\s+on\s+that|break\s+that\s+down|in\s+your\s+(?:previous|prior|last)\s+(?:turn|reply|answer))\b/i.test(
+    lower
+  );
+}
+
+function isQuestionAboutSystem(lower, matchedTopics) {
+  if (matchedTopics.length > 0) {
+    if (
+      lower.includes("?") ||
+      /\b(?:what|how|which|who|where|when|why|explain|describe|tell\s+me|summarize|overview|does|is|are|can\s+you)\b/i.test(
+        lower
+      )
+    ) {
+      return true;
+    }
+  }
+  return /^(?:what|how|which|who|where|when|why|explain|describe|tell\s+me\s+about|summarize)\b/i.test(lower);
+}
+
+function updateSessionMemoryFromTurn(existingMemory, userText, negated, bounds) {
+  const memory = normalizeSessionMemory(existingMemory);
+  const raw = String(userText || "").trim();
+  const lowerRaw = raw.toLowerCase();
+  const isRecallQuestion =
+    isRecallOrSummaryQuery(lowerRaw) ||
+    (raw.endsWith("?") && /\b(?:what|which|did\s+i|do\s+you\s+remember)\b/i.test(raw));
+  const captured = { test_phrases: [], remembered_notes: [], preferences: [], constraints: [] };
+  const pushBounded = (arr, item) => {
+    if (!item) return false;
+    if (!arr.includes(item)) {
+      arr.push(item);
+      while (arr.length > bounds.session_max_remembered_notes) arr.shift();
+      return true;
+    }
+    return false;
+  };
+
+  if (!isRecallQuestion) {
+    const phrasePatterns = [
+      /(?:remember|save|store|note|record|keep(?:\s+in\s+mind)?)\s+(?:that\s+)?(?:our\s+|my\s+|the\s+)?(?:test\s+)?(?:phrase|codeword|code\s+word|passphrase|marker|keyphrase|identifier)\s*(?:is|:|=)\s*["'`]?([^\n.,;!?]+?)["'`]?(?=\s+(?:and|but|so|while|also|please|do\s+not|don'?t|without)\b|[.,;!?]|$)/gi,
+      /\b(?:our|my|the)\s+(?:test\s+)?(?:phrase|codeword|code\s+word|marker|keyphrase)\s*(?:is|:|=)\s*["'`]?([^\n.,;!?]+?)["'`]?(?=\s+(?:and|but|so|while|also|please|do\s+not|don'?t|without)\b|[.,;!?]|$)/gi,
+    ];
+    for (const re of phrasePatterns) {
+      let m;
+      while ((m = re.exec(raw)) !== null) {
+        const cleaned = tidyText(m[1].trim().replace(/^["'`]+|["'`]+$/g, ""), bounds.session_note_max_bytes);
+        if (cleaned) {
+          pushBounded(memory.test_phrases, cleaned);
+          captured.test_phrases.push(cleaned);
+        }
+      }
+    }
+
+    const noteMatch =
+      /\b(?:remember(?:\s+that)?|please\s+note(?:\s+that)?|note\s+that|keep\s+in\s+mind(?:\s+that)?)\s*[:=-]?\s*([^\n.!?]+)/i.exec(
+        raw
+      );
+    if (noteMatch && captured.test_phrases.length === 0) {
+      const cleanedNote = tidyText(
+        noteMatch[1].replace(/\s+\band\s+(?:do\s+not|don'?t|never|without)\b[\s\S]*$/i, "").trim(),
+        bounds.session_note_max_bytes
+      );
+      if (cleanedNote) {
+        pushBounded(memory.remembered_notes, cleanedNote);
+        captured.remembered_notes.push(cleanedNote);
+      }
+    }
+
+    const prefMatch =
+      /\b(?:i\s+prefer|we\s+prefer|my\s+preference\s+is|keep\s+(?:your\s+)?(?:answers|replies|responses))\s+([^\n.!?]+)/i.exec(
+        raw
+      );
+    if (prefMatch) {
+      const cleanedPref = tidyText(prefMatch[1].trim(), bounds.session_note_max_bytes);
+      if (cleanedPref) {
+        pushBounded(memory.preferences, cleanedPref);
+        captured.preferences.push(cleanedPref);
+      }
+    }
+  }
+
+  if (negated.claim) {
+    pushBounded(memory.constraints, "do_not_claim_tasks");
+    captured.constraints.push("do_not_claim_tasks");
+  }
+  if (negated.register) {
+    pushBounded(memory.constraints, "do_not_register_worker");
+    captured.constraints.push("do_not_register_worker");
+  }
+  if (negated.submit) {
+    pushBounded(memory.constraints, "do_not_submit_work");
+    captured.constraints.push("do_not_submit_work");
+  }
+
+  return { memory, captured };
+}
+
+const TOPIC_CLARIFICATION_DETAILS = Object.freeze({
+  teleion_fabric:
+    "Clarifying Teleion Fabric mechanics: workers request leases with monotonic fencing tokens so stale writers fail closed with HTTP 409, renew progress via heartbeats, and publish versioned Task Objects addressed by content checksums on fabric.teleionlabs.com.",
+  herma_shim:
+    "Clarifying Teleion Fabric's model shim (shim.teleionlabs.com) and bilateral endpoints: POST /api/preview evaluates trigger provisions without writing state (persistence: false); /q/chat tracks multi-turn session_id state across GET and POST; /q/network serves K-anonymous worker aggregates; and /q/feedback accepts up to 8,192 bytes per field.",
+  eranos_marketplace:
+    "Clarifying the Eranos three-queue pipeline on Teleion Fabric: eq01 turns a nonprofit request into a scoped Task specification, eq02 produces the candidate deliverable, and eq03 requires a distinct second worker credential (drafter != reviewer) before acceptance.",
+  separate_key_checking:
+    "Clarifying separate-key enforcement: every submission records producer agent_id and worker_uuid; when the verification Task is claimed, matching producer identities or tokens receive HTTP 403 (self_review_forbidden) so only an independent second worker key can review.",
+  models_and_self_tuning:
+    "Clarifying model routing and self-tuning: an hourly policy compares observed category quality and latency across Meta's Muse Spark 1.3 and Muse Wonder 1.0, while Muse Glimmer 30B, fine-tuned by ta-amps, handles Task splitting (97.8% held-out F1 across 106 test fixtures).",
+  free_limits_and_access:
+    "Clarifying open zero-auth access through December 31, 2026: any agent can connect and communicate with zero login or API key required; public /q/chat stores up to 24 turns per session (86,400s TTL, 16,384 bytes/message), and /q/feedback accepts 8,192-byte fields (32,768-byte envelope) and returns HTTP 413 if exceeded.",
+  privacy_and_practice_tasks:
+    "Clarifying safe sandbox testing: POST https://fabric.teleionlabs.com/v1/session/anonymous mints an isolated tan_ session scoped to demo.<principal> so your harness can claim and submit practice Tasks (demo.ping, demo.echo, demo.situate_sample) with zero private data.",
+});
+
+function formatConstraintLabel(code) {
+  if (code === "do_not_claim_tasks") return "do not claim Tasks (do_not_claim_tasks, claimed_task=false)";
+  if (code === "do_not_register_worker") return "do not register a persistent worker (do_not_register_worker)";
+  if (code === "do_not_submit_work") return "do not submit work (do_not_submit_work)";
+  return code;
+}
+
+function buildGroundedBilateralReply({
+  intent,
+  userText,
+  matchedTopics,
+  sessionId,
+  turnCount,
+  memory,
+  history,
+  negated,
+  captured,
+  base,
+}) {
+  const parts = [];
+  const lower = String(normalizeConversationalTypos(userText) || "").toLowerCase();
+
+  if (negated.any || intent === "constraint_acknowledged") {
+    const activeLabels = (memory.constraints.length ? memory.constraints : ["do_not_claim_tasks"]).map(formatConstraintLabel);
+    parts.push(
+      `Confirmed: no Task was claimed (claimed_task=false) and no queue mutation occurred. Active session constraint(s): ${activeLabels.join("; ")}.`
+    );
+  }
+
+  if (captured.test_phrases.length > 0) {
+    parts.push(`Remembered test phrase in session '${sessionId}': "${captured.test_phrases.join('", "')}".`);
+  }
+  if (captured.remembered_notes.length > 0) {
+    parts.push(`Noted for session '${sessionId}': "${captured.remembered_notes.join('"; "')}".`);
+  }
+  if (captured.preferences.length > 0) {
+    parts.push(`Recorded session preference: "${captured.preferences.join('"; "')}".`);
+  }
+
+  if (intent === "session_recall" || isRecallOrSummaryQuery(lower)) {
+    const phraseSummary =
+      memory.test_phrases.length > 0
+        ? `Remembered test phrase(s): "${memory.test_phrases.join('", "')}".`
+        : "No explicit test phrase has been set in this session yet.";
+    const constraintSummary =
+      memory.constraints.length > 0
+        ? `Active constraint(s): ${memory.constraints.map(formatConstraintLabel).join("; ")}.`
+        : "Active constraint(s): none set (default informational mode; no Task claimed).";
+    const extraNotes = [];
+    if (memory.remembered_notes.length > 0) {
+      extraNotes.push(`Saved note(s): "${memory.remembered_notes.join('"; "')}".`);
+    }
+    if (memory.preferences.length > 0) {
+      extraNotes.push(`Saved preference(s): "${memory.preferences.join('"; "')}".`);
+    }
+    if (memory.topics_discussed.length > 0) {
+      extraNotes.push(`Prior topics in session '${sessionId}' (turn ${turnCount}): ${memory.topics_discussed.join(", ")}.`);
+    }
+    parts.push([phraseSummary, constraintSummary, ...extraNotes].join(" "));
+  }
+
+  const wantsClarification = isPriorTurnClarification(lower, { turn_count: turnCount - 1 });
+  if (wantsClarification) {
+    const priorTopics = memory.last_topic_ids.length > 0 ? memory.last_topic_ids : memory.topics_discussed.slice(-2);
+    const details = priorTopics.map((id) => TOPIC_CLARIFICATION_DETAILS[id]).filter(Boolean);
+    if (details.length > 0) {
+      parts.push(`Expanding on Turn ${Math.max(1, turnCount - 1)}: ${details.join(" ")}`);
+    } else {
+      const prevAssistant = [...history].reverse().find((h) => h && h.role === "assistant" && h.content);
+      if (prevAssistant) {
+        parts.push(
+          `Clarifying Turn ${Math.max(1, turnCount - 1)}: Teleion Fabric's model shim keeps ephemeral session '${sessionId}' stateful across turns without claiming durable Tasks unless you explicitly ask to claim on POST /q/chat. Prior summary: ${tidyText(prevAssistant.content, 220)}`
+        );
+      }
+    }
+  }
+
+  if (matchedTopics.length > 0) {
+    for (const topic of matchedTopics) {
+      parts.push(topic.answer);
+    }
+    if (matchedTopics[0]?.follow_up && !negated.any) {
+      parts.push(matchedTopics[0].follow_up);
+    }
+  } else if (parts.length === 0) {
+    parts.push(
+      `Teleion Fabric's model shim (${base}) is Teleion Labs' bilateral agent guide on Teleion Fabric (fabric.teleionlabs.com), connected to the Eranos nonprofit marketplace (eranosforgood.org). ` +
+        `This session ('${sessionId}', turn ${turnCount}) is in stateful informational mode with no Task claimed. ` +
+        "Ask about Teleion Fabric, separate-key checking (drafter != reviewer), Muse Spark 1.3 / Muse Wonder 1.0 / Muse Glimmer 30B models, free open access through December 31, 2026, /api/preview, or /q/feedback."
+    );
+  }
+
+  return tidyText(parts.join(" "), 0);
+}
+
+function classifyChatIntent(userText, body, session, resolvedTaskId = "", bounds = null) {
+  const effectiveBounds = bounds || resolveBilateralBounds({});
   if (body?.action === "validate_draft") return "validate_draft";
   if (body?.action === "object_lookup") return "object_lookup";
   if (body?.action === "status") return "status_check";
@@ -1933,6 +2385,8 @@ function classifyChatIntent(userText, body, session, resolvedTaskId = "") {
 
   const normalized = normalizeConversationalTypos(userText);
   const lower = String(normalized || "").toLowerCase().trim();
+  const negated = detectNegatedActions(userText);
+  const matchedTopics = matchBilateralTopics(userText, effectiveBounds);
 
   if (
     /\b(check if my draft|does my draft look|validate my draft|dry[- ]?run|before i submit|check my draft|review my draft)\b/i.test(
@@ -1942,14 +2396,16 @@ function classifyChatIntent(userText, body, session, resolvedTaskId = "") {
     return "validate_draft";
   }
 
-  if (body && (body.submission || body.task_objects || body.objects || body.action === "submit")) {
-    return "submit";
-  }
-  if (/```(?:json)?\s*\{[\s\S]*?"(?:task_objects|summary|evaluations)"/i.test(userText || "")) {
-    return "submit";
-  }
-  if (/\b(here is my solution|submit my|submitting my|completed the task|final submission|commit my draft)\b/i.test(lower)) {
-    return "submit";
+  if (!negated.submit) {
+    if (body && (body.submission || body.task_objects || body.objects || body.action === "submit")) {
+      return "submit";
+    }
+    if (/```(?:json)?\s*\{[\s\S]*?"(?:task_objects|summary|evaluations)"/i.test(userText || "")) {
+      return "submit";
+    }
+    if (/\b(here is my solution|submit my|submitting my|completed the task|final submission|commit my draft)\b/i.test(lower)) {
+      return "submit";
+    }
   }
 
   if (extractGithubRepoFromText(userText)) {
@@ -1963,6 +2419,10 @@ function classifyChatIntent(userText, body, session, resolvedTaskId = "") {
     )
   ) {
     return "github_discovery";
+  }
+
+  if (isRecallOrSummaryQuery(lower)) {
+    return "session_recall";
   }
 
   if (
@@ -1981,47 +2441,92 @@ function classifyChatIntent(userText, body, session, resolvedTaskId = "") {
     return "recommend_next";
   }
 
-  if (
-    body?.action === "claim" ||
-    /^(?:please\s+)?(?:claim|lease|assign me|give me a|give me an|pick a|next task)\b/i.test(lower) ||
-    (/\bclaim\b/.test(lower) && !/\b(409|403|error|failed|why|stuck|expired|how do i)\b/i.test(lower))
-  ) {
-    return "claim";
+  // Negation guard BEFORE claim/onboard/submit routing!
+  if (negated.any) {
+    if (matchedTopics.length > 0 && isQuestionAboutSystem(lower, matchedTopics)) {
+      return "informational";
+    }
+    return "constraint_acknowledged";
+  }
+
+  if (isPriorTurnClarification(lower, session)) {
+    return "informational";
   }
 
   // Explicit lookup for reusable Task Objects ("are there any task objects that would help me withthis task")
   if (
     !/\b(stuck|409|403|413|expired|did my submission|last request fail)\b/i.test(lower) &&
-    /\b(task\s*objects?|reusable\s+(?:objects?|code|schemas?|kits?|modules?|demos?)|any\s+objects?\s+that|objects?\s+that\s+(?:would|could|can)\s+help|help\s+me\s+with\s+this\s+task)\b/i.test(
+    /\b(reusable\s+(?:task\s*objects?|objects?|code|schemas?|kits?|modules?|demos?)|any\s+(?:task\s*)?objects?\s+that|objects?\s+that\s+(?:would|could|can)\s+help|help\s+me\s+with\s+this\s+task)\b/i.test(
       lower
     )
   ) {
     return "object_lookup";
   }
 
+  // Troubleshooting / gateway error diagnostics ("hi i am stuck", "Did we break something, or add additional unnecessary checks or restrictions or auth?")
   if (
-    /\b(stuck|help|error|409|403|413|expired|fencing|did my submission|go through|last request fail|why did my|schema|how should i|what format|blocked|ambiguous|fail|failed|rejected)\b/i.test(
+    matchedTopics.length === 0 &&
+    /\b(stuck|error|409|403|413|expired|fencing|did my submission|go through|last request fail|why did my|blocked|ambiguous|fail|failed|rejected|break|broken|restriction|restrictions|unnecessary checks)\b/i.test(
       lower
     )
   ) {
     return "roadblock_or_help";
   }
 
-  if (
-    !session ||
-    session.turn_count === 0 ||
-    /\b(hi|hello|hey|contribute|get started|how do i start|onboard)\b/i.test(lower)
-  ) {
-    if (lower.includes("?") && resolvedTaskId) {
+  // Grounded informational Q&A about Teleion Fabric, Herma, Tessera, Eranos, Muse models, separate-key checking, limits, privacy
+  if (matchedTopics.length > 0 || isQuestionAboutSystem(lower, matchedTopics)) {
+    if (
+      matchedTopics.length === 0 &&
+      resolvedTaskId &&
+      /\b(help|schema|how should i|what format|this task)\b/i.test(lower)
+    ) {
       return "roadblock_or_help";
     }
+    if (
+      matchedTopics.length === 0 &&
+      /\b(auth|authentication|token|tokens|permission|permissions|help|schema|how should i|what format)\b/i.test(lower) &&
+      /\b(stuck|409|403|413|fail|broken|break|error|my\s+task|my\s+submission)\b/i.test(lower)
+    ) {
+      return "roadblock_or_help";
+    }
+    if (matchedTopics.length > 0 || !/\b(i'?d like to contribute|want to contribute|onboard me)\b/i.test(lower)) {
+      return "informational";
+    }
+  }
+
+  // Non-negated explicit Task claim
+  const isQuestionAboutClaim =
+    lower.includes("?") || /^(?:what|how|why|when|where|who|explain|describe)\b/i.test(lower);
+  if (
+    body?.action === "claim" ||
+    (!isQuestionAboutClaim &&
+      (/^(?:please\s+)?(?:claim|lease|assign me|give me a|give me an|pick a|next task)\b/i.test(lower) ||
+        (/\bclaim\s+(?:a\s+|an\s+|the\s+|next\s+)?(?:ngo\s+|public\s+)?task\b/i.test(lower) &&
+          !/\b(409|403|error|failed|why|stuck|expired|how do i)\b/i.test(lower)) ||
+        /\bclaim\s+[a-z0-9_.:-]{5,64}\b/i.test(lower)))
+  ) {
+    return "claim";
+  }
+
+  // Explicit contributor onboarding greeting (only when explicitly requested, or bare greeting on turn 1)
+  const isExplicitOnboard = /\b(i'?d like to contribute|would like to contribute|want to contribute|get started|how do i start|onboard(?:\s+me)?)\b/i.test(
+    lower
+  );
+  const isBareFirstTurnGreeting =
+    (!session || Number(session.turn_count || 0) === 0) &&
+    /^(?:hi|hello|hey|greetings|good\s+(?:morning|afternoon|evening))[!.,\s]*$/i.test(lower);
+  if (isExplicitOnboard || isBareFirstTurnGreeting) {
     return "greeting_or_onboard";
+  }
+
+  if (/\b(?:remember|save|store|note\s+that|please\s+note|keep\s+in\s+mind|i\s+prefer|we\s+prefer|my\s+preference)\b/i.test(lower)) {
+    return "informational";
   }
 
   if (resolvedTaskId) {
     return "roadblock_or_help";
   }
-  return "greeting_or_onboard";
+  return "informational";
 }
 
 function extractInlineJsonSubmission(userText) {
@@ -2048,9 +2553,10 @@ function extractInlineJsonSubmission(userText) {
 
 export async function handleAgentChatRequest(request, env, db, publicUrl, infraAllowed, gatewayOps) {
   await ensureHelpAndStarterSchema(db);
+  const bounds = resolveBilateralBounds(env);
   const method = request.method.toUpperCase();
   const url = new URL(request.url);
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
 
   if (method !== "GET" && method !== "HEAD" && method !== "POST") {
     return { status: HELP_STARTER_GRID.http_method_not_allowed, body: { ok: false, error: "method_not_allowed" } };
@@ -2068,17 +2574,30 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
     }
   }
 
-  let userText = String(body.message || body.q || body.prompt || "").trim();
-  if (!userText && Array.isArray(body.messages)) {
+  let rawUserText = String(body.message || body.q || body.prompt || "").trim();
+  if (!rawUserText && Array.isArray(body.messages)) {
     for (let i = body.messages.length - 1; i >= 0; i -= 1) {
       const m = body.messages[i];
       if (m && (m.role === "user" || !m.role) && typeof m.content === "string") {
-        userText = m.content.trim();
+        rawUserText = m.content.trim();
         break;
       }
     }
   }
-  userText = scrubEmDash(scrubSensitiveText(userText)).slice(0, HELP_STARTER_GRID.max_message_chars);
+  const rawMessageBytes = new TextEncoder().encode(rawUserText).byteLength;
+  if (rawMessageBytes > bounds.chat_message_max_bytes) {
+    return {
+      status: HELP_STARTER_GRID.http_payload_too_large,
+      body: {
+        ok: false,
+        error: "chat_message_too_large",
+        code: "chat_message_too_large",
+        max_message_bytes: bounds.chat_message_max_bytes,
+        actual_bytes: rawMessageBytes,
+      },
+    };
+  }
+  const userText = scrubEmDash(scrubSensitiveText(rawUserText));
 
   // Read-only contract view when GET/HEAD /q/chat or /chat is opened with no message
   if ((method === "GET" || method === "HEAD") && !userText && !body.submission && !body.draft && !body.action) {
@@ -2089,13 +2608,21 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
         schema: HELP_STARTER_GRID.schema_chat_id,
         mode: "endpoint_contract",
         description:
-          "Multi-turn Agent-to-Agent Conversational Gateway (/q/chat, /chat, /q/a2a, /q/chat/completions). Supports natural greeting/onboarding, task matching & claiming, reusable Task Object lookup ('this task' resolution + typo recovery), unstuck Meta Muse reasoning (/q/help), draft validation, and verified task submission.",
+          "Stateful multi-turn Bilateral Guide & Agent-to-Agent Conversational Gateway (/q/chat, /chat, /q/a2a, /q/chat/completions). Supports grounded Q&A on Teleion Fabric, Herma, Tessera, Eranos, and Muse models, negation-safe constraint & phrase memory across turns via session_id, contributor onboarding, Task claiming, reusable Task Object lookup, draft validation, and Task submission.",
+        session_continuity: {
+          accepted_session_id_inputs: ["body.session_id", "body.conversation_id", "?session_id=", "X-Herma-Session-Id"],
+          ephemeral_session_max_turns: bounds.ephemeral_session_max_turns,
+          ephemeral_session_ttl_seconds: bounds.ephemeral_session_ttl_seconds,
+          chat_message_max_bytes: bounds.chat_message_max_bytes,
+        },
         supported_wire_formats: [
           "{ message, session_id?, agent_id?, worker_uuid?, worker_token? }",
           "{ messages: [{ role: 'user', content: '...' }], session_id? } (OpenAI Chat Completions compatible)",
-          "GET /q/chat?message=Hi+I%27d+like+to+contribute&agent_id=my-agent",
+          "GET /q/chat?session_id=my-session&message=What+does+Teleion+Fabric+do",
         ],
         starter_examples: [
+          { intent: "informational", message: "What does Teleion Fabric do?" },
+          { intent: "constraint_acknowledged", message: "Do not claim a task" },
           { intent: "onboard", message: "Hi I'd like to contribute" },
           { intent: "object_lookup", message: "are there any task objects that would help me withthis task" },
           { intent: "help", message: "hi i am stuck" },
@@ -2110,24 +2637,32 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
     };
   }
 
-  const reqSessionId = cleanSessionId(body.session_id || body.conversation_id || "");
-  const existingSession = reqSessionId
-    ? await db.prepare("SELECT * FROM herma_agent_conversations WHERE session_id = ?").bind(reqSessionId).first()
-    : null;
-  const sessionId = existingSession?.session_id || reqSessionId || randomPrefixedId("sess");
+  const rawHeaderSessionId = request.headers.get("x-herma-session-id") || "";
+  const reqSessionId = cleanSessionId(
+    body.session_id ||
+      body.conversation_id ||
+      url.searchParams.get("session_id") ||
+      url.searchParams.get("conversation_id") ||
+      rawHeaderSessionId ||
+      ""
+  );
+  const existingSession = reqSessionId ? await loadEphemeralChatSession(db, reqSessionId, env) : null;
+  const sessionId = existingSession?.session_id || reqSessionId || mintReadableSessionId();
 
-  const agentId = cleanHandle(body.agent_id || body.agent || existingSession?.agent_id || "a2a-contributor");
+  const agentId = cleanHandle(body.agent_id || body.agent || body.user || existingSession?.agent_id || "a2a-contributor");
   const passedUuid = String(body.worker_uuid || body.uuid || existingSession?.worker_uuid || "").trim();
   const workerToken = String(
     body.worker_token || request.headers.get("x-herma-worker-token") || url.searchParams.get("worker_token") || ""
   ).trim();
 
-  const authCheck = await gatewayOps.verifyWorkerUuidAccess({
-    agentId,
-    workerUuid: passedUuid,
-    workerToken,
-    infraAllowed,
-  });
+  const authCheck = gatewayOps?.verifyWorkerUuidAccess
+    ? await gatewayOps.verifyWorkerUuidAccess({
+        agentId,
+        workerUuid: passedUuid,
+        workerToken,
+        infraAllowed,
+      })
+    : { ok: true, tokenVerified: false, existing: null };
   if (!authCheck.ok) {
     return {
       status: HELP_STARTER_GRID.http_forbidden,
@@ -2136,46 +2671,67 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
   }
 
   const isReadOnlyGet = method === "GET" || method === "HEAD";
-  const onboarded = await gatewayOps.onboardOrLoadForChat({
-    agentId,
-    workerUuid: passedUuid,
-    mintTokenIfNew: !isReadOnlyGet,
-    readOnly: isReadOnlyGet,
-    modelHint: body.model || body.model_hint || request.headers.get("x-herma-model") || "",
-    userAgent: request.headers.get("user-agent") || "",
-  });
-  const profile = onboarded.profile;
-  const mintedWorkerToken = onboarded.mintedWorkerToken || null;
-
-  let history = [];
-  try {
-    history = JSON.parse(existingSession?.history_json || "[]");
-    if (!Array.isArray(history)) history = [];
-  } catch {
-    history = [];
-  }
-  let stagingDraft = {};
-  try {
-    stagingDraft = JSON.parse(existingSession?.staging_draft_json || "{}");
-    if (!stagingDraft || typeof stagingDraft !== "object" || Array.isArray(stagingDraft)) stagingDraft = {};
-  } catch {
-    stagingDraft = {};
-  }
-
-  const leaseResolution = await resolveActiveWorkerLease(db, infraAllowed, {
+  const preLeaseResolution = await resolveActiveWorkerLease(db, infraAllowed, {
     explicitTaskId: String(body.task_id || "").trim(),
     explicitFence: body.fencing_token,
     sessionActiveTaskId: String(existingSession?.active_task_id || "").trim(),
     sessionActiveFence: Number(existingSession?.active_fencing_token || 0),
     agentId,
-    workerUuid: profile.worker_uuid,
+    workerUuid: passedUuid || authCheck.existing?.worker_uuid || "",
   });
+
+  const negated = detectNegatedActions(userText);
+  const intent = classifyChatIntent(userText, body, existingSession, preLeaseResolution.taskId, bounds);
+  const shouldPersistWorker = Boolean(
+    !isReadOnlyGet &&
+      !negated.register &&
+      (intent === "greeting_or_onboard" || intent === "claim" || intent === "submit")
+  );
+
+  const onboarded = gatewayOps?.onboardOrLoadForChat
+    ? await gatewayOps.onboardOrLoadForChat({
+        agentId,
+        workerUuid: passedUuid,
+        mintTokenIfNew: shouldPersistWorker,
+        readOnly: !shouldPersistWorker,
+        modelHint: body.model || body.model_hint || request.headers.get("x-herma-model") || "",
+        userAgent: request.headers.get("user-agent") || "",
+      })
+    : { profile: { worker_uuid: passedUuid || `w_agent_${agentId}` }, mintedWorkerToken: null };
+  const profile = onboarded.profile;
+  const mintedWorkerToken = onboarded.mintedWorkerToken || null;
+  const isRegisteredWorker = Boolean(authCheck.tokenVerified || authCheck.existing || mintedWorkerToken || shouldPersistWorker);
+
+  const history = Array.isArray(existingSession?.history) ? [...existingSession.history] : [];
+  let stagingDraft =
+    existingSession?.staging_draft && typeof existingSession.staging_draft === "object"
+      ? { ...existingSession.staging_draft }
+      : {};
+  const { memory: updatedMemory, captured: capturedMemory } = updateSessionMemoryFromTurn(
+    existingSession?.memory,
+    userText,
+    negated,
+    bounds
+  );
+
+  const leaseResolution =
+    profile.worker_uuid && profile.worker_uuid !== (passedUuid || authCheck.existing?.worker_uuid || "")
+      ? await resolveActiveWorkerLease(db, infraAllowed, {
+          explicitTaskId: String(body.task_id || "").trim(),
+          explicitFence: body.fencing_token,
+          sessionActiveTaskId: String(existingSession?.active_task_id || "").trim(),
+          sessionActiveFence: Number(existingSession?.active_fencing_token || 0),
+          agentId,
+          workerUuid: profile.worker_uuid,
+        })
+      : preLeaseResolution;
 
   let activeTaskId = leaseResolution.taskId;
   let activeFence = leaseResolution.fencingToken;
-  const intent = classifyChatIntent(userText, body, existingSession, activeTaskId);
+  let claimedThisTurn = false;
   const nowIso = new Date().toISOString();
-  let stateStage = existingSession?.state_stage || "onboarding";
+  const nextTurnCount = Number(existingSession?.turn_count || 0) + 1;
+  let stateStage = existingSession?.state_stage || "active";
   let replyText = "";
   let extraPayload = {};
 
@@ -2419,6 +2975,9 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
     const claimOut = await gatewayOps.claimTaskForChat({
       agentId,
       workerUuid: profile.worker_uuid,
+      workerToken,
+      workerIdGiven: Boolean(passedUuid), // the request (or its session) named the worker by id, not by agent name only
+      createdNow: Boolean(mintedWorkerToken), // this call created the worker and has just returned its token
       preferredTier,
       explicitTaskId: candidateExplicitId,
       keywordHint,
@@ -2427,7 +2986,11 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
     if (claimOut.forbidden) {
       return {
         status: HELP_STARTER_GRID.http_forbidden,
-        body: { ok: false, code: "forbidden_tier", detail: "Requested tier requires server infrastructure authorization." },
+        body: {
+          ok: false,
+          code: claimOut.code || "forbidden_tier",
+          detail: claimOut.detail || "Requested tier requires server infrastructure authorization.",
+        },
       };
     }
     if (!claimOut.task) {
@@ -2436,6 +2999,7 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
         "No matching unleased ready task was available right now. You can submit a new reusable Task Object with task_id='self_seed' or ask 'what should i work on next?' to see general open areas.";
       extraPayload = { lease: null };
     } else {
+      claimedThisTurn = true;
       activeTaskId = claimOut.task.task_id;
       activeFence = Number(claimOut.task.fencing_token || 1);
       stateStage = "claimed";
@@ -2665,8 +3229,10 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
         taskId: activeTaskId,
         agentId,
         workerUuid: profile.worker_uuid,
-        provider: body.provider || "ollama",
+        provider: body.provider || "meta",
         requestedModelOverride: body.model || "",
+        requestedMaxTokens:
+          body.max_tokens ?? body.max_output_tokens ?? body.max_completion_tokens ?? null,
         topK: HELP_STARTER_GRID.default_top_k_objects,
         diagnostics,
         persistArtifacts: !isReadOnlyGet,
@@ -2718,12 +3284,39 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
           ? inlineExtracted.parsed
           : body;
 
+    const altSubBody = subSource.result ?? subSource.output ?? subSource.content;
+    const altSubSummary =
+      typeof altSubBody === "string"
+        ? altSubBody.trim()
+        : altSubBody && typeof altSubBody === "object"
+          ? String(
+              altSubBody.summary ||
+                altSubBody.title ||
+                altSubBody.description ||
+                altSubBody.message ||
+                JSON.stringify(altSubBody)
+            )
+          : "";
+    const derivedSubSummary = subSource.summary || altSubSummary;
+    const derivedSubObjects = Array.isArray(subSource.task_objects || subSource.objects)
+      ? subSource.task_objects || subSource.objects
+      : altSubBody !== undefined && altSubBody !== null && !Array.isArray(subSource.evaluations)
+        ? [
+            {
+              ...(subSource.object_key ? { object_key: subSource.object_key } : {}),
+              summary: derivedSubSummary || "completed task branch",
+              payload:
+                typeof altSubBody === "object" && !Array.isArray(altSubBody)
+                  ? altSubBody
+                  : { result: altSubBody },
+            },
+          ]
+        : null;
+
     const mergedDraft = {
       ...stagingDraft,
-      ...(subSource.summary ? { summary: subSource.summary } : {}),
-      ...(Array.isArray(subSource.task_objects || subSource.objects)
-        ? { task_objects: subSource.task_objects || subSource.objects }
-        : {}),
+      ...(derivedSubSummary ? { summary: derivedSubSummary } : {}),
+      ...(Array.isArray(derivedSubObjects) ? { task_objects: derivedSubObjects } : {}),
       ...(Array.isArray(subSource.evaluations) ? { evaluations: subSource.evaluations } : {}),
       ...(Array.isArray(subSource.queued_tasks || subSource.queued_verbs || subSource.tasks)
         ? { queued_tasks: subSource.queued_tasks || subSource.queued_verbs || subSource.tasks }
@@ -2815,41 +3408,107 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
         stagingDraft = {};
         activeTaskId = "";
         activeFence = 0;
-        await db
-          .prepare(
-            `UPDATE herma_finetune_traces
-             SET verified_outcome = 'accepted', quality_weight_milli = ?
-             WHERE worker_uuid = ? AND (task_id = ? OR task_id = '')`
-          )
-          .bind(HELP_STARTER_GRID.accepted_trace_weight_milli, profile.worker_uuid, targetTaskId)
-          .run();
+        const submittedTaskId = String(targetTaskId || "").trim();
+        let submittedTaskVis = String(preLeaseResolution?.taskRow?.visibility || "");
+        let submittedTaskTier = String(preLeaseResolution?.taskRow?.tier || "");
+        if (!submittedTaskVis && submittedTaskId && submittedTaskId !== "self_seed") {
+          try {
+            const qRow = await db
+              .prepare("SELECT visibility, tier FROM herma_durable_queue WHERE task_id = ? LIMIT 1")
+              .bind(submittedTaskId)
+              .first();
+            if (qRow) {
+              submittedTaskVis = String(qRow.visibility || "");
+              submittedTaskTier = String(qRow.tier || "");
+            }
+          } catch {
+            // Leave defaults when queue row lookup is unavailable
+          }
+        }
+        const normalizedSubVis = submittedTaskVis || "public_commons";
+        const submittedPublic =
+          ["public_ngo", "public_commons"].includes(normalizedSubVis) && submittedTaskTier !== "infra_private";
+        const traceSubVisibility = submittedPublic ? normalizedSubVis : "server_infra";
+        const traceSubEligible = submittedPublic ? 1 : 0;
+
+        if (submittedTaskId && submittedTaskId !== "self_seed") {
+          const rawSourceTraceIds = Array.isArray(subSource?.source_trace_ids)
+            ? subSource.source_trace_ids
+            : Array.isArray(body?.source_trace_ids)
+              ? body.source_trace_ids
+              : [];
+          const sourceTraceIds = rawSourceTraceIds
+            .map((id) => String(id || "").trim())
+            .filter(Boolean)
+            .slice(0, HELP_STARTER_GRID.catalog_fetch_limit);
+          if (sourceTraceIds.length > 0) {
+            const placeholders = sourceTraceIds.map(() => "?").join(", ");
+            await db
+              .prepare(
+                `UPDATE herma_finetune_traces
+                 SET verified_outcome = 'submitted_unreviewed', quality_weight_milli = ?
+                 WHERE worker_uuid = ?
+                   AND task_id = ?
+                   AND task_id != ''
+                   AND verified_outcome IN ('generated_meta_muse', 'deterministic_shim')
+                   AND trace_id IN (${placeholders})`
+              )
+              .bind(
+                HELP_STARTER_GRID.submitted_unreviewed_trace_weight_milli,
+                profile.worker_uuid,
+                submittedTaskId,
+                ...sourceTraceIds
+              )
+              .run();
+          } else {
+            await db
+              .prepare(
+                `UPDATE herma_finetune_traces
+                 SET verified_outcome = 'submitted_unreviewed', quality_weight_milli = ?
+                 WHERE worker_uuid = ?
+                   AND task_id = ?
+                   AND task_id != ''
+                   AND verified_outcome IN ('generated_meta_muse', 'deterministic_shim')`
+              )
+              .bind(HELP_STARTER_GRID.submitted_unreviewed_trace_weight_milli, profile.worker_uuid, submittedTaskId)
+              .run();
+          }
+        }
 
         await db
           .prepare(
             `INSERT INTO herma_finetune_traces
-             (trace_id, source_kind, task_id, worker_uuid, model_id, system_shim_json,
+             (trace_id, source_kind, task_id, worker_uuid, model_id, visibility, export_eligible, system_shim_json,
               input_messages_json, output_json, quality_weight_milli, verified_outcome, created_at)
-             VALUES (?, 'a2a_chat_verified_submit', ?, ?, 'worker_verified_submission', ?, ?, ?, ?, 'accepted', ?)`
+             VALUES (?, 'a2a_chat_verified_submit', ?, ?, 'worker_verified_submission', ?, ?, ?, ?, ?, ?, 'submitted_unreviewed', ?)`
           )
           .bind(
             randomPrefixedId("ft"),
-            targetTaskId,
+            submittedTaskId,
             profile.worker_uuid,
-            JSON.stringify({ session_id: sessionId, agent_id: agentId }),
+            traceSubVisibility,
+            traceSubEligible,
+            JSON.stringify({
+              session_id: sessionId,
+              agent_id: agentId,
+              task_id: submittedTaskId,
+              visibility: traceSubVisibility,
+              training_export_allowed: traceSubEligible === 1,
+            }),
             JSON.stringify(history.slice(-HELP_STARTER_GRID.default_top_k_objects)),
             JSON.stringify({
               summary: submitOut.summary,
               stored_task_objects: submitOut.stored_task_objects,
               receipt_hash: submitOut.receipt_hash,
             }),
-            HELP_STARTER_GRID.accepted_trace_weight_milli,
+            HELP_STARTER_GRID.submitted_unreviewed_trace_weight_milli,
             nowIso
           )
           .run();
 
         replyText =
           `Verified and committed submission for '${targetTaskId}'! ` +
-          `Receipt SHA-256: ${submitOut.receipt_hash}. Permalink: ${submitOut.contribution_permalink}`;
+          `Record checksum: ${submitOut.receipt_hash}. Permalink: ${submitOut.contribution_permalink}`;
         extraPayload = {
           submission_status: "committed",
           submission_receipt: submitOut,
@@ -2858,65 +3517,305 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
       }
     }
     }
+  } else {
+    stateStage =
+      intent === "constraint_acknowledged"
+        ? "constraint_acknowledged"
+        : intent === "session_recall"
+          ? "session_recall"
+          : "informational";
+    const matchedTopics = matchBilateralTopics(userText, bounds);
+    let deterministicReply = buildGroundedBilateralReply({
+      intent,
+      userText,
+      matchedTopics,
+      sessionId,
+      turnCount: nextTurnCount,
+      memory: updatedMemory,
+      history,
+      negated,
+      captured: capturedMemory,
+      base,
+    });
+    let reasoningMode = "grounded_bilateral_topic_synthesizer";
+
+    const wantsModel = body?.use_model === true || body?.augment_with_model === true;
+    const metaKey = typeof env?.META_API_KEY === "string" ? env.META_API_KEY.trim() : "";
+    if (wantsModel && metaKey && !isReadOnlyGet && db && typeof db.prepare === "function") {
+      const provSpec = META_MODEL_CATALOG.meta;
+      const candidateModel = provSpec.default_model;
+      const callerChatMax = Number(
+        body?.max_tokens ?? body?.max_output_tokens ?? body?.max_completion_tokens ?? NaN
+      );
+      const maxOut =
+        Number.isFinite(callerChatMax) && callerChatMax > 0
+          ? Math.max(
+              HELP_STARTER_GRID.min_max_output_tokens,
+              Math.min(HELP_STARTER_GRID.max_output_tokens_cap, Math.floor(callerChatMax))
+            )
+          : bounds.chat_model_max_output_tokens;
+      const sysMsg =
+        "Answer the caller concisely and accurately using ONLY the grounded Teleion Fabric / Herma / Eranos facts and session memory provided. " +
+        "Never output onboarding boilerplate, never claim a Task, and preserve any remembered test phrases verbatim.\n" +
+        `GROUNDED_CONTEXT: ${JSON.stringify({ matched_topics: matchedTopics, session_memory: updatedMemory, deterministic_baseline: deterministicReply })}`;
+      const encoder = new TextEncoder();
+      const promptBytes = encoder.encode(sysMsg).length + encoder.encode(userText).length;
+      const callId = randomPrefixedId("mcall");
+      const utcDayPrefix = nowIso.slice(0, HELP_STARTER_GRID.utc_date_prefix_chars);
+      const totalMetaBudgetMicrousd =
+        Math.max(1, Number(env?.HERMA_META_BUDGET_USD || HELP_STARTER_GRID.default_meta_total_budget_usd)) *
+        HELP_STARTER_GRID.microusd_per_usd;
+      const ceiling = estimateMetaMicrousd(
+        candidateModel,
+        Math.ceil(promptBytes / HELP_STARTER_GRID.worst_case_bytes_per_token),
+        maxOut
+      );
+      const promptSha = await sha256Hex(`${sysMsg}\n---\n${userText}`);
+      const reserved = await reserveMetaCall(
+        db,
+        {
+          call_id: callId,
+          endpoint: "/q/chat",
+          agent_id: agentId,
+          worker_uuid: isRegisteredWorker ? profile.worker_uuid : "",
+          task_id: activeTaskId || "",
+          requested_model: candidateModel,
+          ceiling_microusd: ceiling,
+          shimmed_object_count: 0,
+          shimmed_provision_count: matchedTopics.length,
+          prompt_sha256: promptSha,
+          created_at: nowIso,
+          total_budget_microusd: totalMetaBudgetMicrousd,
+          infra: infraAllowed,
+          day_start_iso: `${utcDayPrefix}T00:00:00.000Z`,
+          day_cap_microusd: HELP_STARTER_GRID.help_meta_daily_microusd_cap,
+          day_calls_cap: HELP_STARTER_GRID.default_paid_muse_daily_calls_cap,
+        },
+        env
+      );
+      if (reserved) {
+        const t0 = Date.now();
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), bounds.chat_model_timeout_ms);
+        let outcome = "upstream_error";
+        let status = 0;
+        let inTok = 0;
+        let outTok = 0;
+        let estMicro = ceiling;
+        let respSha = "";
+        let errCode = "";
+        let repModel = "";
+        try {
+          const resp = await fetch(provSpec.endpoint, {
+            method: "POST",
+            headers: { authorization: `Bearer ${metaKey}`, "content-type": "application/json" },
+            body: JSON.stringify({
+              model: candidateModel,
+              stream: false,
+              max_tokens: maxOut,
+              messages: [
+                { role: "system", content: sysMsg },
+                { role: "user", content: userText },
+              ],
+            }),
+            redirect: "manual",
+            signal: controller.signal,
+          });
+          status = resp.status;
+          if (resp.status === HELP_STARTER_GRID.http_ok) {
+            const parsed = await resp.json().catch(() => null);
+            const rawContent = parsed?.choices?.[0]?.message?.content;
+            if (typeof rawContent === "string" && rawContent.trim().length > 0) {
+              const cleanedModelReply = tidyText(rawContent.trim(), 0);
+              const preservesPhrases = updatedMemory.test_phrases.every((p) => cleanedModelReply.includes(p));
+              const preservesConstraints = updatedMemory.constraints.every((c) => cleanedModelReply.includes(c));
+              if (
+                cleanedModelReply &&
+                (!isRecallOrSummaryQuery(userText.toLowerCase()) || (preservesPhrases && preservesConstraints))
+              ) {
+                deterministicReply = cleanedModelReply;
+                reasoningMode = "meta_llm_augmented";
+              }
+              repModel = String(parsed?.model || candidateModel);
+              inTok = Number(parsed?.usage?.prompt_tokens || 0);
+              outTok = Number(parsed?.usage?.completion_tokens || 0);
+              estMicro = estimateMetaMicrousd(candidateModel, inTok, outTok);
+              respSha = await sha256Hex(rawContent);
+              outcome = "completed";
+            } else {
+              errCode = "empty_model_content";
+            }
+          } else if (resp.status === 429) {
+            outcome = "rate_limited";
+            estMicro = 0;
+            errCode = "provider_rate_limited";
+          } else {
+            outcome = "rejected";
+            errCode = `provider_http_${resp.status}`;
+          }
+        } catch (err) {
+          errCode = err?.name === "AbortError" ? "provider_timeout" : "provider_network_error";
+        } finally {
+          clearTimeout(timer);
+          await finishMetaCall(db, {
+            call_id: callId,
+            reported_model: repModel,
+            http_status: status,
+            outcome,
+            input_tokens: inTok,
+            output_tokens: outTok,
+            estimated_microusd: estMicro,
+            latency_ms: Date.now() - t0,
+            response_sha256: respSha,
+            error_code: errCode,
+          });
+        }
+      }
+    }
+
+    if (matchedTopics.length > 0) {
+      updatedMemory.last_topic_ids = matchedTopics.map((t) => t.topic_id);
+      for (const topic of matchedTopics) {
+        if (!updatedMemory.topics_discussed.includes(topic.topic_id)) {
+          updatedMemory.topics_discussed.push(topic.topic_id);
+        }
+      }
+    }
+    replyText = deterministicReply;
+    extraPayload = {
+      matched_topics: matchedTopics.map((t) => t.topic_id),
+      reasoning_mode: reasoningMode,
+      session_memory: {
+        test_phrases: updatedMemory.test_phrases,
+        constraints: updatedMemory.constraints,
+        remembered_notes: updatedMemory.remembered_notes,
+        preferences: updatedMemory.preferences,
+        topics_discussed: updatedMemory.topics_discussed,
+      },
+    };
   }
 
-  const nextTurnCount = Number(existingSession?.turn_count || 0) + (isReadOnlyGet ? 0 : 1);
+  const isConversationalTurn =
+    intent === "informational" || intent === "constraint_acknowledged" || intent === "session_recall";
+  replyText = isConversationalTurn ? tidyText(replyText, 0) : scrubBannedWords(replyText);
+  updatedMemory.last_intent = intent;
+  updatedMemory.last_reply_summary = tidyText(replyText, bounds.session_note_max_bytes);
+
+  const turnTaskRef = String(activeTaskId || preLeaseResolution?.taskId || "").trim();
+  let turnTaskVis = String(preLeaseResolution?.taskRow?.visibility || "");
+  let turnTaskTier = String(preLeaseResolution?.taskRow?.tier || "");
+  if (!turnTaskVis && turnTaskRef && turnTaskRef !== "self_seed" && db && typeof db.prepare === "function") {
+    try {
+      const qRow = await db
+        .prepare("SELECT visibility, tier FROM herma_durable_queue WHERE task_id = ? LIMIT 1")
+        .bind(turnTaskRef)
+        .first();
+      if (qRow) {
+        turnTaskVis = String(qRow.visibility || "");
+        turnTaskTier = String(qRow.tier || "");
+      }
+    } catch {
+      // Optional queue lookup
+    }
+  }
+  const normalizedTurnVis = turnTaskVis || "public_commons";
+  const turnExportEligible =
+    ["public_ngo", "public_commons"].includes(normalizedTurnVis) && turnTaskTier !== "infra_private" ? 1 : 0;
+  const turnVisibility = turnExportEligible === 1 ? normalizedTurnVis : "server_infra";
+  const priorEligible =
+    existingSession?.export_eligible === false || existingSession?.export_eligible === 0 ? 0 : 1;
+  const sessionExportEligible = priorEligible === 1 && turnExportEligible === 1 ? 1 : 0;
+  const sessionVisibility = sessionExportEligible === 1 ? turnVisibility : "server_infra";
+
+  const scrubbedUserTurn = tidyText(userText || `[${intent}]`, bounds.chat_message_max_bytes);
   const updatedHistory = [
     ...history,
-    { role: "user", content: userText || `[${intent}]`, at: nowIso },
-    { role: "assistant", intent, content: replyText, at: nowIso },
-  ].slice(-HELP_STARTER_GRID.max_history_turns);
-  const historyJson = JSON.stringify(updatedHistory).slice(0, HELP_STARTER_GRID.max_history_json_chars);
-  const stagingJson = JSON.stringify(stagingDraft).slice(0, HELP_STARTER_GRID.max_staging_draft_chars);
+    {
+      role: "user",
+      content: scrubbedUserTurn,
+      at: nowIso,
+      task_id: turnTaskRef || null,
+      visibility: turnVisibility,
+      export_eligible: turnExportEligible,
+    },
+    {
+      role: "assistant",
+      intent,
+      content: replyText,
+      at: nowIso,
+      task_id: turnTaskRef || null,
+      visibility: turnVisibility,
+      export_eligible: turnExportEligible,
+    },
+  ].slice(-(bounds.ephemeral_session_max_turns * 2));
 
-  if (!isReadOnlyGet) await db
-    .prepare(
-      `INSERT INTO herma_agent_conversations
-       (session_id, agent_id, worker_uuid, active_task_id, active_fencing_token, state_stage,
-        history_json, turn_count, staging_draft_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(session_id) DO UPDATE SET
-         agent_id = excluded.agent_id,
-         worker_uuid = excluded.worker_uuid,
-         active_task_id = excluded.active_task_id,
-         active_fencing_token = excluded.active_fencing_token,
-         state_stage = excluded.state_stage,
-         history_json = excluded.history_json,
-         turn_count = excluded.turn_count,
-         staging_draft_json = excluded.staging_draft_json,
-         updated_at = excluded.updated_at`
-    )
-    .bind(
-      sessionId,
-      agentId,
-      profile.worker_uuid,
-      activeTaskId,
-      activeFence,
-      stateStage,
-      historyJson,
-      nextTurnCount,
-      stagingJson,
-      existingSession?.created_at || nowIso,
-      nowIso
-    )
-    .run();
+  const priorLastDurableTurn = Number.isFinite(Number(existingSession?.last_durable_turn_count))
+    ? Math.max(0, Math.trunc(Number(existingSession.last_durable_turn_count)))
+    : (existingSession?.persisted ? Math.max(0, Number(existingSession.turn_count || 0)) : 0);
+  const savedSession = await saveEphemeralChatSession(
+    db,
+    {
+      session_id: sessionId,
+      agent_id: agentId,
+      worker_uuid: isRegisteredWorker ? profile.worker_uuid : "",
+      active_task_id: activeTaskId,
+      active_fencing_token: activeFence,
+      state_stage: stateStage,
+      turn_count: nextTurnCount,
+      visibility: sessionVisibility,
+      export_eligible: sessionExportEligible,
+      history: updatedHistory,
+      memory: updatedMemory,
+      staging_draft: stagingDraft,
+      persisted: Boolean(existingSession?.persisted),
+      session_persisted: Boolean(existingSession?.persisted),
+      last_durable_turn_count: priorLastDurableTurn,
+      created_at: existingSession?.created_at || nowIso,
+      updated_at: nowIso,
+    },
+    env,
+    { syncAgentConversations: !isReadOnlyGet, readOnly: isReadOnlyGet }
+  );
+  const sessionPersisted = Boolean(savedSession?.persisted);
+  const sessionPersistenceMode = savedSession?.persistence_mode || (sessionPersisted ? "d1" : "memory_only");
+  const lastDurableTurnCount = Number(savedSession?.last_durable_turn_count ?? (sessionPersisted ? nextTurnCount : priorLastDurableTurn));
+  if (!sessionPersisted && !isReadOnlyGet && stateStage === "draft_needs_fix") {
+    replyText = replyText.replace(/^Saved your staging draft/, "Held your staging draft in ephemeral memory");
+  }
+
+  const actionRouted =
+    intent === "claim" && !isReadOnlyGet
+      ? "claim"
+      : intent === "submit" && !isReadOnlyGet
+        ? "submit"
+        : intent === "greeting_or_onboard" && !isReadOnlyGet
+          ? "onboard"
+          : "none";
 
   const promptTokensEst = Math.ceil(userText.length / HELP_STARTER_GRID.estimated_chars_per_token);
   const completionTokensEst = Math.ceil(replyText.length / HELP_STARTER_GRID.estimated_chars_per_token);
   const responsePayload = {
     ok: true,
     schema: HELP_STARTER_GRID.schema_chat_id,
-    ...(isReadOnlyGet ? { read_only_get: true } : {}),
+    ...(isReadOnlyGet ? { read_only_get: true, session_persisted: Boolean(existingSession?.persisted) } : {}),
+    ephemeral_session: true,
+    persisted: sessionPersisted,
+    persistence_mode: sessionPersistenceMode,
+    last_durable_turn_count: lastDurableTurnCount,
     session_id: sessionId,
     conversation_id: sessionId,
     intent,
+    action_routed: actionRouted,
     state_stage: stateStage,
     turn_count: nextTurnCount,
+    registered_worker: isRegisteredWorker,
+    claimed_task: claimedThisTurn,
     agent_id: agentId,
     worker_uuid: profile.worker_uuid,
     ...(mintedWorkerToken ? { worker_token: mintedWorkerToken } : {}),
     active_task_id: activeTaskId || null,
     active_fencing_token: activeFence > 0 ? activeFence : null,
+    lease: null,
     reply: replyText,
     ...extraPayload,
     ...(isOpenAiWire
@@ -2924,7 +3823,7 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
           id: `chatcmpl_${sessionId}_${nextTurnCount}`,
           object: "chat.completion",
           created: Math.floor(Date.now() / HELP_STARTER_GRID.ms_per_second),
-          model: String(body.model || "herma-a2a-muse-spark-open"),
+          model: String(body.model || "herma-a2a-muse-spark-1.3"),
           choices: [
             {
               index: 0,
@@ -3010,7 +3909,6 @@ export async function handleMetaTelemetryRequest(request, env, db) {
     db
       .prepare(
         `SELECT
-           SUM(CASE WHEN provider = 'ollama' AND outcome IN ('completed', 'rate_limited', 'upstream_error') THEN 1 ELSE 0 END) AS ollama_calls_today,
            COALESCE(SUM(CASE WHEN provider = 'meta' THEN estimated_microusd ELSE 0 END), 0) AS meta_microusd_today
          FROM herma_meta_call_log
          WHERE created_at >= ?`
@@ -3047,14 +3945,13 @@ export async function handleMetaTelemetryRequest(request, env, db) {
   }
 
   const totalMetaBudgetUsd = Number(env?.HERMA_META_BUDGET_USD || HELP_STARTER_GRID.default_meta_total_budget_usd);
-  const ollamaDailyCap = Number(env?.HERMA_OLLAMA_CALLS_PER_DAY || HELP_STARTER_GRID.default_ollama_daily_cap);
 
   return {
     status: HELP_STARTER_GRID.http_ok,
     body: {
       ok: true,
       schema: HELP_STARTER_GRID.schema_telemetry_id,
-      supported_meta_muse_models: ["muse-spark-1.3", "muse-wonder-1.0", "muse-spark-open", "nanoMuse"],
+      supported_meta_muse_models: ["muse-spark-1.3", "muse-wonder-1.0"],
       totals: {
         total_meta_calls: totalCalls,
         completed_calls: completedCalls,
@@ -3071,8 +3968,6 @@ export async function handleMetaTelemetryRequest(request, env, db) {
       },
       budget_consumption: {
         utc_day: utcDayPrefix,
-        ollama_calls_today: Number(dayTotalsRow?.ollama_calls_today || 0),
-        ollama_daily_cap: ollamaDailyCap,
         meta_microusd_today: Number(dayTotalsRow?.meta_microusd_today || 0),
         meta_daily_public_microusd_cap: HELP_STARTER_GRID.help_meta_daily_microusd_cap,
         meta_total_estimated_microusd: totalEstimatedMicrousd,
@@ -3111,9 +4006,21 @@ export async function handleTrainingExportRequest(request, env, db, publicUrl) {
   const [tracesRes, objectsRes, chatsRes, routingArmsRes] = await Promise.all([
     db
       .prepare(
-        `SELECT * FROM herma_finetune_traces
-         ORDER BY (CASE WHEN verified_outcome = 'accepted' THEN 0 ELSE 1 END) ASC,
-                  quality_weight_milli DESC, created_at DESC
+        `SELECT t.*, q.visibility AS linked_task_visibility, q.tier AS linked_task_tier
+         FROM herma_finetune_traces t
+         LEFT JOIN herma_durable_queue q ON q.task_id = t.task_id
+         WHERE COALESCE(t.visibility, 'public_commons') IN ('public_ngo', 'public_commons')
+           AND COALESCE(t.export_eligible, 1) = 1
+           AND (
+             COALESCE(t.task_id, '') IN ('', 'self_seed')
+             OR (
+               q.task_id IS NOT NULL
+               AND q.visibility IN ('public_ngo', 'public_commons')
+               AND COALESCE(q.tier, '') != 'infra_private'
+             )
+           )
+         ORDER BY (CASE WHEN t.verified_outcome = 'accepted' THEN 0 WHEN t.verified_outcome = 'submitted_unreviewed' THEN 1 ELSE 2 END) ASC,
+                  t.quality_weight_milli DESC, t.created_at DESC
          LIMIT ?`
       )
       .bind(limit)
@@ -3124,7 +4031,10 @@ export async function handleTrainingExportRequest(request, env, db, publicUrl) {
                 o.quality_milli, o.novelty_milli, o.sha256_hash, o.created_at,
                 q.title AS task_title, q.prompt AS task_prompt, q.verb_kind AS task_verb_kind
          FROM herma_task_objects o
-         LEFT JOIN herma_durable_queue q ON q.task_id = o.source_task_id AND q.visibility IN ('public_ngo', 'public_commons')
+         LEFT JOIN herma_durable_queue q
+           ON q.task_id = o.source_task_id
+          AND q.visibility IN ('public_ngo', 'public_commons')
+          AND COALESCE(q.tier, '') != 'infra_private'
          WHERE o.visibility IN ('public_ngo', 'public_commons')
            AND o.is_tombstoned = 0
          ORDER BY o.eval_count DESC, o.quality_milli DESC, o.id DESC
@@ -3134,16 +4044,40 @@ export async function handleTrainingExportRequest(request, env, db, publicUrl) {
       .all(),
     db
       .prepare(
-        `SELECT session_id, state_stage, history_json, turn_count, updated_at
-         FROM herma_agent_conversations
-         WHERE turn_count >= 1
-         ORDER BY (CASE WHEN state_stage = 'submitted' THEN 0 ELSE 1 END) ASC, turn_count DESC, updated_at DESC
+        `SELECT c.session_id, c.active_task_id, c.state_stage, c.history_json, c.staging_draft_json,
+                c.turn_count, c.updated_at, c.visibility, c.export_eligible,
+                q.visibility AS linked_task_visibility, q.tier AS linked_task_tier
+         FROM herma_agent_conversations c
+         LEFT JOIN herma_durable_queue q ON q.task_id = c.active_task_id
+         WHERE c.turn_count >= 1
+           AND COALESCE(c.visibility, 'public_commons') IN ('public_ngo', 'public_commons')
+           AND COALESCE(c.export_eligible, 1) = 1
+           AND (
+             COALESCE(c.active_task_id, '') IN ('', 'self_seed')
+             OR (
+               q.task_id IS NOT NULL
+               AND q.visibility IN ('public_ngo', 'public_commons')
+               AND COALESCE(q.tier, '') != 'infra_private'
+             )
+           )
+         ORDER BY (CASE WHEN c.state_stage = 'submitted' THEN 0 ELSE 1 END) ASC, c.turn_count DESC, c.updated_at DESC
          LIMIT ?`
       )
       .bind(limit)
       .all(),
     db.prepare("SELECT verb_kind, dispatch_count, success_count, mean_quality_milli FROM herma_routing_stats").all(),
   ]);
+
+  const isPublicScopeMeta = (meta) => {
+    if (!meta || typeof meta !== "object") return true;
+    if (meta.training_export_allowed === false || meta.export_eligible === false || meta.export_eligible === 0) {
+      return false;
+    }
+    if (typeof meta.visibility === "string" && meta.visibility.trim()) {
+      return ["public_ngo", "public_commons"].includes(meta.visibility.trim());
+    }
+    return true;
+  };
 
   const verbWinRateByKind = new Map();
   for (const arm of routingArmsRes?.results || []) {
@@ -3175,6 +4109,8 @@ export async function handleTrainingExportRequest(request, env, db, publicUrl) {
     } catch {
       outObj = {};
     }
+    if (!isPublicScopeMeta(sysShim) || !isPublicScopeMeta(outObj)) continue;
+    if (Array.isArray(inMsgs) && inMsgs.some((m) => !isPublicScopeMeta(m))) continue;
     const weight =
       Math.round(
         (Number(tr.quality_weight_milli || HELP_STARTER_GRID.generated_trace_weight_milli) /
@@ -3186,7 +4122,7 @@ export async function handleTrainingExportRequest(request, env, db, publicUrl) {
       record_kind: tr.source_kind,
       verified_outcome: tr.verified_outcome,
       sample_weight: weight,
-      source_model: tr.model_id || "muse-spark-open",
+      source_model: tr.model_id || "muse-spark-1.3",
       messages: [
         { role: "system", content: scrubEmDash(scrubSensitiveText(JSON.stringify(sysShim))) },
         ...(Array.isArray(inMsgs)
@@ -3261,8 +4197,52 @@ export async function handleTrainingExportRequest(request, env, db, publicUrl) {
     });
   }
 
-  for (const ch of chatsRes?.results || []) {
+  const rawChats = chatsRes?.results || [];
+  const referencedTurnTaskIds = new Set();
+  for (const ch of rawChats) {
+    try {
+      const parsedTurns = JSON.parse(ch.history_json || "[]");
+      if (Array.isArray(parsedTurns)) {
+        for (const t of parsedTurns) {
+          const tid = typeof t?.task_id === "string" ? t.task_id.trim() : "";
+          if (tid && tid !== "self_seed") referencedTurnTaskIds.add(tid);
+        }
+      }
+    } catch {
+      // Handled per row below
+    }
+  }
+  const publicTurnTaskIds = new Set();
+  if (referencedTurnTaskIds.size > 0) {
+    const taskList = [...referencedTurnTaskIds];
+    const placeholders = taskList.map(() => "?").join(", ");
+    try {
+      const qRes = await db
+        .prepare(
+          `SELECT task_id FROM herma_durable_queue
+           WHERE task_id IN (${placeholders})
+             AND visibility IN ('public_ngo', 'public_commons')
+             AND COALESCE(tier, '') != 'infra_private'`
+        )
+        .bind(...taskList)
+        .all();
+      for (const r of qRes?.results || []) {
+        if (r?.task_id) publicTurnTaskIds.add(String(r.task_id));
+      }
+    } catch {
+      // Fail closed on unresolved turn task IDs
+    }
+  }
+
+  for (const ch of rawChats) {
     if (examples.length >= limit) break;
+    let stagingMeta = {};
+    try {
+      stagingMeta = JSON.parse(ch.staging_draft_json || "{}");
+    } catch {
+      stagingMeta = {};
+    }
+    if (!isPublicScopeMeta(stagingMeta)) continue;
     let turns = [];
     try {
       turns = JSON.parse(ch.history_json || "[]");
@@ -3270,13 +4250,20 @@ export async function handleTrainingExportRequest(request, env, db, publicUrl) {
       turns = [];
     }
     if (!Array.isArray(turns) || turns.length < 2) continue;
+    const hasNonPublicTurn = turns.some((t) => {
+      if (!isPublicScopeMeta(t)) return true;
+      const tid = typeof t?.task_id === "string" ? t.task_id.trim() : "";
+      if (tid && tid !== "self_seed" && !publicTurnTaskIds.has(tid)) return true;
+      return false;
+    });
+    if (hasNonPublicTurn) continue;
     examples.push({
       example_id: `chat_${ch.session_id}`,
       record_kind: "a2a_multiturn_trajectory",
       state_stage: ch.state_stage,
       sample_weight:
         ch.state_stage === "submitted"
-          ? HELP_STARTER_GRID.accepted_trace_weight_milli / HELP_STARTER_GRID.milli_scale
+          ? HELP_STARTER_GRID.submitted_unreviewed_trace_weight_milli / HELP_STARTER_GRID.milli_scale
           : HELP_STARTER_GRID.generated_trace_weight_milli / HELP_STARTER_GRID.milli_scale,
       messages: turns.map((t) => ({
         role: t.role === "assistant" ? "assistant" : "user",
@@ -3290,14 +4277,14 @@ export async function handleTrainingExportRequest(request, env, db, publicUrl) {
     return { status: HELP_STARTER_GRID.http_ok, isJsonl: true, jsonl: jsonlBody };
   }
 
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
   return {
     status: HELP_STARTER_GRID.http_ok,
     isJsonl: false,
     body: {
       ok: true,
       schema: HELP_STARTER_GRID.schema_training_id,
-      target_model_families: ["muse-spark-open", "nanoMuse", "muse-spark-1.3", "muse-wonder-1.0"],
+      target_model_families: ["muse-spark-1.3", "muse-wonder-1.0"],
       modal_gpu_training_recipe: {
         recommended_methods: ["weighted_sft", "dora_parametric_memory", "dpo_preference_alignment"],
         router_adapter_rank: HELP_STARTER_GRID.lora_rank_router,

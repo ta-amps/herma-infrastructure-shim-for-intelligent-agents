@@ -14,6 +14,7 @@
 //    storage (only SHA-256 digests + prefixes + scoped ACLs stored in `herma_scoped_keys`).
 
 import { scrubSensitiveText } from "./bilateral_bridge.js";
+import { isOpenFreeWindow } from "./herma_engine.js";
 
 export const ON_DEMAND_API_GRID = Object.freeze({
   schema_id: "herma.on_demand_api_and_swappable_nodes.grid.v1",
@@ -353,7 +354,7 @@ export function containsRawCapabilitySecret(rawText) {
 }
 
 export async function ensureOnDemandApiSchema(db) {
-  if (!db || INITIALIZED_ON_DEMAND_DBS.has(db)) return;
+  if (!db || db.__hermaSchemaV69Ready || INITIALIZED_ON_DEMAND_DBS.has(db)) return;
 
   await db
     .prepare(
@@ -529,7 +530,7 @@ function checkRateLimitBucket(keyId, rpmLimit) {
   };
 }
 
-export async function authenticateScopedKey(db, rawKey, { touchUsage = true } = {}) {
+export async function authenticateScopedKey(db, rawKey, { touchUsage = true, env = null } = {}) {
   const cleanKey = String(rawKey || "").trim();
   if (!cleanKey || !cleanKey.startsWith("hk_")) {
     return { ok: false, present: false };
@@ -562,15 +563,17 @@ export async function authenticateScopedKey(db, rawKey, { touchUsage = true } = 
     ON_DEMAND_API_GRID.min_rpm_bound,
     ON_DEMAND_API_GRID.max_rpm_bound
   );
-  const rateCheck = checkRateLimitBucket(row.key_id, rpm);
-  if (!rateCheck.allowed) {
-    return {
-      ok: false,
-      present: true,
-      rateLimited: true,
-      code: "rate_limit_exceeded",
-      detail: `Key ${row.key_id} exceeded ${rpm} requests/min.`,
-    };
+  if (!isOpenFreeWindow(env)) {
+    const rateCheck = checkRateLimitBucket(row.key_id, rpm);
+    if (!rateCheck.allowed) {
+      return {
+        ok: false,
+        present: true,
+        rateLimited: true,
+        code: "rate_limit_exceeded",
+        detail: `Key ${row.key_id} exceeded ${rpm} requests/min.`,
+      };
+    }
   }
 
   let scopes = [];
@@ -2043,12 +2046,13 @@ export async function handleOnDemandObjectApiInvocation(
   ).toLowerCase();
   const isObserveShadow = observeParam === "shadow" || observeParam === "observe_shadow" || observeParam === "1";
 
+  const openFree = isOpenFreeWindow(env);
   const presentedScoped = extractPresentedScopedKey(request, url, reqBody);
   const scopedAuth = presentedScoped
-    ? await authenticateScopedKey(db, presentedScoped, { touchUsage: !isObserveShadow })
+    ? await authenticateScopedKey(db, presentedScoped, { touchUsage: !isObserveShadow, env })
     : { ok: false, present: false };
 
-  if (scopedAuth.present && !scopedAuth.ok) {
+  if (scopedAuth.present && !scopedAuth.ok && !openFree) {
     return {
       status: scopedAuth.rateLimited ? ON_DEMAND_API_GRID.http_rate_limited : ON_DEMAND_API_GRID.http_unauthorized,
       body: { ok: false, code: scopedAuth.code || "invalid_api_key", detail: scopedAuth.detail },
@@ -2081,14 +2085,14 @@ export async function handleOnDemandObjectApiInvocation(
           body: { ok: false, code: "infra_key_required", detail: "Endpoint requires an active infra key." },
         };
       }
-    } else if (spec.auth_mode === "worker_key") {
+    } else if (!openFree && spec.auth_mode === "worker_key") {
       if (!(verifiedWorkerOwner || (scopedAuth.ok && (scopedAuth.key_class === "worker" || scopedAuth.key_class === "infra")))) {
         return {
           status: ON_DEMAND_API_GRID.http_unauthorized,
           body: { ok: false, code: "worker_key_required", detail: "Endpoint requires an active worker key." },
         };
       }
-    } else if (spec.auth_mode === "endpoint_key") {
+    } else if (!openFree && spec.auth_mode === "endpoint_key") {
       const endpointAllowed =
         verifiedWorkerOwner ||
         (scopedAuth.ok &&

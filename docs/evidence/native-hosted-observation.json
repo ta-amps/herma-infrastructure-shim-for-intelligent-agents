@@ -2,7 +2,7 @@
   "schema_version": 1,
   "observed_date": "2026-10-28",
   "harness": "OpenCode 2.1.2",
-  "provider": "Ollama Cloud",
+  "provider": "Hosted open-weight service (retired 2026-11-01)",
   "model": "muse-spark-open",
   "mode": "anonymous",
   "passed": true,
@@ -29,7 +29,7 @@
   "artifact_sha256": "db4169ac227fda88d5b83ae0f40e98768d820278281946f725f2b56c8bbd9154",
   "server_llm_review_calls": 0,
   "provider_cost_usd": null,
-  "cost_reason": "Ollama subscription use has no trusted per-run invoice price.",
+  "cost_reason": "Subscription use has no trusted per-run invoice price.",
   "independent_artifact_review": null,
   "public_catalog_promotion": false,
   "retained_negative_controls": [

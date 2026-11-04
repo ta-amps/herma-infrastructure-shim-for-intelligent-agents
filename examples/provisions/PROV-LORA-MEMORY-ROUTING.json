@@ -1,7 +1,7 @@
 {
   "prov_id": "PROV-LORA-MEMORY-ROUTING",
-  "title": "Prompt Shimming vs LoRAs as Parametric Memory vs Frontier Routing",
-  "summary": "Shims the engineering decision rule separating zero-weight Herma context shimming, Muse Glimmer 30B PEFT LoRAs as parametric memory, and frontier Muse passthrough.",
+  "title": "Context Shimming vs LoRAs as Parametric Memory vs Frontier Routing",
+  "summary": "Shims the engineering decision rule separating zero-weight Teleion Fabric context shimming, Muse Glimmer 30B PEFT LoRA fine-tuning as parametric memory, and frontier Muse passthrough.",
   "priority": 270,
   "enabled": true,
   "action": "shim_context",
@@ -12,19 +12,19 @@
   "inject_position": "system_prefix",
   "dedupe_mode": "once_per_conversation",
   "max_chars": 2600,
-  "inject_text": "Apply the 3-regime memory & routing rule: (1) Use a Herma Context Shim (0 weight updates) for volatile, newly minted, or caller-scoped facts, live URIs, and turn-level guardrails (measured 52.0% -> 64.7% exact tool-call lift on compact 3B baseline and 87.5% -> 95.8% on Muse Spark Open blind NGO eval before weight updates). (2) Promote recurring, stabilized post-cutoff Task Object schemas and refusal contracts into PEFT LoRA adapters as parametric memory (Muse Glimmer 30B 4-bit QLoRA and compact local router LoRAs) to eliminate repeated per-turn HarnessTax tokens, gated by pre-registered held-out promotion checks. (3) Route open-ended synthesis and independent review Tasks (`verbs`) to frontier `Muse Spark 1.3` or `Muse Wonder 1.0` in Standard mode (`-contributor` tiers remain strictly refused).",
+  "inject_text": "Apply the 3-regime memory and fine-tuning rule: (1) Use a Teleion Fabric Context Shim (0 weight updates) for volatile, newly minted, or caller-scoped facts, live URIs, and turn-level guardrails. (2) Promote recurring, stabilized post-cutoff Task Object schemas and refusal contracts into PEFT LoRA fine-tuning as parametric memory (Muse Glimmer 30B 4-bit QLoRA, fine-tuned by ta-amps on H100: 94.0% to 99.3% tool calling, 99.3% vs 92.0% review vs Muse Spark 1.3, and 97.9% vs 95.9% routing vs Muse Spark 1.3) to eliminate repeated per-turn HarnessTax tokens, gated by held-out promotion checks. (3) Route open-ended synthesis and independent review Tasks to frontier `Muse Wonder 1.0` (hard multi-step work) or fast `Muse Spark 1.3` through the Meta API in Standard mode (`-contributor` tiers remain strictly refused).",
   "uris": [
     {
       "uri": "urn:ta-amps:spec:lora-memory-routing-v1",
-      "label": "Herma Shim vs Parametric LoRA Routing Matrix",
+      "label": "Teleion Fabric Shim vs Parametric LoRA Routing Matrix",
       "kind": "schema",
       "inline_excerpt": "Separates volatile context shimming, post-cutoff PEFT LoRA parametric memory, and Standard-mode frontier passthrough."
     },
     {
       "uri": "https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/tree/main/training",
-      "label": "Herma Shim Router & LoRA Spec Artifacts",
+      "label": "Teleion Fabric LoRA Spec & H100 Evaluation Artifacts",
       "kind": "doc",
-      "inline_excerpt": "Reproducible PEFT LoRA configuration and measured context-shim lift evaluation."
+      "inline_excerpt": "Reproducible QLoRA configuration and H100 tool-calling, review, and routing evaluations."
     }
   ],
   "metadata_tags": {
@@ -35,6 +35,14 @@
     "mode": "any",
     "keyword": {
       "any_keywords": [
+        "fine-tuning",
+        "fine tuning",
+        "finetuning",
+        "fine-tune",
+        "finetune",
+        "context shimming",
+        "lora",
+        "qlora",
         "lora as memory",
         "loras as memory",
         "lora as parametric memory",

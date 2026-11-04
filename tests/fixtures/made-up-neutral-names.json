@@ -1,0 +1,43 @@
+{
+  "note": "Made-up display rules for the made-up list, used by the unit tests only.",
+  "rules": [
+    {
+      "extra": true,
+      "pattern": "\\bglimbo\\s+cloud\\b",
+      "to": "a hosted thing"
+    },
+    {
+      "pattern": "glimbo",
+      "to": "a thing"
+    },
+    {
+      "pattern": "\\bzorptest\\b",
+      "to": "example"
+    },
+    {
+      "pattern": "\\bplorps?\\b",
+      "to": {
+        "plorp": "Widget",
+        "plorps": "Widgets"
+      }
+    },
+    {
+      "pattern": "\\bquux-?256\\b",
+      "to": "checksum"
+    },
+    {
+      "pattern": "^\\s*Whim\\s*$",
+      "to": "Note"
+    },
+    {
+      "pattern": "\\bwumpusapp\\b",
+      "to": "an agent app"
+    }
+  ],
+  "samples": [
+    "A zorptest run of plorps with a quux-256 checksum",
+    "Served by glimbo cloud, then by glimbo on a laptop and by wumpusapp",
+    "A snarfling pass",
+    "Whim"
+  ]
+}

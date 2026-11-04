@@ -1,0 +1,25 @@
+{
+  "schema": "herma.release-policy.v1",
+  "note": "Read by scripts/check_release.py, which wrangler runs before every deploy of this Worker (build.command in wrangler.jsonc). Whoever deploys re-reads Cloudflare and the other session's ledger first, and adds the commit that is live to required_ancestors in the same change, so a deploy can never build from a branch that lacks it. 8e27a67 is Antigravity's v6.11 handoff (worker kits, bandit, reprioritize, client indexing), merged on top of the light pages.",
+  "required_ancestors": [
+    "58f3ada68c590ffc12c0a2c637ecf97bbb7bc16e",
+    "295bdbd50a133128566346740e232351e7640ad8",
+    "76a428f2c6c3182c6dabc5019e6aa4cb3e1f3cbe",
+    "8e27a67ef8a563c113590c9d261aebbbb54c9c3f",
+    "c64378737bae59825304404fb2adf77b7a6477d9",
+    "4c919d1dbba2da591eeca360cb6e73db80740b44"
+  ],
+  "live_when_recorded": {
+    "version": "3bcc48d8-f217-440b-90a1-bbf7cb886dc8",
+    "deployed_utc": "2026-11-02T12:35:18Z",
+    "source": "4c919d1 (the network map release; the version before it was 2239c98f, the pages release)"
+  },
+  "rules": [
+    "The working tree is clean: deploy a commit that was reviewed, never uncommitted edits.",
+    "Every required ancestor is contained in HEAD (the commit that is live now, and the Muse-first release).",
+    "The page assets' versions in herma/page_shell.json match the files in herma/static/assets.",
+    "No served page, public JSON or text file names the retired model family, the banned word or an agent app; pages use Tasks and Task Objects in prose and carry no receipt or hash wording, even when worker-written text holds them.",
+    "make light-check passes (MUST-FOLLOW rule 13): both colour schemes, no dark panel, no dark media query, color-scheme only light.",
+    "This local gate cannot stop another checkout or credential holder from bypassing the release process; the release operator re-reads Cloudflare and requires the live version unchanged immediately before deploy."
+  ]
+}

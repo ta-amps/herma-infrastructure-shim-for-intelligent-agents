@@ -128,7 +128,7 @@ class ConversationState:
         tokens: int,
         token_limit: int | None = None,
         turn_limit: int = 60,
-        provider: str = "ollama",
+        provider: str = "meta",
         reserve_microusd: int = 0,
         budget_microusd: int = 0,
         exception_record: dict[str, Any] | None = None,
@@ -506,7 +506,7 @@ class ConversationState:
             history = json.loads(row["history"])
             history.extend(
                 [
-                    {"role": "user", "content": message[:2000]},
+                    {"role": "user", "content": message},
                     {
                         "role": "assistant",
                         "content": json.dumps(response["proposal"], ensure_ascii=True)[:6000],

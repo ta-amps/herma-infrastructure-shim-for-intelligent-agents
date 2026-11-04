@@ -1,11 +1,11 @@
 {
   "prov_id": "PROV-DIRECT-NOUN-VERB-SCHEMA",
-  "title": "Direct Tasks & Task Objects (Canonical Noun/Verb Schema) Lookup",
-  "summary": "Responds directly to natural-language Task and Task-Object or canonical noun/verb schema lookups from Herma's context database without calling an upstream LLM.",
+  "title": "Direct Tasks & Task Objects Schema Lookup",
+  "summary": "Responds directly to natural-language Task and Task Object schema lookups from Teleion Fabric's context database without calling an upstream LLM.",
   "priority": 350,
   "enabled": true,
   "action": "respond_directly",
-  "direct_response": "Canonical Herma + Tessera Noun/Verb Contract -- Tasks (`verbs` on the wire) and Task Objects (`nouns` on the wire: every reusable tool, feed, dataset, LoRA adapter, shim, or receipt a task uses or creates). Shared Task Objects are compare-and-set NOUNs guarded by expected_version, and independently schedulable Tasks are leased VERB tiles (enqueue -> claim -> heartbeat -> submit/park) guarded by a monotonic fence token.",
+  "direct_response": "Teleion Fabric Contract -- Tasks and Task Objects. Task Objects are every reusable tool, feed, dataset, LoRA adapter, shim, or verification record a Task uses or creates; shared Task Objects are compare-and-set records guarded by expected_version. Tasks are independently schedulable units of work, leased (enqueue -> claim -> heartbeat -> submit/park) and guarded by a monotonic fencing token on https://fabric.teleionlabs.com and https://shim.teleionlabs.com (zero auth required through December 31, 2026).",
   "context_refs": [
     "noun:tessera.lease_fence",
     "verb:tessera.claim"
@@ -13,13 +13,13 @@
   "inject_position": "system_prefix",
   "dedupe_mode": "every_turn",
   "max_chars": 3000,
-  "inject_text": "Return the canonical Tasks (verbs) and Task Objects (nouns) schema contract directly without invoking an upstream LLM.",
+  "inject_text": "Return the canonical Tasks and Task Objects schema contract directly without invoking an upstream LLM.",
   "uris": [
     {
-      "uri": "https://tessera.ta-amps.workers.dev/llms.txt",
-      "label": "Tessera Noun & Verb Protocol Summary",
+      "uri": "https://fabric.teleionlabs.com/llms.txt",
+      "label": "Teleion Fabric Task & Task Object Protocol Summary",
       "kind": "schema",
-      "inline_excerpt": "Atomic compare-and-set Task Objects (nouns) and fenced queue Tasks (verbs)."
+      "inline_excerpt": "Atomic compare-and-set Task Objects and fenced queue Tasks."
     }
   ],
   "metadata_tags": {

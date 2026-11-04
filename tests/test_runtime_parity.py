@@ -74,17 +74,17 @@ IDENTITY = [
     ("openrouter", "openai/gpt-4o:nitro"),
     ("anthropic", "claude-sonnet-4-5-20250929"),
     ("openrouter", "anthropic/claude-sonnet-4.5"),
-    ("openrouter", "meta-llama/llama-4-maverick:free"),
+    ("openrouter", "meta/muse-spark-1.3:free"),
     ("meta", "muse-spark-1.3"),
-    ("ollama", "gpt-oss:120b"),
+    ("meta", "muse-wonder-1.0"),
     ("openrouter", "noslash"),
     ("openai", "  Spaced_Name.v2-latest "),
 ]
 CONTRIBUTOR = [
     "contributor",
     "muse-spark-1.3-contributor",
-    "synthetic/contributor",
-    "synthetic:contributor",
+    "example/contributor",
+    "example:contributor",
     "MUSE-Contributor",
     "contrib-utor",
     "muse-spark-1.3",
@@ -104,46 +104,47 @@ SCALED = [
 BASE = {"HERMA_CONVERSATION_MAX_OUTPUT": "16384"}
 OPENAI = {
     **BASE,
-    "HERMA_CONVERSATION_OPENAI_MODEL": "synthetic-gpt",
+    "HERMA_CONVERSATION_OPENAI_MODEL": "example-gpt",
     "HERMA_CONVERSATION_OPENAI_INPUT_USD_PER_MILLION": "0.1",
     "HERMA_CONVERSATION_OPENAI_OUTPUT_USD_PER_MILLION": "0.3",
     "HERMA_OPENAI_BUDGET_USD": "2.01",
 }
 ANTHROPIC = {
     **BASE,
-    "HERMA_CONVERSATION_ANTHROPIC_MODEL": "synthetic-claude",
+    "HERMA_CONVERSATION_ANTHROPIC_MODEL": "example-claude",
     "HERMA_CONVERSATION_ANTHROPIC_INPUT_USD_PER_MILLION": "1",
     "HERMA_CONVERSATION_ANTHROPIC_OUTPUT_USD_PER_MILLION": "3",
     "HERMA_ANTHROPIC_BUDGET_USD": "1",
 }
 ROUTER = {
     **BASE,
-    "HERMA_CONVERSATION_OPENROUTER_MODEL": "synthetic/model",
-    "HERMA_CONVERSATION_OPENROUTER_PROVIDER": "synthetic-host",
+    "HERMA_CONVERSATION_OPENROUTER_MODEL": "example/model",
+    "HERMA_CONVERSATION_OPENROUTER_PROVIDER": "example-host",
     "HERMA_CONVERSATION_OPENROUTER_INPUT_USD_PER_MILLION": "1",
     "HERMA_CONVERSATION_OPENROUTER_OUTPUT_USD_PER_MILLION": "3",
     "HERMA_OPENROUTER_BUDGET_USD": "1",
 }
 META = {**BASE, "HERMA_META_BUDGET_USD": "2.01"}
+META_EMPTY_OUTPUT = {
+    **META,
+    "HERMA_CONVERSATION_META_MAX_OUTPUT": "",
+    "HERMA_CONVERSATION_MAX_OUTPUT": "7",
+}
+META_CONTRIBUTOR = {"HERMA_CONVERSATION_META_MODEL": "muse-spark-1.3-contributor"}
 CONFIGS: list[tuple[str, dict[str, str]]] = [
-    ("ollama", {}),
-    ("ollama", BASE),
-    ("ollama", {**BASE, "HERMA_CONVERSATION_OLLAMA_MODEL": " "}),
-    ("ollama", {"HERMA_CONVERSATION_OLLAMA_MAX_OUTPUT": "", "HERMA_CONVERSATION_MAX_OUTPUT": "7"}),
-    ("ollama", {"HERMA_CONVERSATION_OLLAMA_MAX_OUTPUT": "x", "HERMA_CONVERSATION_MAX_OUTPUT": "7"}),
-    ("ollama", {"HERMA_CONVERSATION_MAX_OUTPUT": "1e3"}),
-    ("ollama", {"HERMA_CONVERSATION_MAX_OUTPUT": "0"}),
-    ("ollama", {"HERMA_CONVERSATION_MAX_OUTPUT": "9007199254740992"}),
-    ("ollama", {**BASE, "HERMA_CONVERSATION_OLLAMA_GENERATION": ""}),
-    ("ollama", {**BASE, "HERMA_CONVERSATION_OLLAMA_GENERATION": '{"a":1,"a":2}'}),
-    ("ollama", {**BASE, "HERMA_CONVERSATION_OLLAMA_GENERATION": "[]"}),
-    (
-        "ollama",
-        {**BASE, "HERMA_CONVERSATION_OLLAMA_GENERATION": '{"n":2,"options":{"num_predict":1}}'},
-    ),
-    ("ollama", {**BASE, "HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR": " "}),
-    ("ollama", {**BASE, "HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR": "99999999999999999999"}),
-    ("ollama", {**BASE, "HERMA_CONVERSATION_REASONING": "high"}),
+    ("meta", {}),
+    ("meta", {**META, "HERMA_CONVERSATION_META_MODEL": " "}),
+    ("meta", META_EMPTY_OUTPUT),
+    ("meta", {**META_EMPTY_OUTPUT, "HERMA_CONVERSATION_META_MAX_OUTPUT": "x"}),
+    ("meta", {**META, "HERMA_CONVERSATION_MAX_OUTPUT": "1e3"}),
+    ("meta", {**META, "HERMA_CONVERSATION_MAX_OUTPUT": "0"}),
+    ("meta", {**META, "HERMA_CONVERSATION_MAX_OUTPUT": "9007199254740992"}),
+    ("meta", {**META, "HERMA_CONVERSATION_META_GENERATION": ""}),
+    ("meta", {**META, "HERMA_CONVERSATION_META_GENERATION": '{"a":1,"a":2}'}),
+    ("meta", {**META, "HERMA_CONVERSATION_META_GENERATION": "[]"}),
+    ("meta", {**META, "HERMA_CONVERSATION_META_GENERATION": '{"n":2}'}),
+    ("meta", {**META, "HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR": " "}),
+    ("meta", {**META, "HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR": "99999999999999999999"}),
     ("meta", BASE),
     ("meta", META),
     ("meta", {**BASE, "HERMA_META_BUDGET_USD": ""}),
@@ -151,7 +152,7 @@ CONFIGS: list[tuple[str, dict[str, str]]] = [
     ("meta", {**META, "HERMA_OPENAI_BUDGET_USD": "not a number"}),
     ("meta", {**META, "HERMA_CONVERSATION_REASONING": "high"}),
     ("meta", {**META, "HERMA_CONVERSATION_META_GENERATION": '{"n":1.0}'}),
-    ("meta", {"HERMA_CONVERSATION_META_MODEL": "muse-spark-1.3-contributor"}),
+    ("meta", META_CONTRIBUTOR),
     ("meta", {**META, "HERMA_CONVERSATION_META_MODEL": "unpriced-model"}),
     ("openai", OPENAI),
     ("openai", {**OPENAI, "HERMA_CONVERSATION_OPENAI_INPUT_USD_PER_MILLION": ""}),
@@ -171,9 +172,9 @@ CONFIGS: list[tuple[str, dict[str, str]]] = [
     ),
     ("openrouter", ROUTER),
     ("openrouter", {**ROUTER, "HERMA_CONVERSATION_OPENROUTER_PROVIDER": ""}),
-    ("openrouter", {**ROUTER, "HERMA_CONVERSATION_OPENROUTER_MODEL": "synthetic/model:online"}),
+    ("openrouter", {**ROUTER, "HERMA_CONVERSATION_OPENROUTER_MODEL": "example/model:online"}),
 ]
-CHOICES = [{"provider": "ollama", "model": "muse-spark-open"}]
+CHOICES = [{"provider": "meta", "model": "muse-spark-1.3"}]
 GRANTS: list[dict[str, str]] = [
     {},
     {"HERMA_CONVERSATION_PROVIDER_GRANTS": " "},
@@ -349,7 +350,7 @@ def stored_case(source_store: str, tags: dict[str, str]) -> StoredProvision:
         prov_id="PROV-LENS-CASE",
         title="Lens case",
         summary="One stored row for the Layer-1 lens.",
-        inject_text="Synthetic text for a lens check.",
+        inject_text="Example text for a lens check.",
         metadata_tags=tags,
         triggers=TriggerSpec(keyword=KeywordTrigger(any_keywords=["lens"])),
     )
@@ -374,6 +375,10 @@ def test_stored_provisions_pass_the_lens_the_same_way(worker: dict[str, Any]) ->
 def test_identity_contributor_and_exact_amounts_match_the_worker(worker: dict[str, Any]) -> None:
     assert worker["identity"] == [upstream_identity(*item) for item in IDENTITY]
     assert worker["identity"][0] == worker["identity"][1] == "openai/gpt-x"
+    # An OpenRouter route to a Meta model folds into Meta's own identity in both runtimes.
+    routed = worker["identity"][IDENTITY.index(("openrouter", "meta/muse-spark-1.3:free"))]
+    direct = worker["identity"][IDENTITY.index(("meta", "muse-spark-1.3"))]
+    assert routed == direct == "meta/muse-spark-1-3"
     assert worker["contributor"] == [is_contributor_model(model) for model in CONTRIBUTOR]
     expected = []
     for value, scale, ceil in SCALED:
@@ -396,11 +401,17 @@ def test_configuration_outcomes_match_for_empty_and_strict_settings(
             python.append(python_config(provider, env))
     for case, mine, theirs in zip(CONFIGS, python, worker["configs"], strict=True):
         assert mine == theirs, case
-    by_case = dict(zip(range(len(CONFIGS)), python, strict=True))
-    assert by_case[1]["model"] == "muse-spark-open" and by_case[3]["max_output"] == 7
-    assert by_case[15] == {"error": "invalid_provider_configuration"}  # no implicit Meta budget
-    assert by_case[16]["budget_microusd"] == 2010000
-    assert by_case[22] == {"error": "contributor_tier_refused"}
+
+    def outcome(provider: str, env: dict[str, str]) -> Any:
+        return python[CONFIGS.index((provider, env))]
+
+    assert outcome("meta", META)["model"] == "muse-spark-1.3"
+    assert outcome("meta", META_EMPTY_OUTPUT)["max_output"] == 7
+    assert outcome("meta", BASE) == {
+        "error": "invalid_provider_configuration"
+    }  # no implicit budget
+    assert outcome("meta", META)["budget_microusd"] == 2010000
+    assert outcome("meta", META_CONTRIBUTOR) == {"error": "contributor_tier_refused"}
 
 
 def test_grant_and_policy_parsing_match(
@@ -440,13 +451,13 @@ def test_request_bytes_and_strict_json_match(worker: dict[str, Any]) -> None:
             assert mine == theirs, text
 
 
-READY = {"value": {"message": "SYNTHETIC", "synthetic": True}}
+READY = {"value": {"message": "EXAMPLE", "example": True}}
 
 
 def test_exact_decimal_budget_admits_a_reservation_at_the_limit(tmp_path: Path) -> None:
     assert int(2.01 * 1000000) == 2009999  # the float conversion the ledger no longer uses
     config = ProviderConfig(
-        "openai", "synthetic-gpt", max_output=1, openai_budget_usd=2.01, openai_rates=(1, 3)
+        "openai", "example-gpt", max_output=1, openai_budget_usd=2.01, openai_rates=(1, 3)
     )
     assert config.budget_microusd == scaled_integer(2.01, 6) == 2010000
     state = ConversationState(tmp_path / "state.db")
@@ -463,7 +474,7 @@ def test_exact_decimal_budget_admits_a_reservation_at_the_limit(tmp_path: Path) 
             tokens=0,
             provider="coordination",
         )
-        attempt = {"attempt_id": request, "model": "synthetic-gpt", "upstream_identity": "x"}
+        attempt = {"attempt_id": request, "model": "example-gpt", "upstream_identity": "x"}
         record["attempts"] = [attempt]
         return state.reserve_attempt(
             scope="key:alice",
@@ -486,7 +497,7 @@ def test_exact_decimal_budget_admits_a_reservation_at_the_limit(tmp_path: Path) 
 
 def test_reservation_ceiling_is_exact_integer_picodollar_arithmetic() -> None:
     config = ProviderConfig(
-        "openai", "synthetic-gpt", max_output=3, openai_budget_usd=1, openai_rates=(0.1, 0.3)
+        "openai", "example-gpt", max_output=3, openai_budget_usd=1, openai_rates=(0.1, 0.3)
     )
     body = config.build_request([{"role": "user", "content": "日本語"}], [])
     tokens, microusd = config.reservation(body)
@@ -497,7 +508,7 @@ def test_reservation_ceiling_is_exact_integer_picodollar_arithmetic() -> None:
 
 
 def test_wire_bytes_are_the_bytes_sent(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("META_API_KEY", "synthetic-provider-key")
+    monkeypatch.setenv("META_API_KEY", "example-provider-key")
     config = ProviderConfig("meta", "muse-spark-1.3", max_output=16, meta_budget_usd=1)
     body = config.build_request([{"role": "user", "content": "multi-byte 日本語 🙂"}], [])
     sent = []
@@ -522,7 +533,7 @@ def test_wire_bytes_are_the_bytes_sent(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_duplicate_or_undecodable_replies_are_unknown_outcomes(
     monkeypatch: pytest.MonkeyPatch, raw: bytes
 ) -> None:
-    monkeypatch.setenv("META_API_KEY", "synthetic-provider-key")
+    monkeypatch.setenv("META_API_KEY", "example-provider-key")
     config = ProviderConfig("meta", "muse-spark-1.3", max_output=16, meta_budget_usd=1)
 
     def handler(_request: httpx.Request) -> httpx.Response:
@@ -546,7 +557,7 @@ def test_http_turn_with_duplicate_fields_is_refused_before_inference(
     key, info = store.issue_key(label="conversation", harness_kind="opencode", scopes=["route"])
     seed(store, "key:" + info.key_id)
     raw = json.dumps(turn().model_dump())
-    duplicate = raw[:-1] + ',"message":"SYNTHETIC replacement"}'
+    duplicate = raw[:-1] + ',"message":"EXAMPLE replacement"}'
 
     def forbidden(*_args: Any, **_kwargs: Any) -> None:
         pytest.fail("a refused body must not reach a provider")

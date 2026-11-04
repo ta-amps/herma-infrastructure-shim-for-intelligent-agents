@@ -1,27 +1,8 @@
 {
   "benchmark_id": "herma-shim-lift-and-natural-routing-20261030",
   "as_of": "2026-10-30",
-  "scope_note": "Synthetic pre-registered evaluation comparing raw zero-context calls, Herma zero-weight context shimming, and promoted PEFT LoRA / QLoRA adapters across post-cutoff Task Object (noun) and Task (verb) contracts, plus natural-language builtin starter routing parity across Python and Cloudflare Worker.",
+  "scope_note": "Fixed, pre-registered 150-task evaluation of the Muse Glimmer base model against its promoted QLoRA adapter on post-cutoff Task Object and Task tool-call contracts, plus natural-language builtin starter routing parity across Python and the Cloudflare Worker. One evaluation: the adapter is a promotion candidate and is not yet admitted.",
   "tool_call_and_schema_benchmarks": [
-    {
-      "model": "Llama-3.2-3B-Instruct",
-      "eval_set": "frozen-synthetic-150",
-      "rows": 150,
-      "base_exact_pct": 52.0,
-      "herma_shim_zero_weight_pct": 64.7,
-      "herma_shim_delta_pp": 12.7,
-      "promoted_lora_pct": 72.7,
-      "promoted_lora_delta_pp_vs_base": 20.7,
-      "weight_updates_for_shim": 0
-    },
-    {
-      "model": "Llama-3.2-1B-Instruct",
-      "eval_set": "frozen-synthetic-150",
-      "rows": 150,
-      "base_exact_pct": 12.0,
-      "promoted_lora_pct": 50.7,
-      "promoted_lora_delta_pp_vs_base": 38.7
-    },
     {
       "model": "Muse-Glimmer-30B-QLoRA",
       "eval_set": "fresh-preregistered-holdout-150",

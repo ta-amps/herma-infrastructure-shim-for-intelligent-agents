@@ -5,22 +5,35 @@
 // `/v1/stores/demo.artifacts/records/*`, `/v1/tasks/submit`) plus D1 bilateral transcripts.
 // Tessera remains the sole task, lease, storage, and receipt authority.
 
+import { clientFamily } from "./client_family.js";
+import { resolveBilateralBounds } from "./conversation.js";
+import { isOpenFreeWindow } from "./herma_engine.js";
+import { tidyText } from "./page_shell.js";
+
+const DEFAULT_BRIDGE_BOUNDS = resolveBilateralBounds({});
+const BASE64_EXPANSION_NUMERATOR = 4;
+const BASE64_EXPANSION_DENOMINATOR = 3;
+
 export const BRIDGE_GRID_CONFIG = Object.freeze({
   schema_id: "herma.bilateral_bridge.grid.v1",
   challenge_addend_a: 1337,
   challenge_addend_b: 29,
-  channel_min_len: 8,
-  channel_max_len: 48,
+  channel_min_len: 2,
+  channel_max_len: 64,
   agent_max_len: 40,
   turn_tag_max_len: 16,
-  max_slug_chars: 1800,
-  max_b64_slug_chars: 10924,
-  max_json_chars: 8192,
-  max_summary_chars: 240,
+  max_slug_chars: DEFAULT_BRIDGE_BOUNDS.feedback_field_max_bytes,
+  max_b64_slug_chars: Math.ceil(
+    (DEFAULT_BRIDGE_BOUNDS.feedback_envelope_max_bytes * BASE64_EXPANSION_NUMERATOR) /
+      BASE64_EXPANSION_DENOMINATOR
+  ),
+  max_json_chars: DEFAULT_BRIDGE_BOUNDS.feedback_envelope_max_bytes,
+  max_summary_chars: DEFAULT_BRIDGE_BOUNDS.feedback_field_max_bytes,
   max_subtasks: 12,
   max_generated_tasks: 12,
   max_status_turns: 40,
   max_inbox_batch: 25,
+  max_thread_discovery_rows: 25,
   simhash_bits: 64,
   hex_chars_64b: 16,
   hex_radix: 16,
@@ -31,6 +44,9 @@ export const BRIDGE_GRID_CONFIG = Object.freeze({
   hash_prefix_chars: 12,
   shingle_width: 3,
   cjk_bigram_width: 2,
+  http_ok_min: 200,
+  http_ok_exclusive_max: 300,
+  http_payload_too_large: 413,
   demo_queues: Object.freeze(["demo.ping", "demo.echo", "demo.situate_sample"]),
   curriculum_prompts: Object.freeze([
     "Decompose 'Build a fault-tolerant durable task queue adapter with automatic health-probe failover and idempotent step replay' into 3 atomic subtasks, and propose 1 follow-up edge-case task.",
@@ -347,10 +363,7 @@ async function ensureBridgeTables(db) {
 
 function extractClientTelemetry(request) {
   return {
-    user_agent: scrubSensitiveText(request.headers.get("user-agent") || "unknown").slice(
-      0,
-      BRIDGE_GRID_CONFIG.max_summary_chars
-    ),
+    user_agent: clientFamily(request.headers.get("user-agent")),
     accept: scrubSensitiveText(request.headers.get("accept") || "").slice(0, BRIDGE_GRID_CONFIG.max_summary_chars),
     cf_colo: String(request.cf?.colo || "edge"),
   };
@@ -369,9 +382,9 @@ async function callTessera(env, path, { method = "GET", token = null, body = nul
     headers["content-type"] = "application/json";
     encodedBody = JSON.stringify(body);
   }
-  const baseUrl = String(env?.TESSERA_URL || "https://tessera.ta-amps.workers.dev").replace(/\/+$/, "");
+  const baseUrl = String(env?.TESSERA_URL || "https://fabric.teleionlabs.com").replace(/\/+$/, "");
   if (env?.TESSERA) {
-    const res = await env.TESSERA.fetch(`https://tessera.ta-amps.workers.dev${path}`, {
+    const res = await env.TESSERA.fetch(`https://fabric.teleionlabs.com${path}`, {
       method,
       headers,
       body: encodedBody,
@@ -439,13 +452,20 @@ async function openOrClaimTesseraTask(env, sessionRow, agentName, nextSeq) {
   return { token, principal, namespace, taskId, fence, queueName, mode };
 }
 
-async function submitTesseraTurn(env, sessionRow, agentName, turnSeq, structuredReply, fp) {
+async function submitTesseraTurn(env, db, sessionRow, agentName, turnSeq, structuredReply, fp) {
   const token = sessionRow?.tessera_token || null;
   const taskId = sessionRow?.active_task_id || null;
   const fence = sessionRow?.active_fence || 1;
+  const upstreamConfigured = Boolean(env?.TESSERA || env?.BRIDGE_ALLOW_HTTP_TESSERA === "true");
+  const isLocalBridgeTask = Boolean(taskId && String(taskId).startsWith("bridge_task_") && !token);
+  const localDigest = await sha256HexLocal(
+    JSON.stringify({ agent: agentName, turn_seq: turnSeq, reply: structuredReply, fp })
+  );
+  const submitIdempotencyKey = taskId ? `bridge-sub-${taskId}-${fence}-t${turnSeq}` : null;
+
   if (token && taskId && !String(taskId).startsWith("bridge_task_")) {
     const artifactKey = `bridge-${agentName}-t${turnSeq}`;
-    await callTessera(env, `/v1/stores/demo.artifacts/records/${artifactKey}`, {
+    const artRes = await callTessera(env, `/v1/stores/demo.artifacts/records/${artifactKey}`, {
       method: "POST",
       token,
       body: {
@@ -453,7 +473,7 @@ async function submitTesseraTurn(env, sessionRow, agentName, turnSeq, structured
         value: {
           category: "noun.eval_run",
           category_id: "noun.eval_run",
-          synthetic: true,
+          example: true,
           title: `Bilateral bridge turn ${turnSeq} from ${agentName}`,
           agent: agentName,
           turn_seq: turnSeq,
@@ -462,17 +482,34 @@ async function submitTesseraTurn(env, sessionRow, agentName, turnSeq, structured
         },
       },
     });
+    const artifactAlreadyRecorded = artRes.status === 409 && artRes.data?.error === "version_conflict";
+    const artifactOk = Boolean(artRes.ok || artifactAlreadyRecorded);
+    if (!artifactOk) {
+      return {
+        persisted: false,
+        upstreamBacked: true,
+        receiptHash: null,
+        localFallbackDigest: localDigest,
+        mode: "bridge_fallback_digest",
+        artifactOk: false,
+        artifactStatus: Number(artRes.status || 0),
+        submitOk: false,
+        submitStatus: 0,
+        submitIdempotencyKey,
+      };
+    }
+
     const subRes = await callTessera(env, "/v1/tasks/submit", {
       method: "POST",
       token,
-      idempotencyKey: `bridge-sub-${taskId}-${fence}-t${turnSeq}`,
+      idempotencyKey: submitIdempotencyKey,
       body: {
         task_id: taskId,
         fencing_token: fence,
         ok: true,
         error: null,
         output: {
-          synthetic: true,
+          example: true,
           agent: agentName,
           turn_seq: turnSeq,
           simhash64_hex: fp.simhash64_hex,
@@ -482,19 +519,61 @@ async function submitTesseraTurn(env, sessionRow, agentName, turnSeq, structured
         },
       },
     });
-    if (subRes.ok && subRes.data?.receipt_hash) {
+    const submitOk = Boolean(subRes.ok && subRes.data?.receipt_hash);
+    if (submitOk) {
       return {
+        persisted: true,
+        upstreamBacked: true,
         receiptHash: subRes.data.receipt_hash,
+        localFallbackDigest: null,
         mode: subRes.mode,
+        artifactOk: true,
+        artifactStatus: Number(artRes.status || 200),
+        submitOk: true,
+        submitStatus: Number(subRes.status || 200),
+        submitIdempotencyKey,
       };
     }
+    return {
+      persisted: false,
+      upstreamBacked: true,
+      receiptHash: null,
+      localFallbackDigest: localDigest,
+      mode: "bridge_fallback_digest",
+      artifactOk: true,
+      artifactStatus: Number(artRes.status || 200),
+      submitOk: false,
+      submitStatus: Number(subRes.status || 0),
+      submitIdempotencyKey,
+    };
   }
-  const localDigest = await sha256HexLocal(
-    JSON.stringify({ agent: agentName, turn_seq: turnSeq, reply: structuredReply, fp })
-  );
+
+  if (isLocalBridgeTask) {
+    return {
+      persisted: Boolean(db || !upstreamConfigured),
+      upstreamBacked: false,
+      receiptHash: null,
+      localFallbackDigest: localDigest,
+      mode: db ? "local_d1_bridge_task" : "local_simulated",
+      artifactOk: null,
+      artifactStatus: null,
+      submitOk: null,
+      submitStatus: null,
+      submitIdempotencyKey,
+    };
+  }
+
   return {
-    receiptHash: localDigest,
-    mode: env?.TESSERA ? "bridge_fallback_digest" : "local_simulated",
+    persisted: !upstreamConfigured,
+    upstreamBacked: upstreamConfigured,
+    receiptHash: null,
+    localFallbackDigest: localDigest,
+    mode: upstreamConfigured ? "bridge_fallback_digest" : "local_simulated",
+    artifactOk: upstreamConfigured ? false : null,
+    artifactStatus: upstreamConfigured ? 0 : null,
+    submitOk: upstreamConfigured ? false : null,
+    submitStatus: upstreamConfigured ? 0 : null,
+    submitIdempotencyKey,
   };
 }
 
@@ -560,16 +639,78 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
   // segments[0] === "bridge"
   await ensureBridgeTables(db);
 
+  const openFree = isOpenFreeWindow(env);
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
+
   if (segments.length === 1) {
+    if ((request.headers.get("accept") || "").includes("application/json")) {
+      return bridgeJsonResponse(
+        {
+          ok: true,
+          schema: BRIDGE_GRID_CONFIG.schema_id,
+          authentication_required: !openFree,
+          handshake_challenge_required: !openFree,
+          free_until: "2026-12-31T23:59:59-05:00",
+          endpoints: {
+            threads: `${base}/bridge/threads`,
+            channel_landing: `${base}/bridge/<channel_id>`,
+            channel_status: `${base}/bridge/<channel_id>/status`,
+            hello: openFree
+              ? `${base}/bridge/<channel_id>/hello/<agent_name>`
+              : `${base}/bridge/<channel_id>/hello/<agent_name>/${expectedChallenge()}`,
+            reply: `${base}/bridge/<channel_id>/reply`,
+            inbox: `${base}/bridge/<channel_id>/inbox`,
+            nodes: `${base}/bridge/<channel_id>/nodes`,
+          },
+        },
+        withSecurity
+      );
+    }
     return bridgeTextResponse(
       [
-        "# Herma Bilateral Agent Bridge (`Track 2: Push the Frontier`)",
+        "# Teleion Fabric Bilateral Agent Bridge",
         "",
         "Use a channel URL `/bridge/<channel_id>` to establish two-way communication between",
-        "browser/chat agents (Muse web, Grokbot, Dot) or coding harnesses and Tessera durable task queues.",
-        `Challenge rule: compute ${BRIDGE_GRID_CONFIG.challenge_addend_a} + ${BRIDGE_GRID_CONFIG.challenge_addend_b} = ${expectedChallenge()} and open:`,
-        `${publicUrl}/bridge/<channel_id>/hello/<your-agent-name>/${expectedChallenge()}`,
+        "browser/chat agents or coding harnesses and Teleion Fabric durable task queues.",
+        openFree
+          ? `Zero-auth open access through Dec 31, 2026: open ${base}/bridge/<channel_id>/hello/<your-agent-name>`
+          : `Challenge rule: compute ${BRIDGE_GRID_CONFIG.challenge_addend_a} + ${BRIDGE_GRID_CONFIG.challenge_addend_b} = ${expectedChallenge()} and open: ${base}/bridge/<channel_id>/hello/<your-agent-name>/${expectedChallenge()}`,
       ].join("\n"),
+      withSecurity
+    );
+  }
+
+  if (segments.length === 2 && segments[1] === "threads") {
+    if (method !== "GET" && method !== "HEAD") {
+      return bridgeJsonResponse({ error: "method_not_allowed" }, withSecurity, 405);
+    }
+    const threadRows = db
+      ? (
+          await db
+            .prepare(
+              `SELECT channel_id, COUNT(*) AS connected_agents, MAX(turn_seq) AS max_turn_seq, MAX(updated_at) AS updated_at
+               FROM herma_bridge_sessions
+               GROUP BY channel_id
+               ORDER BY updated_at DESC
+               LIMIT ?`
+            )
+            .bind(BRIDGE_GRID_CONFIG.max_thread_discovery_rows)
+            .all()
+        ).results || []
+      : [];
+    return bridgeJsonResponse(
+      {
+        ok: true,
+        schema: BRIDGE_GRID_CONFIG.schema_id,
+        authentication_required: !openFree,
+        threads: threadRows.map((row) => ({
+          channel_id: row.channel_id,
+          connected_agents: Number(row.connected_agents || 0),
+          max_turn_seq: Number(row.max_turn_seq || 0),
+          updated_at: row.updated_at,
+          status_url: `${base}/bridge/${row.channel_id}/status`,
+        })),
+      },
       withSecurity
     );
   }
@@ -577,7 +718,10 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
   const channelId = segments[1];
   if (!validChannelId(channelId)) {
     return bridgeJsonResponse(
-      { error: "invalid_channel_id", detail: "Channel ID must be 8..48 alphanumeric/hyphen/underscore chars." },
+      {
+        error: "invalid_channel_id",
+        detail: `Channel ID must be ${BRIDGE_GRID_CONFIG.channel_min_len}..${BRIDGE_GRID_CONFIG.channel_max_len} alphanumeric/hyphen/underscore chars.`,
+      },
       withSecurity,
       400
     );
@@ -585,10 +729,91 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
 
   const action = segments[2] || "landing";
 
-  // 1. Read-only channel status & live bilateral transcript (`/bridge/<channel_id>/status`)
+  // 1. Channel status & live bilateral transcript (`/bridge/<channel_id>/status`)
   if (action === "status") {
-    if (method !== "GET" && method !== "HEAD") {
+    if (method !== "GET" && method !== "HEAD" && method !== "POST") {
       return bridgeJsonResponse({ error: "method_not_allowed" }, withSecurity, 405);
+    }
+    if (method === "POST") {
+      const bounds = resolveBilateralBounds(env);
+      const enc = new TextEncoder();
+      const rawText = await request.text();
+      const rawBytes = enc.encode(rawText).byteLength;
+      if (rawBytes > bounds.feedback_envelope_max_bytes) {
+        return bridgeJsonResponse(
+          {
+            ok: false,
+            error: "feedback_too_large",
+            code: "feedback_too_large",
+            max_field_bytes: bounds.feedback_field_max_bytes,
+            max_envelope_bytes: bounds.feedback_envelope_max_bytes,
+            actual_bytes: rawBytes,
+          },
+          withSecurity,
+          BRIDGE_GRID_CONFIG.http_payload_too_large
+        );
+      }
+      let parsed = {};
+      try {
+        parsed = JSON.parse(rawText);
+      } catch {
+        parsed = { message: rawText };
+      }
+      const statusSender = normalizeAgentName(parsed.agent_id || parsed.agent || parsed.sender || "external-agent");
+      const statusLabel = scrubSensitiveText(String(parsed.status || "ready")).slice(0, 64);
+      const cleanMsg = scrubSensitiveText(String(parsed.message || parsed.summary || statusLabel || "ready")).trim();
+      const msgBytes = enc.encode(cleanMsg).byteLength;
+      if (msgBytes > bounds.feedback_field_max_bytes) {
+        return bridgeJsonResponse(
+          {
+            ok: false,
+            error: "feedback_too_large",
+            code: "feedback_too_large",
+            max_field_bytes: bounds.feedback_field_max_bytes,
+            max_envelope_bytes: bounds.feedback_envelope_max_bytes,
+            actual_bytes: msgBytes,
+          },
+          withSecurity,
+          BRIDGE_GRID_CONFIG.http_payload_too_large
+        );
+      }
+      const fp = await computeTaskFingerprint(cleanMsg || statusLabel);
+      const now = new Date().toISOString();
+      if (db && cleanMsg) {
+        await db
+          .prepare(
+            `INSERT INTO herma_bridge_inbox (channel_id, sender, target_agent, prompt_text, simhash64_hex, claimed_by, created_at)
+             VALUES (?, ?, '*', ?, ?, NULL, ?)`
+          )
+          .bind(channelId, statusSender, cleanMsg, fp.simhash64_hex, now)
+          .run();
+        await db
+          .prepare(
+            `INSERT INTO herma_bridge_turns
+               (channel_id, agent_name, turn_seq, direction, http_method, summary, payload_json, simhash64_hex, tessera_task_id, tessera_receipt_hash, tessera_mode, created_at)
+             VALUES (?, ?, 1, 'status_ping', 'POST', ?, ?, ?, NULL, NULL, 'status_ping', ?)`
+          )
+          .bind(
+            channelId,
+            statusSender,
+            `[${statusLabel}] ${cleanMsg}`.slice(0, 240),
+            JSON.stringify({ status: statusLabel, message: cleanMsg }),
+            fp.simhash64_hex,
+            now
+          )
+          .run();
+      }
+      return bridgeJsonResponse(
+        {
+          ok: true,
+          channel: channelId,
+          channel_id: channelId,
+          agent_id: statusSender,
+          status: statusLabel,
+          message: cleanMsg,
+        },
+        withSecurity
+      );
     }
     const sessions = db
       ? (
@@ -716,11 +941,30 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
 
   // 3. Operator / Peer Batch Task Seed Inbox (`POST /bridge/<channel_id>/inbox` or `GET /bridge/<channel_id>/seed/<sender>/<slug>`)
   if (action === "inbox" || action === "seed") {
+    const bounds = resolveBilateralBounds(env);
+    const enc = new TextEncoder();
     let items = [];
     let sender = "operator";
     let targetAgent = "*";
+    let acceptedBytes = 0;
     if (method === "POST") {
-      const rawText = (await request.text()).slice(0, BRIDGE_GRID_CONFIG.max_json_chars);
+      const rawText = await request.text();
+      const rawBytes = enc.encode(rawText).byteLength;
+      if (rawBytes > bounds.feedback_envelope_max_bytes) {
+        return bridgeJsonResponse(
+          {
+            ok: false,
+            error: "feedback_too_large",
+            code: "feedback_too_large",
+            max_field_bytes: bounds.feedback_field_max_bytes,
+            max_envelope_bytes: bounds.feedback_envelope_max_bytes,
+            actual_bytes: rawBytes,
+          },
+          withSecurity,
+          BRIDGE_GRID_CONFIG.http_payload_too_large
+        );
+      }
+      acceptedBytes = rawBytes;
       let body = {};
       try {
         body = JSON.parse(rawText);
@@ -741,6 +985,29 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
         items = [body.prompt];
       }
     } else if (method === "GET") {
+      if (action === "inbox" && !segments[3] && !url.searchParams.get("prompt")) {
+        const inboxRows = db
+          ? (
+              await db
+                .prepare(
+                  `SELECT id, sender, target_agent, prompt_text, simhash64_hex, claimed_by, created_at
+                   FROM herma_bridge_inbox WHERE channel_id = ? ORDER BY id DESC LIMIT ?`
+                )
+                .bind(channelId, BRIDGE_GRID_CONFIG.max_inbox_batch)
+                .all()
+            ).results || []
+          : [];
+        return bridgeJsonResponse(
+          {
+            ok: true,
+            channel: channelId,
+            channel_id: channelId,
+            messages: inboxRows,
+            items: inboxRows,
+          },
+          withSecurity
+        );
+      }
       sender = normalizeAgentName(segments[3] || "operator");
       const rawPrompt = scrubSensitiveText(
         decodeURIComponent(segments.slice(4).join("/") || url.searchParams.get("prompt") || "")
@@ -748,6 +1015,7 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
         .replace(/[-_]+/g, " ")
         .trim();
       if (rawPrompt) items = [rawPrompt];
+      acceptedBytes = enc.encode(rawPrompt).byteLength;
     } else {
       return bridgeJsonResponse({ error: "method_not_allowed" }, withSecurity, 405);
     }
@@ -755,8 +1023,23 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
     const inserted = [];
     const now = new Date().toISOString();
     for (const rawPrompt of items) {
-      const cleanPrompt = scrubSensitiveText(rawPrompt).slice(0, BRIDGE_GRID_CONFIG.max_slug_chars);
+      const cleanPrompt = scrubSensitiveText(rawPrompt);
       if (!cleanPrompt) continue;
+      const promptBytes = enc.encode(cleanPrompt).byteLength;
+      if (promptBytes > bounds.feedback_field_max_bytes) {
+        return bridgeJsonResponse(
+          {
+            ok: false,
+            error: "feedback_too_large",
+            code: "feedback_too_large",
+            max_field_bytes: bounds.feedback_field_max_bytes,
+            max_envelope_bytes: bounds.feedback_envelope_max_bytes,
+            actual_bytes: promptBytes,
+          },
+          withSecurity,
+          BRIDGE_GRID_CONFIG.http_payload_too_large
+        );
+      }
       const fp = await computeTaskFingerprint(cleanPrompt);
       if (db) {
         await db
@@ -770,24 +1053,33 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
       inserted.push({ prompt: cleanPrompt, simhash64_hex: fp.simhash64_hex });
     }
     return bridgeJsonResponse(
-      { ok: true, channel_id: channelId, sender, target_agent: targetAgent, queued_count: inserted.length, items: inserted },
+      {
+        ok: true,
+        channel_id: channelId,
+        sender,
+        target_agent: targetAgent,
+        queued_count: inserted.length,
+        truncated: false,
+        accepted_bytes: acceptedBytes,
+        items: inserted,
+      },
       withSecurity
     );
   }
 
-  // 4. Turn 1 Handshake (`GET /bridge/<channel_id>/hello/<agent_name>/<challenge>`)
+  // 4. Turn 1 Handshake (`GET /bridge/<channel_id>/hello/<agent_name>[/<challenge>]`)
   if (action === "hello") {
     if (method !== "GET" && method !== "POST") {
       return bridgeJsonResponse({ error: "method_not_allowed" }, withSecurity, 405);
     }
     const agentName = normalizeAgentName(segments[3] || url.searchParams.get("agent"));
     const challengeProvided = String(segments[4] || url.searchParams.get("code") || "").trim();
-    if (challengeProvided !== expectedChallenge()) {
+    if (challengeProvided !== expectedChallenge() && (!openFree || challengeProvided !== "")) {
       return bridgeTextResponse(
         [
           "HANDSHAKE_CHALLENGE_MISMATCH",
           `Expected challenge code ${BRIDGE_GRID_CONFIG.challenge_addend_a} + ${BRIDGE_GRID_CONFIG.challenge_addend_b} = ${expectedChallenge()}.`,
-          `Open: ${publicUrl}/bridge/${channelId}/hello/${agentName}/${expectedChallenge()}`,
+          `Open: ${base}/bridge/${channelId}/hello/${agentName}/${expectedChallenge()}`,
         ].join("\n"),
         withSecurity,
         400
@@ -864,52 +1156,114 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
     const turnTag = `t${nextSeq}`;
     const replyUrlTemplate = `${publicUrl}/bridge/${channelId}/reply/${agentName}/${turnTag}/<your-hyphenated-reply>`;
     const replyUrlExample = `${publicUrl}/bridge/${channelId}/reply/${agentName}/${turnTag}/ack-online--subtask-validate-outbox-schema--subtask-probe-broker-health--subtask-replay-idempotent-lease--newtask-chaos-drill-failover`;
+    const connectedText = [
+      "BILATERAL_STATUS: CONNECTED",
+      `SERVER_UTC: ${now}`,
+      `CHANNEL_ID: ${channelId}`,
+      `AGENT_NAME: ${agentName}`,
+      `TURN_SEQ: ${nextSeq}`,
+      `TESSERA_MODE: ${claimed.mode}`,
+      `TESSERA_PRINCIPAL: ${claimed.principal || "local-sandbox"}`,
+      `CLAIMED_TASK_ID: ${claimed.taskId}`,
+      `FENCING_TOKEN: ${claimed.fence}`,
+      `TASK_SIMHASH64: ${fp.simhash64_hex}`,
+      `TASK_SOURCE: ${taskSpec.source}`,
+      "",
+      "## ASSIGNED DURABLE TASK (SOLVE & SEND BACK TO SERVER)",
+      taskSpec.prompt,
+      "",
+      "## HOW TO SEND YOUR REPLY BACK TO THE SERVER (COMPLETE BILATERAL ROUND-TRIP)",
+      "Option A (Universal GET URL -- works in Muse web, Grokbot, Dot, and any browser-enabled chat):",
+      "Open ONE URL formatted with hyphens `-` for spaces and `--` between sections (only letters, numbers, and hyphens):",
+      `Template: ${replyUrlTemplate}`,
+      `Example structure: ${replyUrlExample}`,
+      "IMPORTANT: Replace the example words with YOUR OWN actual subtasks and new task, then FETCH/OPEN that URL now and report the `VERIFICATION_CODE` and `TESSERA_RECEIPT_SHA256` it returns!",
+      "",
+      "Option B (If you have Python / curl / HTTP POST tools):",
+      `POST JSON to ${publicUrl}/bridge/${channelId}/reply with:`,
+      `{"agent":"${agentName}","turn_tag":"${turnTag}","summary":"...","subtasks":["..."],"generated_tasks":["..."],"reusable_blocks":["..."]}`,
+    ].join("\n");
 
-    return bridgeTextResponse(
-      [
-        "BILATERAL_STATUS: CONNECTED",
-        `SERVER_UTC: ${now}`,
-        `CHANNEL_ID: ${channelId}`,
-        `AGENT_NAME: ${agentName}`,
-        `TURN_SEQ: ${nextSeq}`,
-        `TESSERA_MODE: ${claimed.mode}`,
-        `TESSERA_PRINCIPAL: ${claimed.principal || "local-sandbox"}`,
-        `CLAIMED_TASK_ID: ${claimed.taskId}`,
-        `FENCING_TOKEN: ${claimed.fence}`,
-        `TASK_SIMHASH64: ${fp.simhash64_hex}`,
-        `TASK_SOURCE: ${taskSpec.source}`,
-        "",
-        "## ASSIGNED DURABLE TASK (SOLVE & SEND BACK TO SERVER)",
-        taskSpec.prompt,
-        "",
-        "## HOW TO SEND YOUR REPLY BACK TO THE SERVER (COMPLETE BILATERAL ROUND-TRIP)",
-        "Option A (Universal GET URL -- works in Muse web, Grokbot, Dot, and any browser-enabled chat):",
-        "Open ONE URL formatted with hyphens `-` for spaces and `--` between sections (only letters, numbers, and hyphens):",
-        `Template: ${replyUrlTemplate}`,
-        `Example structure: ${replyUrlExample}`,
-        "IMPORTANT: Replace the example words with YOUR OWN actual subtasks and new task, then FETCH/OPEN that URL now and report the `VERIFICATION_CODE` and `TESSERA_RECEIPT_SHA256` it returns!",
-        "",
-        "Option B (If you have Python / curl / HTTP POST tools):",
-        `POST JSON to ${publicUrl}/bridge/${channelId}/reply with:`,
-        `{"agent":"${agentName}","turn_tag":"${turnTag}","summary":"...","subtasks":["..."],"generated_tasks":["..."],"reusable_blocks":["..."]}`,
-      ].join("\n"),
-      withSecurity
-    );
+    const acceptHdr = (request.headers.get("accept") || "").toLowerCase();
+    const wantsJson =
+      url.searchParams.get("format") === "json" ||
+      acceptHdr.includes("application/json") ||
+      (challengeProvided === "" && !acceptHdr.includes("text/plain"));
+    if (wantsJson) {
+      return bridgeJsonResponse(
+        {
+          ok: true,
+          status: "BILATERAL_STATUS: CONNECTED",
+          channel: channelId,
+          channel_id: channelId,
+          agent_id: agentName,
+          agent_name: agentName,
+          turn_seq: nextSeq,
+          claimed_task_id: claimed.taskId,
+          fencing_token: claimed.fence,
+          task_source: taskSpec.source,
+          assigned_prompt: taskSpec.prompt,
+          reply_url_template: replyUrlTemplate,
+          text: connectedText,
+        },
+        withSecurity
+      );
+    }
+
+    return bridgeTextResponse(connectedText, withSecurity);
   }
 
   // 5. Turn 2..N Reply & Continuous Bilateral Loop (`GET /bridge/<channel_id>/reply/<agent>/<turn_tag>/<slug>` or `POST /bridge/<channel_id>/reply`)
   if (action === "reply") {
+    const bounds = resolveBilateralBounds(env);
+    const enc = new TextEncoder();
     let agentName = "external-agent";
     let turnTag = "t1";
     let structuredReply;
+    let acceptedBytes = 0;
 
     if (method === "POST") {
-      const rawBody = (await request.text()).slice(0, BRIDGE_GRID_CONFIG.max_json_chars);
+      const rawBody = await request.text();
+      const rawBytes = enc.encode(rawBody).byteLength;
+      if (rawBytes > bounds.feedback_envelope_max_bytes) {
+        return bridgeJsonResponse(
+          {
+            ok: false,
+            error: "feedback_too_large",
+            code: "feedback_too_large",
+            max_field_bytes: bounds.feedback_field_max_bytes,
+            max_envelope_bytes: bounds.feedback_envelope_max_bytes,
+            actual_bytes: rawBytes,
+          },
+          withSecurity,
+          BRIDGE_GRID_CONFIG.http_payload_too_large
+        );
+      }
+      acceptedBytes = rawBytes;
       let parsed = {};
       try {
         parsed = JSON.parse(rawBody);
       } catch {
         parsed = { summary: rawBody };
+      }
+      for (const candidateField of [parsed?.summary, parsed?.message, parsed?.reply]) {
+        if (typeof candidateField === "string") {
+          const fBytes = enc.encode(candidateField).byteLength;
+          if (fBytes > bounds.feedback_field_max_bytes) {
+            return bridgeJsonResponse(
+              {
+                ok: false,
+                error: "feedback_too_large",
+                code: "feedback_too_large",
+                max_field_bytes: bounds.feedback_field_max_bytes,
+                max_envelope_bytes: bounds.feedback_envelope_max_bytes,
+                actual_bytes: fBytes,
+              },
+              withSecurity,
+              BRIDGE_GRID_CONFIG.http_payload_too_large
+            );
+          }
+        }
       }
       agentName = normalizeAgentName(parsed.agent || segments[3] || url.searchParams.get("agent"));
       turnTag = String(parsed.turn_tag || segments[4] || "t1").slice(0, BRIDGE_GRID_CONFIG.turn_tag_max_len);
@@ -921,6 +1275,7 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
         BRIDGE_GRID_CONFIG.turn_tag_max_len
       );
       const rawSlug = segments.slice(5).join("/") || url.searchParams.get("msg") || url.searchParams.get("reply") || "ack";
+      acceptedBytes = enc.encode(rawSlug).byteLength;
       structuredReply = parseSlugReply(rawSlug);
     } else {
       return bridgeJsonResponse({ error: "method_not_allowed" }, withSecurity, 405);
@@ -942,7 +1297,7 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
         ...structuredReply.reusable_blocks,
       ].join(" ")
     );
-    const submitResult = await submitTesseraTurn(env, existing, agentName, currentSeq, structuredReply, fp);
+    const submitResult = await submitTesseraTurn(env, db, existing, agentName, currentSeq, structuredReply, fp);
     const now = new Date().toISOString();
 
     // Enqueue any agent-generated follow-up tasks into the shared channel inbox so peers or next turns can solve them!
@@ -975,8 +1330,8 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
           channelId,
           agentName,
           ns.node_name || structuredReply.reusable_blocks[0] || `node_t${currentSeq}`,
-          structuredReply.summary.slice(0, BRIDGE_GRID_CONFIG.max_summary_chars),
-          ns.problem || structuredReply.summary.slice(0, BRIDGE_GRID_CONFIG.max_summary_chars),
+          structuredReply.summary,
+          ns.problem || structuredReply.summary,
           ns.solution || structuredReply.subtasks.join("; "),
           ns.input_type || "json_object",
           ns.output_type || "json_object",
@@ -987,78 +1342,120 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
         .run();
     }
 
-    // Prepare the next task lease so bilateral conversation can continue seamlessly on `t<currentSeq + 1>`
-    const nextSeq = currentSeq + 1;
-    const nextClaim = await openOrClaimTesseraTask(env, existing, agentName, nextSeq);
-    const nextPrompt = await popNextPromptForAgent(db, channelId, agentName, nextSeq);
+    // Only advance task lease and turn_seq when the current turn was durably recorded (or simulated locally with no upstream binding).
+    const shouldAdvanceTurn = Boolean(submitResult.persisted);
+    const nextSeq = shouldAdvanceTurn ? currentSeq + 1 : currentSeq;
+    const nextClaim = shouldAdvanceTurn
+      ? await openOrClaimTesseraTask(env, existing, agentName, nextSeq)
+      : {
+          token: existing?.tessera_token || null,
+          principal: existing?.tessera_principal || null,
+          namespace: existing?.tessera_namespace || null,
+          taskId: existing?.active_task_id || null,
+          fence: existing?.active_fence || 1,
+          queueName: existing?.active_queue || BRIDGE_GRID_CONFIG.demo_queues[0],
+          mode: submitResult.mode,
+        };
+    const nextPrompt = shouldAdvanceTurn
+      ? await popNextPromptForAgent(db, channelId, agentName, nextSeq)
+      : {
+          source: "retry_pending_upstream",
+          prompt: `Upstream durability pending for task '${existing?.active_task_id || "unclaimed"}' (submit_idempotency_key: ${submitResult.submitIdempotencyKey || "none"}). Retry this turn once upstream storage/queue recovers.`,
+        };
 
+    let d1TurnPersisted = !db;
     if (db) {
-      await db
-        .prepare(
-          `INSERT INTO herma_bridge_turns
-             (channel_id, agent_name, turn_seq, direction, http_method, summary, payload_json, simhash64_hex, tessera_task_id, tessera_receipt_hash, tessera_mode, created_at)
-           VALUES (?, ?, ?, 'inbound_reply', ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .bind(
-          channelId,
-          agentName,
-          currentSeq,
-          method,
-          structuredReply.summary.slice(0, BRIDGE_GRID_CONFIG.max_summary_chars),
-          JSON.stringify({
-            turn_tag: turnTag,
-            ...structuredReply,
-            client_telemetry: extractClientTelemetry(request),
-          }),
-          fp.simhash64_hex,
-          existing?.active_task_id || nextClaim.taskId,
-          submitResult.receiptHash,
-          submitResult.mode,
-          now
-        )
-        .run();
+      try {
+        await db
+          .prepare(
+            `INSERT INTO herma_bridge_turns
+               (channel_id, agent_name, turn_seq, direction, http_method, summary, payload_json, simhash64_hex, tessera_task_id, tessera_receipt_hash, tessera_mode, created_at)
+             VALUES (?, ?, ?, 'inbound_reply', ?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .bind(
+            channelId,
+            agentName,
+            currentSeq,
+            method,
+            structuredReply.summary,
+            JSON.stringify({
+              turn_tag: turnTag,
+              ...structuredReply,
+              persisted: Boolean(submitResult.persisted),
+              local_fallback_digest_sha256: submitResult.localFallbackDigest,
+              artifact_ok: submitResult.artifactOk,
+              artifact_status: submitResult.artifactStatus,
+              submit_ok: submitResult.submitOk,
+              submit_status: submitResult.submitStatus,
+              submit_idempotency_key: submitResult.submitIdempotencyKey,
+              client_telemetry: extractClientTelemetry(request),
+            }),
+            fp.simhash64_hex,
+            existing?.active_task_id || nextClaim.taskId,
+            submitResult.receiptHash,
+            submitResult.mode,
+            now
+          )
+          .run();
 
-      await db
-        .prepare(
-          `INSERT INTO herma_bridge_sessions
-             (channel_id, agent_name, tessera_principal, tessera_namespace, tessera_token, active_task_id, active_fence, active_queue, turn_seq, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(channel_id, agent_name) DO UPDATE SET
-             active_task_id = excluded.active_task_id,
-             active_fence = excluded.active_fence,
-             active_queue = excluded.active_queue,
-             turn_seq = excluded.turn_seq,
-             updated_at = excluded.updated_at`
-        )
-        .bind(
-          channelId,
-          agentName,
-          existing?.tessera_principal || nextClaim.principal,
-          existing?.tessera_namespace || nextClaim.namespace,
-          existing?.tessera_token || nextClaim.token,
-          nextClaim.taskId,
-          nextClaim.fence,
-          nextClaim.queueName,
-          nextSeq,
-          now
-        )
-        .run();
+        await db
+          .prepare(
+            `INSERT INTO herma_bridge_sessions
+               (channel_id, agent_name, tessera_principal, tessera_namespace, tessera_token, active_task_id, active_fence, active_queue, turn_seq, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(channel_id, agent_name) DO UPDATE SET
+               active_task_id = excluded.active_task_id,
+               active_fence = excluded.active_fence,
+               active_queue = excluded.active_queue,
+               turn_seq = excluded.turn_seq,
+               updated_at = excluded.updated_at`
+          )
+          .bind(
+            channelId,
+            agentName,
+            existing?.tessera_principal || nextClaim.principal,
+            existing?.tessera_namespace || nextClaim.namespace,
+            existing?.tessera_token || nextClaim.token,
+            nextClaim.taskId,
+            nextClaim.fence,
+            nextClaim.queueName,
+            nextSeq,
+            now
+          )
+          .run();
+        d1TurnPersisted = true;
+      } catch {
+        d1TurnPersisted = false;
+      }
     }
 
-    const verificationCode = submitResult.receiptHash.slice(0, BRIDGE_GRID_CONFIG.hash_prefix_chars);
+    const roundtripVerified = Boolean(submitResult.persisted && d1TurnPersisted);
+    const bilateralStatus = roundtripVerified ? "ROUNDTRIP_VERIFIED" : "DEGRADED_UNPERSISTED";
+    const verificationSource = submitResult.receiptHash || submitResult.localFallbackDigest || fp.simhash64_hex;
+    const verificationCode = verificationSource.slice(0, BRIDGE_GRID_CONFIG.hash_prefix_chars);
     const nextTurnTag = `t${nextSeq}`;
 
     if (method === "POST" && (request.headers.get("accept") || "").includes("application/json")) {
       return bridgeJsonResponse(
         {
-          ok: true,
-          bilateral_status: "ROUNDTRIP_VERIFIED",
+          ok: roundtripVerified,
+          persisted: roundtripVerified,
+          bilateral_status: bilateralStatus,
           channel_id: channelId,
           agent_name: agentName,
-          completed_turn_seq: currentSeq,
+          completed_turn_seq: roundtripVerified ? currentSeq : null,
+          pending_turn_seq: roundtripVerified ? null : currentSeq,
+          truncated: false,
+          accepted_bytes: acceptedBytes,
           verification_code: verificationCode,
           tessera_receipt_sha256: submitResult.receiptHash,
+          local_fallback_digest_sha256: submitResult.localFallbackDigest,
           tessera_mode: submitResult.mode,
+          artifact_ok: submitResult.artifactOk,
+          artifact_status: submitResult.artifactStatus,
+          submit_ok: submitResult.submitOk,
+          submit_status: submitResult.submitStatus,
+          submit_idempotency_key: submitResult.submitIdempotencyKey,
           reply_simhash64: fp.simhash64_hex,
           parsed_reply: structuredReply,
           next_turn: {
@@ -1066,7 +1463,7 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
             claimed_task_id: nextClaim.taskId,
             prompt_source: nextPrompt.source,
             prompt: nextPrompt.prompt,
-            reply_get_url_template: `${publicUrl}/bridge/${channelId}/reply/${agentName}/${nextTurnTag}/<your-hyphenated-reply>`,
+            reply_get_url_template: `${base}/bridge/${channelId}/reply/${agentName}/${nextTurnTag}/<your-hyphenated-reply>`,
           },
         },
         withSecurity
@@ -1075,13 +1472,17 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
 
     return bridgeTextResponse(
       [
-        "BILATERAL_STATUS: ROUNDTRIP_VERIFIED",
+        `BILATERAL_STATUS: ${bilateralStatus}`,
+        `PERSISTED: ${roundtripVerified}`,
         `VERIFICATION_CODE: ${verificationCode}`,
-        `TESSERA_RECEIPT_SHA256: ${submitResult.receiptHash}`,
+        `TESSERA_RECEIPT_SHA256: ${submitResult.receiptHash || "NONE"}`,
+        `LOCAL_FALLBACK_DIGEST_SHA256: ${submitResult.localFallbackDigest || "NONE"}`,
         `TESSERA_MODE: ${submitResult.mode}`,
+        `ARTIFACT_OK: ${submitResult.artifactOk === null ? "LOCAL_SIMULATED" : submitResult.artifactOk}`,
+        `SUBMIT_OK: ${submitResult.submitOk === null ? "LOCAL_SIMULATED" : submitResult.submitOk}`,
         `CHANNEL_ID: ${channelId}`,
         `AGENT_NAME: ${agentName}`,
-        `COMPLETED_TURN: ${currentSeq}`,
+        `COMPLETED_TURN: ${roundtripVerified ? currentSeq : "PENDING_RETRY"}`,
         `REPLY_SIMHASH64: ${fp.simhash64_hex}`,
         `PARSED_SUBTASKS_COUNT: ${structuredReply.subtasks.length}`,
         `PARSED_NEWTASKS_COUNT: ${structuredReply.generated_tasks.length}`,
@@ -1090,7 +1491,7 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
         `NEXT_TURN_TAG: ${nextTurnTag}`,
         `NEXT_TASK_SOURCE: ${nextPrompt.source}`,
         `NEXT_TASK_PROMPT: ${nextPrompt.prompt}`,
-        `NEXT_REPLY_URL: ${publicUrl}/bridge/${channelId}/reply/${agentName}/${nextTurnTag}/<your-hyphenated-reply>`,
+        `NEXT_REPLY_URL: ${base}/bridge/${channelId}/reply/${agentName}/${nextTurnTag}/<your-hyphenated-reply>`,
       ].join("\n"),
       withSecurity
     );

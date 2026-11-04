@@ -11,20 +11,25 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.base import RequestResponseEndpoint
 
 from herma import __version__
 from herma.agent_access import ACCESS_INFO, AgentAccessMiddleware
+from herma.api.page_shell import STATIC_DIR
 from herma.api.pages import (
     FAVICON_SVG,
     MCP_TOOLS_SPEC,
     PREVIEW_JS,
     ROBOTS_TXT,
     build_agent_card,
+    build_llms_full_txt,
+    build_llms_txt,
     render_connect_page,
     render_overview_page,
 )
+from herma.api.site_pages import render_get_started_page, render_home_page, render_trust_page
 from herma.conversation import ConversationEngine
 from herma.conversation_contracts import ConversationTurn
 from herma.conversation_schema import strict_json
@@ -115,7 +120,7 @@ class PreviewRequest(BaseModel):
 
     prompt: str = Field(default="", max_length=16_000)
     wire_format: Literal["chat_completions", "responses", "messages"] = "chat_completions"
-    model: str = Field(default="muse-spark-open", max_length=120)
+    model: str = Field(default="muse-spark-1.3", max_length=120)
     workspace_paths: list[str] = Field(default_factory=list, max_length=32)
     payload: dict[str, Any] | None = None
 
@@ -214,7 +219,7 @@ async def _run_readonly_preview(
     *,
     prompt: str,
     wire_format: Literal["chat_completions", "responses", "messages"] = "chat_completions",
-    model: str = "muse-spark-open",
+    model: str = "muse-spark-1.3",
     workspace_paths: list[str] | None = None,
     raw_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -326,6 +331,9 @@ def create_app() -> FastAPI:
     def favicon_svg() -> Response:
         return Response(content=FAVICON_SVG, media_type="image/svg+xml")
 
+    # The stylesheet, fonts and shared banner script. Cloudflare serves the same folder for the Worker.
+    application.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+
     @application.get("/preview.js")
     def preview_js() -> Response:
         return Response(content=PREVIEW_JS, media_type="application/javascript")
@@ -336,25 +344,62 @@ def create_app() -> FastAPI:
 
     @application.get("/llms.txt", response_class=PlainTextResponse)
     def llms_txt(req: Request) -> PlainTextResponse:
-        llms_file = REPO_ROOT / "llms.txt"
-        if llms_file.is_file():
-            return PlainTextResponse(llms_file.read_text(encoding="utf-8"))
-        return PlainTextResponse(
-            f"# Herma\n\n> Context-shimming AI middleware for configurable coding harnesses.\n\n- Agent Card: {_public_url(req)}/.well-known/agent-card.json\n"
-        )
+        return PlainTextResponse(build_llms_txt(_public_url(req)))
 
     @application.get("/llms-full.txt", response_class=PlainTextResponse)
     def llms_full_txt(req: Request) -> PlainTextResponse:
-        llms_full_file = REPO_ROOT / "llms-full.txt"
-        if llms_full_file.is_file():
-            return PlainTextResponse(llms_full_file.read_text(encoding="utf-8"))
-        return PlainTextResponse(f"# Herma: full text\n\nEndpoint: {_public_url(req)}\n")
+        store = get_store()
+        if not store.list_provisions(caller_scope=SYSTEM_BUILTIN_SCOPE, include_builtin=True):
+            seed_examples_if_present(store)
+        provs = store.list_provisions(
+            caller_scope=SYSTEM_BUILTIN_SCOPE, include_builtin=True, enabled_only=False
+        )
+        return PlainTextResponse(build_llms_full_txt(_public_url(req), provs))
 
     @application.get("/.well-known/agent-card.json")
     def agent_card_json(req: Request) -> dict[str, Any]:
         return build_agent_card(_public_url(req))
 
-    @application.get("/", response_class=HTMLResponse)
+    @application.get("/")
+    def home_page(req: Request) -> Response:
+        accept = (req.headers.get("accept") or "").lower()
+        fmt = req.query_params.get("format", "")
+        if fmt != "json" and "text/html" in accept and "application/json" not in accept:
+            return Response(
+                status_code=302,
+                headers={
+                    "Location": "https://teleionlabs.com/fabric/",
+                    "Vary": "Accept",
+                },
+            )
+        if fmt == "json" or ("application/json" in accept and "text/html" not in accept):
+            return JSONResponse(
+                content={
+                    "ok": True,
+                    "surface": "herma",
+                    "product": "Teleion Fabric",
+                    "canonical_url": "https://shim.teleionlabs.com",
+                    "fabric_url": "https://teleionlabs.com/fabric/",
+                    "discovery": {
+                        "connect_json": "https://shim.teleionlabs.com/connect.json",
+                        "llms_txt": "https://shim.teleionlabs.com/llms.txt",
+                        "llms_full_txt": "https://shim.teleionlabs.com/llms-full.txt",
+                        "mcp": "https://shim.teleionlabs.com/mcp",
+                        "chat": "https://shim.teleionlabs.com/q/chat",
+                    },
+                }
+            )
+        return HTMLResponse(render_home_page())
+
+    @application.get("/get-started", response_class=HTMLResponse)
+    def get_started_page() -> HTMLResponse:
+        return HTMLResponse(render_get_started_page())
+
+    @application.get("/trust", response_class=HTMLResponse)
+    def trust_page() -> HTMLResponse:
+        return HTMLResponse(render_trust_page())
+
+    @application.get("/shim", response_class=HTMLResponse)
     @application.get("/console", response_class=HTMLResponse)
     def overview_page(req: Request) -> HTMLResponse:
         store = get_store()
@@ -442,12 +487,23 @@ def create_app() -> FastAPI:
         if method == "tools/call":
             tool_name = str(params.get("name") or "")
             raw_args = params.get("arguments")
+            if raw_args is not None and not isinstance(raw_args, dict):
+                return _jsonrpc_error(req_id, -32602, "Invalid 'arguments': expected a JSON object")
             args: dict[str, Any] = raw_args if isinstance(raw_args, dict) else {}
             store = get_store()
             if not store.list_provisions(caller_scope=SYSTEM_BUILTIN_SCOPE, include_builtin=True):
                 seed_examples_if_present(store)
 
             if tool_name == "list_builtin_provisions":
+                for k in args:
+                    if k != "enabled_only":
+                        return _jsonrpc_error(
+                            req_id, -32602, f"Unknown argument '{k}' for list_builtin_provisions"
+                        )
+                if "enabled_only" in args and not isinstance(args["enabled_only"], bool):
+                    return _jsonrpc_error(
+                        req_id, -32602, "Invalid 'enabled_only': expected a boolean"
+                    )
                 enabled_only = bool(args.get("enabled_only", False))
                 items = [
                     sp.model_dump(mode="json")
@@ -471,21 +527,50 @@ def create_app() -> FastAPI:
                 )
 
             if tool_name == "preview_shim":
-                prompt_val = str(args.get("prompt") or "").strip()
-                if not prompt_val:
+                allowed_keys = {"prompt", "wire_format", "workspace_paths"}
+                for k in args:
+                    if k not in allowed_keys:
+                        return _jsonrpc_error(
+                            req_id, -32602, f"Unknown argument '{k}' for preview_shim"
+                        )
+                raw_prompt = args.get("prompt")
+                if not isinstance(raw_prompt, str) or not raw_prompt.strip():
                     return _jsonrpc_error(
-                        req_id, -32602, "preview_shim requires a non-empty prompt"
+                        req_id, -32602, "preview_shim requires a non-empty string prompt"
                     )
-                wf_raw = str(args.get("wire_format") or "chat_completions")
-                wf: Literal["chat_completions", "responses", "messages"] = (
-                    wf_raw  # type: ignore[assignment]
-                    if wf_raw in ("chat_completions", "responses", "messages")
-                    else "chat_completions"
-                )
-                wpaths = [str(p) for p in (args.get("workspace_paths") or []) if str(p).strip()]
+                if len(raw_prompt) > 16000:
+                    return _jsonrpc_error(
+                        req_id,
+                        -32602,
+                        "Preview prompt exceeds 16000 codepoints; use /v1/dry-run for larger payloads.",
+                    )
+                wf_raw = args.get("wire_format", "chat_completions")
+                if not isinstance(wf_raw, str) or wf_raw not in (
+                    "chat_completions",
+                    "responses",
+                    "messages",
+                ):
+                    return _jsonrpc_error(
+                        req_id,
+                        -32602,
+                        "Invalid 'wire_format': expected chat_completions, responses, or messages",
+                    )
+                wf: Literal["chat_completions", "responses", "messages"] = wf_raw  # type: ignore[assignment]
+                raw_wpaths = args.get("workspace_paths")
+                if raw_wpaths is not None and (
+                    not isinstance(raw_wpaths, list)
+                    or len(raw_wpaths) > 32
+                    or any(not isinstance(p, str) for p in raw_wpaths)
+                ):
+                    return _jsonrpc_error(
+                        req_id,
+                        -32602,
+                        "Invalid 'workspace_paths': expected an array of up to 32 strings",
+                    )
+                wpaths = [p for p in (raw_wpaths or []) if p.strip()]
                 preview = await _run_readonly_preview(
                     store,
-                    prompt=prompt_val,
+                    prompt=raw_prompt.strip(),
                     wire_format=wf,
                     workspace_paths=wpaths,
                 )
@@ -502,9 +587,27 @@ def create_app() -> FastAPI:
                 )
 
             if tool_name == "extract_entities":
-                text_val = str(args.get("text") or "")
-                wpaths = [str(p) for p in (args.get("workspace_paths") or []) if str(p).strip()]
-                ents = [e.model_dump(mode="json") for e in extract_entities(text_val, wpaths)]
+                for k in args:
+                    if k not in {"text", "workspace_paths"}:
+                        return _jsonrpc_error(
+                            req_id, -32602, f"Unknown argument '{k}' for extract_entities"
+                        )
+                raw_text = args.get("text")
+                if not isinstance(raw_text, str):
+                    return _jsonrpc_error(req_id, -32602, "Missing string 'text' argument")
+                raw_wpaths = args.get("workspace_paths")
+                if raw_wpaths is not None and (
+                    not isinstance(raw_wpaths, list)
+                    or len(raw_wpaths) > 32
+                    or any(not isinstance(p, str) for p in raw_wpaths)
+                ):
+                    return _jsonrpc_error(
+                        req_id,
+                        -32602,
+                        "Invalid 'workspace_paths': expected an array of up to 32 strings",
+                    )
+                wpaths = [p for p in (raw_wpaths or []) if p.strip()]
+                ents = [e.model_dump(mode="json") for e in extract_entities(raw_text, wpaths)]
                 structured = {"entities": ents, "count": len(ents)}
                 return JSONResponse(
                     content={
@@ -940,7 +1043,7 @@ def create_app() -> FastAPI:
                 "snapshot_endpoint": "/v1/conversations/{id}",
                 "credential": "hmk_",
                 "scope": "route",
-                "providers": ["meta", "ollama", "openai", "anthropic", "openrouter"],
+                "providers": ["meta", "openai", "anthropic", "openrouter"],
                 "executed": False,
                 "context": "Caller-visible context entries containing typed work_contract schemas.",
                 "documentation": "https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/t/H15-work-conversation/docs/conversations.md",

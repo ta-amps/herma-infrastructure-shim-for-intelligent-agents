@@ -33,21 +33,21 @@ def test_preview_and_dry_run_never_call_configured_trigger_providers(
         Provision(
             prov_id="PROV-OFFLINE-HTTP",
             title="Offline HTTP",
-            summary="Synthetic two-tier preview fixture.",
-            inject_text="Use this synthetic guidance.",
+            summary="Example two-tier preview fixture.",
+            inject_text="Use this example guidance.",
             triggers=TriggerSpec(
                 mode="all",
-                semantic=SemanticTrigger(exemplars=["synthetic request"]),
+                semantic=SemanticTrigger(exemplars=["example request"]),
                 micromodel=MicromodelTrigger(
-                    intent_question="Should this synthetic rule apply?",
-                    fallback_keywords=["synthetic"],
+                    intent_question="Should this example rule apply?",
+                    fallback_keywords=["example"],
                 ),
             ),
         )
     )
-    token, _ = store.issue_key(label="SYNTHETIC offline", harness_kind="opencode", scopes=["route"])
+    token, _ = store.issue_key(label="EXAMPLE offline", harness_kind="opencode", scopes=["route"])
     with TestClient(create_app()) as client:
-        preview = client.post("/api/preview", json={"prompt": "synthetic request"})
+        preview = client.post("/api/preview", json={"prompt": "example request"})
         assert preview.status_code == 200
         assert preview.json()["persisted"] is False
         assert preview.json()["matches"][0]["matched_tiers"] == ["semantic", "micromodel"]
@@ -57,8 +57,8 @@ def test_preview_and_dry_run_never_call_configured_trigger_providers(
             json={
                 "wire_format": "chat_completions",
                 "payload": {
-                    "model": "muse-spark-open",
-                    "messages": [{"role": "user", "content": "synthetic request"}],
+                    "model": "muse-spark-1.3",
+                    "messages": [{"role": "user", "content": "example request"}],
                 },
             },
         )
@@ -96,7 +96,10 @@ def test_http_edge_lockdown_and_dry_run_across_wire_formats(
     edge_hdr = {"x-edge-auth": "edge-lock-test"}
     r_home = client.get("/", headers=edge_hdr)
     assert r_home.status_code == 200
-    assert "Programmable AI Request Middleware" in r_home.text
+    assert "The shim between any agent and its model" in r_home.text
+    r_shim = client.get("/shim", headers=edge_hdr)
+    assert r_shim.status_code == 200
+    assert "A context shim between an agent and its model" in r_shim.text
 
     # Personal-assistant product names do not override a valid scoped key:
     r_consumer = client.post(
@@ -109,7 +112,7 @@ def test_http_edge_lockdown_and_dry_run_across_wire_formats(
         json={
             "wire_format": "chat_completions",
             "payload": {
-                "model": "muse-spark-open",
+                "model": "muse-spark-1.3",
                 "messages": [{"role": "user", "content": "fencing"}],
             },
         },
@@ -128,7 +131,7 @@ def test_http_edge_lockdown_and_dry_run_across_wire_formats(
         json={
             "wire_format": "chat_completions",
             "payload": {
-                "model": "muse-spark-open",
+                "model": "muse-spark-1.3",
                 "messages": [{"role": "user", "content": "Check Tessera fencing tokens"}],
             },
         },
@@ -136,7 +139,7 @@ def test_http_edge_lockdown_and_dry_run_across_wire_formats(
     assert r_chat.status_code == 200
     data_chat = r_chat.json()
     assert "PROV-TESSERA-FENCING@v1" in data_chat["receipt"]["provisions_fired"]
-    assert "https://tessera.ta-amps.workers.dev/llms.txt" in data_chat["receipt"]["uris_injected"]
+    assert "https://fabric.teleionlabs.com/llms.txt" in data_chat["receipt"]["uris_injected"]
     sys_msg = data_chat["augmented_payload"]["messages"][0]["content"]
     assert "[HERMA PROVISION: PROV-TESSERA-FENCING@v1" in sys_msg
 
@@ -151,7 +154,7 @@ def test_http_edge_lockdown_and_dry_run_across_wire_formats(
         headers=harness_hdr,
         json={
             "wire_format": "chat_completions",
-            "payload": {"model": "muse-spark-open", "messages": turn2_msgs},
+            "payload": {"model": "muse-spark-1.3", "messages": turn2_msgs},
         },
     )
     assert r_turn2.status_code == 200

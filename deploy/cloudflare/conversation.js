@@ -48,8 +48,8 @@ export function validateTurn(raw) {
       !Array.isArray(raw.context_refs) || !raw.context_refs.length || raw.context_refs.length > 12 ||
       raw.context_refs.some(x => typeof x !== "string" || !x.length || x.length > 160) ||
       (raw.provider_plan_ref !== undefined && raw.provider_plan_ref !== null && (typeof raw.provider_plan_ref !== "string" || raw.provider_plan_ref.length < 2 || raw.provider_plan_ref.length > 160)) ||
-      !["meta", "ollama", "openai", "anthropic", "openrouter"].includes(raw.provider ?? "ollama")) fail(422, "invalid_conversation_turn");
-  return { ...raw, provider: raw.provider ?? "ollama", provider_plan_ref: raw.provider_plan_ref ?? null };
+      !["meta", "openai", "anthropic", "openrouter"].includes(raw.provider ?? "meta")) fail(422, "invalid_conversation_turn");
+  return { ...raw, provider: raw.provider ?? "meta", provider_plan_ref: raw.provider_plan_ref ?? null };
 }
 
 // Bounded portable schema profile. No regular expressions, remote references or coercion.
@@ -105,12 +105,13 @@ export async function loadContracts(entries, refs) {
   return contracts.sort((a, b) => a.operation_id.localeCompare(b.operation_id));
 }
 
-const PROVIDERS = ["meta", "ollama", "openai", "anthropic", "openrouter"];
+const PROVIDERS = ["meta", "openai", "anthropic", "openrouter"];
 const MAX_GRANTS = 1000, MAX_GRANT_CHOICES = 16;
 // Deployment-wide grants let any caller spend on the operator's behalf; they are refused.
 const LEGACY_GRANT_SETTINGS = ["HERMA_CONVERSATION_PROVIDER_PLAN_ALLOWLIST", "HERMA_CONVERSATION_ALLOW_UNCERTAIN_FAILOVER"];
-// OpenRouter author slugs that name the same vendor as a direct provider.
-const VENDOR_ALIASES = { "meta-llama": "meta" };
+// OpenRouter author slugs that name the same vendor as a direct provider, when the slug differs
+// from the provider name. Meta's models use the author slug `meta`, which already folds to `meta`.
+const VENDOR_ALIASES = {};
 
 // Operator settings: empty or whitespace-only values are unset, exactly as in Python.
 export const setting = (env, name) => { const value = env[name]; return typeof value === "string" && value.trim() ? value.trim() : undefined; };
@@ -172,7 +173,7 @@ export function operatorGrants(env) {
   for (const item of items) {
     refuseContributorChoices(item?.providers);
     if (!object(item) || Object.keys(item).some(k => !["caller_scope", "providers", "allow_uncertain_failover"].includes(k)) ||
-        typeof item.caller_scope !== "string" || !/^key:[A-Za-z0-9_.:-]{1,120}$/.test(item.caller_scope) || grants.has(item.caller_scope) ||
+        typeof item.caller_scope !== "string" || !/^(?:key|open):[A-Za-z0-9_.:-]{1,120}$/.test(item.caller_scope) || grants.has(item.caller_scope) ||
         !Array.isArray(item.providers) || !item.providers.length || item.providers.length > MAX_GRANT_CHOICES ||
         (item.allow_uncertain_failover !== undefined && typeof item.allow_uncertain_failover !== "boolean")) fail(503, "invalid_provider_configuration");
     const providers = item.providers.map(checkChoice);
@@ -211,44 +212,43 @@ export function requireDirectGrant(grant, config) {
 
 // Reads only the selected provider's settings, in the same order and with the same outcome
 // codes as Python's ProviderConfig.from_env and validate.
-export function providerConfig(env, provider) {
+export function providerConfig(env, provider, { callerFunded = false } = {}) {
   const prefix = `HERMA_CONVERSATION_${provider.toUpperCase()}`;
-  const model = setting(env, `${prefix}_MODEL`) ?? ({ meta: "muse-spark-1.3", ollama: "muse-spark-open" }[provider] ?? "");
+  const model = setting(env, `${prefix}_MODEL`) ?? ({ meta: "muse-spark-1.3", openai: callerFunded ? "gpt-4o-mini" : "", anthropic: callerFunded ? "claude-3-5-sonnet-20241022" : "", openrouter: callerFunded ? "meta/muse-spark-1.3" : "" }[provider] ?? "");
   if (isContributorModel(model)) fail(403, "contributor_tier_refused");
-  const max_output = integerSetting(env, `${prefix}_MAX_OUTPUT`) ?? integerSetting(env, "HERMA_CONVERSATION_MAX_OUTPUT");
+  const max_output = integerSetting(env, `${prefix}_MAX_OUTPUT`) ?? integerSetting(env, "HERMA_CONVERSATION_MAX_OUTPUT") ?? (callerFunded ? 1024 : undefined);
   if (max_output === undefined) fail(503, "output_allowance_required");
   const invalid = () => fail(503, "invalid_provider_configuration");
   const paid = ["meta", "openai", "anthropic", "openrouter"].includes(provider);
-  const budget_usd = paid ? decimalSetting(env, `HERMA_${provider.toUpperCase()}_BUDGET_USD`) ?? 0 : 0;
-  const rates = provider === "meta" ? RATES[model] ?? null : ["openai", "anthropic", "openrouter"].includes(provider) ? [decimalSetting(env, `${prefix}_INPUT_USD_PER_MILLION`), decimalSetting(env, `${prefix}_OUTPUT_USD_PER_MILLION`)] : null;
-  const reasoning_effort = setting(env, `${prefix}_REASONING`) ?? (!["ollama", "anthropic"].includes(provider) ? setting(env, "HERMA_CONVERSATION_REASONING") : undefined) ?? null;
+  const rawBudgetUsd = paid ? decimalSetting(env, `HERMA_${provider.toUpperCase()}_BUDGET_USD`) ?? (callerFunded ? 0 : 0) : 0;
+  const budget_usd = callerFunded && (!Number.isFinite(rawBudgetUsd) || rawBudgetUsd <= 0) ? 0 : rawBudgetUsd;
+  const rawRates = provider === "meta" ? RATES[model] ?? null : ["openai", "anthropic", "openrouter"].includes(provider) ? [decimalSetting(env, `${prefix}_INPUT_USD_PER_MILLION`), decimalSetting(env, `${prefix}_OUTPUT_USD_PER_MILLION`)] : null;
+  const rates = callerFunded && Array.isArray(rawRates) && rawRates.some(r => !Number.isFinite(r) || r < 0) ? [0, 0] : rawRates;
+  const reasoning_effort = setting(env, `${prefix}_REASONING`) ?? (provider !== "anthropic" ? setting(env, "HERMA_CONVERSATION_REASONING") : undefined) ?? null;
   const anthropic_version = setting(env, "HERMA_CONVERSATION_ANTHROPIC_VERSION") ?? "2026-10-21";
-  const openrouter_provider = setting(env, "HERMA_CONVERSATION_OPENROUTER_PROVIDER") ?? null;
+  const openrouter_provider = setting(env, "HERMA_CONVERSATION_OPENROUTER_PROVIDER") ?? (callerFunded && provider === "openrouter" ? "meta" : null);
   const caller_token_limit = integerSetting(env, "HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR") ?? null;
-  const ollama_calls_per_day = provider === "ollama" ? integerSetting(env, "HERMA_OLLAMA_CALLS_PER_DAY") ?? 30 : null;
   let generation;
   try { generation = strictJson(setting(env, `${prefix}_GENERATION`) ?? "{}"); } catch { invalid(); }
   const reserved = ["model", "input", "messages", "instructions", "system", "tools", "stream", "store", "background", "conversation", "previous_response_id", "parallel_tool_calls", "max_tokens", "max_completion_tokens", "max_output_tokens", "models", "provider", "route", "plugins", "preset", "presets", "web_search_options", "mcp_servers", "container", "server_tools"];
   if (!PROVIDERS.includes(provider) || !model.length || model === "*" || model.length > 100 || (provider === "meta" && !has(RATES, model)) ||
       !isInt(max_output) || max_output < 1 ||
-      (provider === "meta" && (!Number.isFinite(budget_usd) || budget_usd <= 0)) ||
+      (!callerFunded && provider === "meta" && (!Number.isFinite(budget_usd) || budget_usd <= 0)) ||
       (reasoning_effort !== null && reasoning_effort.length > 40) ||
       (caller_token_limit !== null && (!isInt(caller_token_limit) || caller_token_limit < 1)) ||
-      (["openai", "anthropic", "openrouter"].includes(provider) && (!Number.isFinite(budget_usd) || budget_usd <= 0 || rates.some(rate => !Number.isFinite(rate) || rate < 0))) ||
+      (!callerFunded && ["openai", "anthropic", "openrouter"].includes(provider) && (!Number.isFinite(budget_usd) || budget_usd <= 0 || rates.some(rate => !Number.isFinite(rate) || rate < 0))) ||
       (provider === "anthropic" && !["2023-06-01", "2026-10-21"].includes(anthropic_version)) ||
       (provider === "openrouter" && (openrouter_provider === null || openrouter_provider.length > 100 || !model.includes("/") || model.startsWith("openrouter/") || model.toLowerCase().includes("@preset") || model.toLowerCase().split(":").slice(1).includes("online"))) ||
-      (provider === "ollama" && (!isInt(ollama_calls_per_day) || ollama_calls_per_day < 1 || ollama_calls_per_day > 1000)) ||
       !object(generation) || Object.keys(generation).some(k => reserved.includes(k))) invalid();
   if (["prompt", "prompt_id", "best_of", "speed", "inference_geo"].some(k => has(generation, k)) ||
       (has(generation, "n") && (!["meta", "openrouter"].includes(provider) || generation.n !== 1)) ||
       (has(generation, "service_tier") && (!["openai", "anthropic"].includes(provider) || generation.service_tier !== (provider === "openai" ? "default" : "standard_only")))) fail(503, "unsupported_generation_configuration");
-  if ((provider === "ollama" && (!object(generation.options ?? {}) || has(generation.options ?? {}, "num_predict"))) ||
-      (provider === "openai" && has(generation, "reasoning") && !object(generation.reasoning)) ||
+  if ((provider === "openai" && has(generation, "reasoning") && !object(generation.reasoning)) ||
       (provider === "anthropic" && reasoning_effort !== null)) invalid();
   const budget_microusd = scaledInteger(budget_usd, 6);
   if (Number.isNaN(budget_microusd)) invalid();
-  const url = { meta: "https://api.meta.ai/v1/chat/completions", ollama: "https://ollama.com/api/chat", openai: "https://api.openai.com/v1/responses", anthropic: "https://api.anthropic.com/v1/messages", openrouter: "https://openrouter.ai/api/v1/chat/completions" }[provider];
-  return { provider, model, max_output, reasoning_effort, ollama_calls_per_day, anthropic_version, openrouter_provider, rates, generation, caller_token_limit, budget_usd, budget_microusd, url };
+  const url = { meta: "https://api.meta.ai/v1/chat/completions", openai: "https://api.openai.com/v1/responses", anthropic: "https://api.anthropic.com/v1/messages", openrouter: "https://openrouter.ai/api/v1/chat/completions" }[provider];
+  return { provider, model, max_output, reasoning_effort, anthropic_version, openrouter_provider, rates, generation, caller_token_limit, budget_usd, budget_microusd, url };
 }
 
 export function buildRequest(config, turn, contracts, history) {
@@ -270,11 +270,9 @@ export function buildRequest(config, turn, contracts, history) {
     if (config.reasoning_effort !== null) body.reasoning = { ...body.reasoning, effort: config.reasoning_effort };
   } else {
     Object.assign(body, { messages, tools });
-    if (["meta", "openrouter"].includes(config.provider)) {
-      if (config.provider === "openrouter") body.provider = { only: [config.openrouter_provider], order: [config.openrouter_provider], allow_fallbacks: false, require_parameters: true, data_collection: "deny" };
-      Object.assign(body, { max_tokens: config.max_output, parallel_tool_calls: false });
-      if (config.reasoning_effort !== null) body.reasoning_effort = config.reasoning_effort;
-    } else body.options = { ...body.options, num_predict: config.max_output };
+    if (config.provider === "openrouter") body.provider = { only: [config.openrouter_provider], order: [config.openrouter_provider], allow_fallbacks: false, require_parameters: true, data_collection: "deny" };
+    Object.assign(body, { max_tokens: config.max_output, parallel_tool_calls: false });
+    if (config.reasoning_effort !== null) body.reasoning_effort = config.reasoning_effort;
   }
   const size = bytes(body);
   if (size > 32768) fail(413, "context_too_large");
@@ -306,10 +304,10 @@ export function parseProposal(reply, provider, contracts) {
       if (reply.status === "incomplete" && reply.incomplete_details?.reason === "max_output_tokens") return blocked("output_budget_exhausted");
       if (reply.status !== "completed" || !Array.isArray(reply.output)) return blocked("invalid_tool_call");
       reply = { message: { tool_calls: reply.output.filter(item => object(item) && item.type === "function_call").map(item => ({ function: item })) } };
-    }
+    } else if (!["meta", "openrouter"].includes(provider)) return blocked("invalid_tool_call");
     const choice = ["meta", "openrouter"].includes(provider) ? reply.choices?.[0] : reply;
     if (!object(choice)) return blocked("invalid_tool_call");
-    if ((choice.finish_reason || choice.done_reason) === "length") return blocked("output_budget_exhausted");
+    if (choice.finish_reason === "length") return blocked("output_budget_exhausted");
     const calls = choice.message?.tool_calls;
     if (!Array.isArray(calls) || calls.length !== 1 || !object(calls[0]?.function)) return blocked("invalid_tool_call");
     const fn = calls[0].function;
@@ -330,16 +328,19 @@ export function parseProposal(reply, provider, contracts) {
 }
 
 export function providerCredential(env, provider) {
-  const key = env[{ meta: "META_API_KEY", ollama: "OLLAMA_API_KEY", openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY", openrouter: "OPENROUTER_API_KEY" }[provider]];
+  const key = env[{ meta: "META_API_KEY", openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY", openrouter: "OPENROUTER_API_KEY" }[provider]];
   if (typeof key !== "string" || !key.trim()) { const error = new ConversationError(503, "provider_not_configured"); error.outcome = "not_sent"; throw error; }
   return key;
 }
 
-export async function requestModel(env, config, body, timeoutMs = 25000) {
-  let policy;
-  try { policy = operatorPolicy(env, config.provider); } catch { fail(503, "invalid_provider_configuration"); }
-  if (policy.disabled) { const error = new ConversationError(503, "provider_operator_disabled"); error.outcome = "not_sent"; throw error; }
-  const key = providerCredential(env, config.provider);
+export async function requestModel(env, config, body, timeoutMs = 25000, { callerApiKey = null } = {}) {
+  const explicitCallerKey = typeof callerApiKey === "string" && callerApiKey.trim() ? callerApiKey.trim() : null;
+  if (!explicitCallerKey) {
+    let policy;
+    try { policy = operatorPolicy(env, config.provider); } catch { fail(503, "invalid_provider_configuration"); }
+    if (policy.disabled) { const error = new ConversationError(503, "provider_operator_disabled"); error.outcome = "not_sent"; throw error; }
+  }
+  const key = explicitCallerKey || providerCredential(env, config.provider);
   const url = config.url;
   const headers = config.provider === "anthropic" ? { "x-api-key": key, "anthropic-version": config.anthropic_version, "Content-Type": "application/json" } : { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" };
   const controller = new AbortController();
@@ -382,7 +383,398 @@ export async function requestModel(env, config, body, timeoutMs = 25000) {
 }
 
 export function usageFor(provider, reply) {
-  const source = provider === "ollama" ? reply : reply.usage;
-  const fields = ["meta", "openrouter"].includes(provider) ? ["prompt_tokens", "completion_tokens"] : ["openai", "anthropic", "jev"].includes(provider) ? ["input_tokens", "output_tokens"] : ["prompt_eval_count", "eval_count"];
+  const source = reply.usage;
+  const fields = ["meta", "openrouter"].includes(provider) ? ["prompt_tokens", "completion_tokens"] : ["input_tokens", "output_tokens"];
   return Object.fromEntries(["input_tokens", "output_tokens"].map((k, i) => [k, isInt(source?.[fields[i]]) ? source[fields[i]] : null]));
+}
+
+export const bilateralChatGrid = data.bilateral_chat_grid;
+export const bilateralTopics = Array.isArray(data.bilateral_topics) ? data.bilateral_topics : [];
+
+const MS_PER_SECOND = 1000;
+const EPHEMERAL_CHAT_SESSIONS = new Map();
+const INITIALIZED_CONV_DBS = new WeakSet();
+
+export function resolveBilateralBounds(env = {}) {
+  const params = bilateralChatGrid?.parameters || {};
+  const resolved = {};
+  for (const [key, spec] of Object.entries(params)) {
+    const envKey = `HERMA_${key.toUpperCase()}`;
+    const rawEnv = env?.[envKey];
+    const parsed = rawEnv !== undefined && rawEnv !== null && rawEnv !== "" ? Number(rawEnv) : Number(spec.default);
+    const baseVal = Number.isFinite(parsed) ? Math.trunc(parsed) : Number(spec.default);
+    resolved[key] = Math.max(Number(spec.low), Math.min(Number(spec.high), baseVal));
+  }
+  if (resolved.feedback_field_max_bytes > resolved.feedback_envelope_max_bytes) {
+    resolved.feedback_field_max_bytes = resolved.feedback_envelope_max_bytes;
+  }
+  if (resolved.session_note_max_bytes > resolved.chat_message_max_bytes) {
+    resolved.session_note_max_bytes = resolved.chat_message_max_bytes;
+  }
+  return resolved;
+}
+
+export function normalizeSessionMemory(raw) {
+  let obj = raw;
+  if (typeof raw === "string") {
+    try { obj = JSON.parse(raw); } catch { obj = {}; }
+  }
+  if (!object(obj)) obj = {};
+  const strList = val => Array.isArray(val) ? val.filter(x => typeof x === "string" && x.trim()).map(x => x.trim()) : [];
+  return {
+    test_phrases: strList(obj.test_phrases),
+    constraints: strList(obj.constraints),
+    remembered_notes: strList(obj.remembered_notes),
+    preferences: strList(obj.preferences),
+    topics_discussed: strList(obj.topics_discussed),
+    last_intent: typeof obj.last_intent === "string" ? obj.last_intent : "",
+    last_topic_ids: strList(obj.last_topic_ids),
+    last_reply_summary: typeof obj.last_reply_summary === "string" ? obj.last_reply_summary : "",
+  };
+}
+
+function parseJsonSafe(raw, fallback) {
+  if (raw === undefined || raw === null || raw === "") return fallback;
+  if (typeof raw !== "string") return raw;
+  try { return JSON.parse(raw); } catch { return fallback; }
+}
+
+function normalizeSessionRecord(row, bounds, nowMs) {
+  if (!row || !row.session_id) return null;
+  const ttlMs = bounds.ephemeral_session_ttl_seconds * MS_PER_SECOND;
+  const updatedMs = Date.parse(row.updated_at || row.created_at || "") || nowMs;
+  const expiresAt = Number(row.expires_at) > 0 ? Number(row.expires_at) : updatedMs + ttlMs;
+  if (expiresAt <= nowMs) return null;
+  const rawHistory = parseJsonSafe(row.history ?? row.history_json, []);
+  const history = Array.isArray(rawHistory) ? rawHistory.slice(-(bounds.ephemeral_session_max_turns * 2)) : [];
+  const rawDraft = parseJsonSafe(row.staging_draft ?? row.staging_draft_json, {});
+  const stagingDraft = object(rawDraft) ? rawDraft : {};
+  const rawVis = String(row.visibility || "public_commons").trim() || "public_commons";
+  const rawEligible =
+    row.export_eligible === undefined || row.export_eligible === null
+      ? ["public_ngo", "public_commons"].includes(rawVis)
+        ? 1
+        : 0
+      : row.export_eligible
+        ? 1
+        : 0;
+  return {
+    session_id: String(row.session_id),
+    agent_id: String(row.agent_id || "a2a-contributor"),
+    worker_uuid: String(row.worker_uuid || ""),
+    active_task_id: String(row.active_task_id || ""),
+    active_fencing_token: Number(row.active_fencing_token || 0),
+    state_stage: String(row.state_stage || "active"),
+    turn_count: Math.max(0, Math.trunc(Number(row.turn_count || 0))),
+    visibility: rawEligible === 1 ? rawVis : "server_infra",
+    export_eligible: rawEligible,
+    history,
+    history_json: JSON.stringify(history),
+    memory: normalizeSessionMemory(row.memory ?? row.memory_json),
+    memory_json: JSON.stringify(normalizeSessionMemory(row.memory ?? row.memory_json)),
+    staging_draft: stagingDraft,
+    staging_draft_json: JSON.stringify(stagingDraft),
+    created_at: String(row.created_at || new Date(nowMs).toISOString()),
+    updated_at: String(row.updated_at || new Date(nowMs).toISOString()),
+    expires_at: expiresAt,
+  };
+}
+
+async function ensureBilateralConversationTable(d1) {
+  if (!d1 || typeof d1.prepare !== "function" || INITIALIZED_CONV_DBS.has(d1)) return;
+  try {
+    await d1.prepare(
+      `CREATE TABLE IF NOT EXISTS herma_conversations (
+        session_id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL DEFAULT 'a2a-contributor',
+        worker_uuid TEXT NOT NULL DEFAULT '',
+        active_task_id TEXT NOT NULL DEFAULT '',
+        active_fencing_token INTEGER NOT NULL DEFAULT 0,
+        state_stage TEXT NOT NULL DEFAULT 'active',
+        turn_count INTEGER NOT NULL DEFAULT 0,
+        visibility TEXT NOT NULL DEFAULT 'public_commons',
+        export_eligible INTEGER NOT NULL DEFAULT 1,
+        history_json TEXT NOT NULL DEFAULT '[]',
+        memory_json TEXT NOT NULL DEFAULT '{}',
+        staging_draft_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        expires_at INTEGER NOT NULL DEFAULT 0
+      )`
+    ).run();
+    try {
+      await d1.prepare("ALTER TABLE herma_conversations ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public_commons'").run();
+    } catch { /* column already exists */ }
+    try {
+      await d1.prepare("ALTER TABLE herma_conversations ADD COLUMN export_eligible INTEGER NOT NULL DEFAULT 1").run();
+    } catch { /* column already exists */ }
+    INITIALIZED_CONV_DBS.add(d1);
+  } catch {
+    // Read-only or incompatible mock D1 falls back seamlessly to EPHEMERAL_CHAT_SESSIONS Map.
+  }
+}
+
+function pruneEphemeralMap(bounds, nowMs) {
+  for (const [key, entry] of EPHEMERAL_CHAT_SESSIONS.entries()) {
+    if (!entry || Number(entry.expires_at || 0) <= nowMs) EPHEMERAL_CHAT_SESSIONS.delete(key);
+  }
+  while (EPHEMERAL_CHAT_SESSIONS.size > bounds.ephemeral_cache_max_sessions) {
+    const oldestKey = EPHEMERAL_CHAT_SESSIONS.keys().next().value;
+    if (oldestKey === undefined) break;
+    EPHEMERAL_CHAT_SESSIONS.delete(oldestKey);
+  }
+}
+
+export async function loadEphemeralChatSession(db, sessionId, env = {}) {
+  if (!sessionId) return null;
+  const bounds = resolveBilateralBounds(env);
+  const nowMs = Date.now();
+  pruneEphemeralMap(bounds, nowMs);
+  const candidates = [];
+  const d1Candidates = [];
+  const memHit = EPHEMERAL_CHAT_SESSIONS.get(sessionId);
+  if (memHit) {
+    const normMem = normalizeSessionRecord(memHit, bounds, nowMs);
+    if (normMem) {
+      normMem._source = "memory";
+      normMem._memPersisted = Boolean(memHit.persisted);
+      normMem._memLastDurableTurn = Number.isFinite(Number(memHit.last_durable_turn_count))
+        ? Math.max(0, Math.trunc(Number(memHit.last_durable_turn_count)))
+        : (memHit.persisted ? normMem.turn_count : 0);
+      candidates.push(normMem);
+    }
+  }
+  const d1 = db || env?.HERMA_DB || env?.DB || null;
+  const hasD1 = Boolean(d1 && typeof d1.prepare === "function");
+  if (hasD1) {
+    await ensureBilateralConversationTable(d1);
+    try {
+      const convRow = await d1.prepare("SELECT * FROM herma_conversations WHERE session_id = ?").bind(sessionId).first();
+      const normConv = normalizeSessionRecord(convRow, bounds, nowMs);
+      if (normConv) {
+        normConv._source = "d1_primary";
+        candidates.push(normConv);
+        d1Candidates.push(normConv);
+      }
+    } catch { /* fallback */ }
+    try {
+      const legacyRow = await d1.prepare("SELECT * FROM herma_agent_conversations WHERE session_id = ?").bind(sessionId).first();
+      const normLegacy = normalizeSessionRecord(legacyRow, bounds, nowMs);
+      if (normLegacy) {
+        normLegacy._source = "d1_compat";
+        candidates.push(normLegacy);
+        d1Candidates.push(normLegacy);
+      }
+    } catch { /* fallback */ }
+  }
+  if (!candidates.length) return null;
+  const sourceRank = (s) => (s === "d1_primary" ? 0 : s === "d1_compat" ? 1 : 2);
+  candidates.sort((a, b) =>
+    (b.turn_count - a.turn_count) ||
+    (sourceRank(a._source) - sourceRank(b._source)) ||
+    (Date.parse(b.updated_at) - Date.parse(a.updated_at))
+  );
+  d1Candidates.sort((a, b) =>
+    (b.turn_count - a.turn_count) ||
+    (sourceRank(a._source) - sourceRank(b._source)) ||
+    (Date.parse(b.updated_at) - Date.parse(a.updated_at))
+  );
+  const best = candidates[0];
+  const d1Best = d1Candidates[0] || null;
+  if (best._source === "d1_compat") {
+    for (const c of candidates) {
+      if (c._source !== "d1_compat" && c.turn_count >= best.turn_count) {
+        best.memory = c.memory;
+        break;
+      }
+    }
+  }
+  best.memory_json = JSON.stringify(best.memory);
+  const isSelectedDurable = hasD1
+    ? Boolean(
+        d1Best &&
+        d1Best.turn_count >= best.turn_count &&
+        d1Best.history_json === best.history_json &&
+        d1Best.staging_draft_json === best.staging_draft_json &&
+        d1Best.memory_json === best.memory_json
+      )
+    : Boolean(best._memPersisted);
+  const lastDurableTurnCount = hasD1
+    ? (d1Best ? d1Best.turn_count : 0)
+    : Number(best._memLastDurableTurn || 0);
+  delete best._source;
+  delete best._memPersisted;
+  delete best._memLastDurableTurn;
+  if (d1Best) {
+    delete d1Best._source;
+  }
+  best.persisted = isSelectedDurable;
+  best.persistence_mode = isSelectedDurable ? "d1" : "memory_only";
+  best.last_durable_turn_count = lastDurableTurnCount;
+  EPHEMERAL_CHAT_SESSIONS.delete(sessionId);
+  EPHEMERAL_CHAT_SESSIONS.set(sessionId, best);
+  return best;
+}
+
+export async function saveEphemeralChatSession(
+  db,
+  record,
+  env = {},
+  { syncAgentConversations = true, readOnly = false } = {}
+) {
+  if (!record || !record.session_id) return null;
+  const bounds = resolveBilateralBounds(env);
+  const nowMs = Date.now();
+  const ttlMs = bounds.ephemeral_session_ttl_seconds * MS_PER_SECOND;
+  const normalized = normalizeSessionRecord(
+    { ...record, expires_at: nowMs + ttlMs },
+    bounds,
+    nowMs - 1
+  );
+  if (!normalized) return null;
+  const priorDurableTurnCount = Number.isFinite(Number(record.last_durable_turn_count))
+    ? Math.max(0, Math.trunc(Number(record.last_durable_turn_count)))
+    : (record.persisted ? Math.max(0, normalized.turn_count - 1) : 0);
+  if (readOnly) {
+    normalized.persisted = false;
+    normalized.persistence_mode = "memory_only";
+    normalized.read_only = true;
+    normalized.session_persisted = Boolean(record.session_persisted ?? record.persisted);
+    normalized.last_durable_turn_count = priorDurableTurnCount;
+    return normalized;
+  }
+
+  let d1Persisted = false;
+  let compatPersisted = false;
+  let d1Error = "";
+  const d1 = db || env?.HERMA_DB || env?.DB || null;
+  if (d1 && typeof d1.prepare === "function") {
+    await ensureBilateralConversationTable(d1);
+    try {
+      await d1.prepare(
+        `INSERT INTO herma_conversations
+         (session_id, agent_id, worker_uuid, active_task_id, active_fencing_token, state_stage,
+          turn_count, visibility, export_eligible, history_json, memory_json, staging_draft_json, created_at, updated_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(session_id) DO UPDATE SET
+           agent_id = excluded.agent_id,
+           worker_uuid = excluded.worker_uuid,
+           active_task_id = excluded.active_task_id,
+           active_fencing_token = excluded.active_fencing_token,
+           state_stage = excluded.state_stage,
+           turn_count = excluded.turn_count,
+           visibility = CASE WHEN herma_conversations.export_eligible = 0 OR excluded.export_eligible = 0 THEN 'server_infra' ELSE excluded.visibility END,
+           export_eligible = MIN(herma_conversations.export_eligible, excluded.export_eligible),
+           history_json = excluded.history_json,
+           memory_json = excluded.memory_json,
+           staging_draft_json = excluded.staging_draft_json,
+           updated_at = excluded.updated_at,
+           expires_at = excluded.expires_at`
+      ).bind(
+        normalized.session_id,
+        normalized.agent_id,
+        normalized.worker_uuid,
+        normalized.active_task_id,
+        normalized.active_fencing_token,
+        normalized.state_stage,
+        normalized.turn_count,
+        normalized.visibility,
+        normalized.export_eligible,
+        normalized.history_json,
+        normalized.memory_json,
+        normalized.staging_draft_json,
+        normalized.created_at,
+        normalized.updated_at,
+        normalized.expires_at
+      ).run();
+      d1Persisted = true;
+    } catch (err) {
+      d1Error = String(err?.message || "d1_conversation_write_failed");
+    }
+
+    if (syncAgentConversations) {
+      try {
+        await d1.prepare(
+          `INSERT INTO herma_agent_conversations
+           (session_id, agent_id, worker_uuid, active_task_id, active_fencing_token, state_stage,
+            visibility, export_eligible, history_json, turn_count, staging_draft_json, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(session_id) DO UPDATE SET
+             agent_id = excluded.agent_id,
+             worker_uuid = excluded.worker_uuid,
+             active_task_id = excluded.active_task_id,
+             active_fencing_token = excluded.active_fencing_token,
+             state_stage = excluded.state_stage,
+             visibility = CASE WHEN herma_agent_conversations.export_eligible = 0 OR excluded.export_eligible = 0 THEN 'server_infra' ELSE excluded.visibility END,
+             export_eligible = MIN(herma_agent_conversations.export_eligible, excluded.export_eligible),
+             history_json = excluded.history_json,
+             turn_count = excluded.turn_count,
+             staging_draft_json = excluded.staging_draft_json,
+             updated_at = excluded.updated_at`
+        ).bind(
+          normalized.session_id,
+          normalized.agent_id,
+          normalized.worker_uuid,
+          normalized.active_task_id,
+          normalized.active_fencing_token,
+          normalized.state_stage,
+          normalized.visibility,
+          normalized.export_eligible,
+          normalized.history_json,
+          normalized.turn_count,
+          normalized.staging_draft_json,
+          normalized.created_at,
+          normalized.updated_at
+        ).run();
+        compatPersisted = true;
+      } catch {
+        try {
+          await d1.prepare(
+            `INSERT INTO herma_agent_conversations
+             (session_id, agent_id, worker_uuid, active_task_id, active_fencing_token, state_stage,
+              history_json, turn_count, staging_draft_json, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(session_id) DO UPDATE SET
+               agent_id = excluded.agent_id,
+               worker_uuid = excluded.worker_uuid,
+               active_task_id = excluded.active_task_id,
+               active_fencing_token = excluded.active_fencing_token,
+               state_stage = excluded.state_stage,
+               history_json = excluded.history_json,
+               turn_count = excluded.turn_count,
+               staging_draft_json = excluded.staging_draft_json,
+               updated_at = excluded.updated_at`
+          ).bind(
+            normalized.session_id,
+            normalized.agent_id,
+            normalized.worker_uuid,
+            normalized.active_task_id,
+            normalized.active_fencing_token,
+            normalized.state_stage,
+            normalized.history_json,
+            normalized.turn_count,
+            normalized.staging_draft_json,
+            normalized.created_at,
+            normalized.updated_at
+          ).run();
+          compatPersisted = true;
+        } catch { /* optional legacy table sync */ }
+      }
+    }
+  }
+  const emptyMemoryJson = JSON.stringify(normalizeSessionMemory({}));
+  normalized.persisted = d1Persisted;
+  normalized.persistence_mode = d1Persisted ? "d1" : "memory_only";
+  normalized.last_durable_turn_count = d1Persisted
+    ? normalized.turn_count
+    : (compatPersisted && normalized.memory_json === emptyMemoryJson
+        ? normalized.turn_count
+        : priorDurableTurnCount);
+  if (!d1Persisted && d1Error) {
+    normalized.persistence_error = d1Error;
+  }
+  EPHEMERAL_CHAT_SESSIONS.delete(normalized.session_id);
+  EPHEMERAL_CHAT_SESSIONS.set(normalized.session_id, normalized);
+  pruneEphemeralMap(bounds, nowMs);
+  return normalized;
 }

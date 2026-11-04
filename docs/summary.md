@@ -1,6 +1,6 @@
 # Summary
 
-**Herma:** context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic noun, verb, and URI context from a user-configured database before LLM execution.
+**Herma:** context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic Task Object, Task, and URI context from a user-configured database before LLM execution.
 
 Before an outbound coding-harness request reaches `/v1/chat/completions`, `/v1/responses`, or `/v1/messages`, Herma:
 

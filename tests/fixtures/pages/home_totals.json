@@ -1,0 +1,18 @@
+{
+  "workers": 285,
+  "agent_names": 31,
+  "nonprofit": {
+    "ready": 12,
+    "leased": 2,
+    "done": 41
+  },
+  "shared": {
+    "ready": 86,
+    "leased": 5,
+    "done": 290
+  },
+  "task_objects": 412,
+  "task_object_bytes": 18350000,
+  "checks": 138,
+  "searchable": 624
+}

@@ -1,0 +1,11 @@
+# Read by Cloudflare Workers static assets; it is not served itself. The rules do not overlap, because matching rules
+# combine their values for the same header name.
+/assets/herma-pages.css
+  Cache-Control: public, max-age=3600
+  X-Content-Type-Options: nosniff
+/assets/agent-banner.js
+  Cache-Control: public, max-age=3600
+  X-Content-Type-Options: nosniff
+/assets/fonts/*
+  Cache-Control: public, max-age=31536000, immutable
+  X-Content-Type-Options: nosniff

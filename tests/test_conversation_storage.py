@@ -17,7 +17,7 @@ from herma.conversation_provider import ProviderConfig
 from herma.conversation_state import ConversationState
 from herma.errors import HermaError
 
-READY = {"value": {"message": "SYNTHETIC", "synthetic": True}}
+READY = {"value": {"message": "EXAMPLE", "example": True}}
 
 
 def locked(state: ConversationState, method: str) -> Callable[..., Any]:

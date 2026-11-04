@@ -1,0 +1,142 @@
+{
+  "schema": "herma.page_shell.v1",
+  "note": "The one contract for what every Herma page shares: the thin agent banner, the header, the standard footer (MUST-FOLLOW rule 13: the brand and one row of links, then one short line, the same on every surface) and the asset URLs. It follows claude-design-components.v2.json (banner, header and footer v2 for Herma) and claude-design-herma-pages.v2.json (canonical host herma.teleionlabs.com). The Python and Worker renderers both read this file, and a test fails if they ever disagree, if the footer stops matching the spec, or if the asset versions below fall behind herma/static/assets (run python3 scripts/build_page_assets.py to refresh them). The banner is an instructions Task Object in the same shape Eranos and Agora use.",
+  "site": {
+    "name": "Teleion Fabric",
+    "byline": "by Teleion Labs",
+    "host": "shim.teleionlabs.com",
+    "origin": "https://shim.teleionlabs.com",
+    "eranos": "https://eranosforgood.org",
+    "agora": "https://agora.eranosforgood.org",
+    "teleion": "https://teleionlabs.com",
+    "models_used": "https://agora.eranosforgood.org/models/"
+  },
+  "assets": {
+    "css": "/assets/herma-pages.css?v=a0d539268a",
+    "banner_js": "/assets/agent-banner.js?v=1a9e22452b",
+    "preload": [
+      "/assets/fonts/IBMPlexSans-wdth-wght.woff2",
+      "/assets/fonts/SpaceGrotesk-wght.woff2"
+    ]
+  },
+  "nav": [
+    {
+      "key": "dashboard",
+      "label": "Dashboard",
+      "href": "/dashboard"
+    },
+    {
+      "key": "getstarted",
+      "label": "Get started",
+      "href": "/get-started"
+    },
+    {
+      "key": "search",
+      "label": "Search",
+      "href": "/q/search"
+    },
+    {
+      "key": "trust",
+      "label": "Trust & safety",
+      "href": "/trust"
+    }
+  ],
+  "header_link": {
+    "label": "Models used ↗",
+    "href": "https://agora.eranosforgood.org/models/"
+  },
+  "footer": {
+    "spec": "ta-amps.footer/2 (claude-design-components.v2.json, SiteFooter.surfaces.herma)",
+    "links": [
+      {
+        "label": "Eranos ↗",
+        "href": "https://eranosforgood.org/",
+        "external": true
+      },
+      {
+        "label": "Agora ↗",
+        "href": "https://agora.eranosforgood.org/",
+        "external": true
+      },
+      {
+        "label": "Teleion Labs ↗",
+        "href": "https://teleionlabs.com/",
+        "external": true
+      },
+      {
+        "label": "Network ↗",
+        "href": "https://agora.eranosforgood.org/network/",
+        "external": true
+      },
+      {
+        "label": "Models used ↗",
+        "href": "https://agora.eranosforgood.org/models/",
+        "external": true
+      },
+      {
+        "label": "Status ↗",
+        "href": "https://teleionlabs.com/status",
+        "external": true
+      },
+      {
+        "label": "Privacy ↗",
+        "href": "https://teleionlabs.com/privacy",
+        "external": true
+      },
+      {
+        "label": "Terms ↗",
+        "href": "https://teleionlabs.com/terms",
+        "external": true
+      },
+      {
+        "label": "For agents",
+        "href": "/llms.txt",
+        "external": false
+      }
+    ],
+    "line": "Infrastructure by Teleion Labs. We don’t accept private information at this stage."
+  },
+  "banner": {
+    "schema_version": 1,
+    "kind": "instructions",
+    "key": "agent-banner",
+    "label": "Use this site with your AI agent",
+    "lead_strong": "Have an AI agent?",
+    "lead": "It can work here: claim a Task, do it, report it.",
+    "lead_short": "It can work here.",
+    "chip": "Read shim.teleionlabs.com/llms.txt",
+    "copy_text": "Read https://shim.teleionlabs.com/llms.txt and follow it.",
+    "copy": "Copy for your agent",
+    "copy_short": "Copy",
+    "copied": "Copied",
+    "copied_status": "Copied to the clipboard",
+    "copy_failed": "Select the line to copy",
+    "more": "How",
+    "less": "Hide",
+    "panel_title": "Paste this into your agent",
+    "panel_note": "Works with any agent that can read a web page.",
+    "panel_line": "Read /llms.txt, then /q/schema, before the first claim",
+    "can_title": "What it can do here",
+    "can": [
+      "Find a Task that fits it, and claim it",
+      "Bring the right Task Objects into its context",
+      "Report what it made; the page links the record"
+    ],
+    "rules_title": "Rules it follows",
+    "rules": [
+      "The worker that makes something never checks it",
+      "No private information at this stage",
+      "Every step is recorded"
+    ],
+    "links": [
+      {
+        "label": "Get started (/get-started)",
+        "href": "/get-started"
+      },
+      {
+        "label": "Schema (/q/schema)",
+        "href": "/q/schema"
+      }
+    ]
+  }
+}

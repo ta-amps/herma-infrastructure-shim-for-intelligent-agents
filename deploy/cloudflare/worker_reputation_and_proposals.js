@@ -14,8 +14,12 @@ export const REPUTATION_AND_PROPOSAL_GRID = Object.freeze({
   max_prior_attempts_returned: 12,
   max_capabilities_per_task: 12,
   max_routes_per_task: 12,
+  default_leaderboard_rows: 25,
   max_leaderboard_rows: 100,
   max_proposals_rows: 100,
+  max_recent_cred_events_per_worker: 15,
+  leaderboard_cache_ms: 30000,
+  leaderboard_cache_entries: 40,
   summary_clip_chars: 500,
 
   // Evidence-backed scoring parameters (never self-claimed; 0 without verified receipt/object/task link)
@@ -26,6 +30,9 @@ export const REPUTATION_AND_PROPOSAL_GRID = Object.freeze({
   publish_relay_subproblem_points: 2,
   unblock_bonus_per_prior_worker: 8,
   unblock_bonus_cap: 24,
+  indexer_dense_lsh_points: 4,
+  indexer_block_leaf_points: 4,
+  indexer_enrich_review_points: 4,
   milli_scale: 1000,
   gpu_multiplier_milli: 1500,
   high_bandwidth_multiplier_milli: 1250,
@@ -108,6 +115,21 @@ export const BADGE_CATALOG = Object.freeze({
     id: "marathoner",
     label: "Marathoner",
     rule: "Sustained 5 or more verified autonomous contribution cycles under a stable worker identity.",
+  },
+  vector_smith: {
+    id: "vector_smith",
+    label: "Vector Smith",
+    rule: "Submitted O(1)-verified client-side dense_embedding_int8 vectors (up to 1024-d Int8, $0.00 cloud spend).",
+  },
+  cartographer: {
+    id: "cartographer",
+    label: "Cartographer",
+    rule: "Submitted verified client-side Multi-Scale LSH hex signatures (lsh_small_64b / lsh_medium_256b / lsh_wide_1024b).",
+  },
+  leaf_cutter: {
+    id: "leaf_cutter",
+    label: "Leaf Cutter",
+    rule: "Submitted verified hierarchical search_blocks and search_leafs chunks for sub-document RAG retrieval.",
   },
 });
 
@@ -222,7 +244,7 @@ export function extractProposalMetadata(item = {}, payloadObj = null) {
 let _schemaReady = new WeakSet();
 
 export async function ensureReputationAndProposalsSchema(db) {
-  if (!db || _schemaReady.has(db)) return;
+  if (!db || db.__hermaSchemaV69Ready || _schemaReady.has(db)) return;
   const ddl = [
     `CREATE TABLE IF NOT EXISTS herma_task_attempt_ledger (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -468,6 +490,7 @@ export async function recordVerifiedSubmissionCredAndProposals(db, ctx = {}) {
     appliedEvaluations = [],
     enqueuedVerbs = [],
     rawVerbs = [],
+    clientIndexSummaries = [],
     payload = {},
     salvagedConcurrentTwinAttempt = false,
     nowIso = new Date().toISOString(),
@@ -500,9 +523,20 @@ export async function recordVerifiedSubmissionCredAndProposals(db, ctx = {}) {
     multiplierMilli = REPUTATION_AND_PROPOSAL_GRID.high_bandwidth_multiplier_milli;
   }
 
-  const insertCredEvent = async (evKey, kind, basePts, unblockPts, priorFailed, evRef, objKey, detail) => {
+  const insertCredEvent = async (
+    evKey,
+    kind,
+    basePts,
+    unblockPts,
+    priorFailed,
+    evRef,
+    objKey,
+    detail,
+    { unscaled = false } = {}
+  ) => {
     if (!evRef) return 0;
-    const scaled = Math.round(((basePts + unblockPts) * multiplierMilli) / REPUTATION_AND_PROPOSAL_GRID.milli_scale);
+    const effMult = unscaled ? REPUTATION_AND_PROPOSAL_GRID.milli_scale : multiplierMilli;
+    const scaled = Math.round(((basePts + unblockPts) * effMult) / REPUTATION_AND_PROPOSAL_GRID.milli_scale);
     if (scaled <= 0) return 0;
     const res = await db
       .prepare(
@@ -520,7 +554,7 @@ export async function recordVerifiedSubmissionCredAndProposals(db, ctx = {}) {
         scaled,
         unblockPts,
         priorFailed,
-        multiplierMilli,
+        effMult,
         evRef,
         String(taskId || ""),
         String(objKey || ""),
@@ -642,7 +676,8 @@ export async function recordVerifiedSubmissionCredAndProposals(db, ctx = {}) {
     const isSelfEval =
       (ownerUuid && ownerUuid === workerUuid) || (ownerAgent && ownerAgent === agentId);
     if (!isSelfEval) {
-      const caughtDefect = Boolean(ev.defect_caught || Number(ev.quality_milli ?? 500) <= 300);
+      const evQualMilli = Number(ev.quality_milli ?? ev.updated_quality_milli ?? 500);
+      const caughtDefect = Boolean(ev.defect_caught || evQualMilli <= 300);
       const pts = caughtDefect
         ? REPUTATION_AND_PROPOSAL_GRID.eagle_eye_defect_catch_points
         : REPUTATION_AND_PROPOSAL_GRID.verify_points;
@@ -654,7 +689,7 @@ export async function recordVerifiedSubmissionCredAndProposals(db, ctx = {}) {
         0,
         receiptHash,
         ev.target_kind === "object" ? targetId : "",
-        { target_kind: ev.target_kind, target_id: targetId, quality_milli: ev.quality_milli }
+        { target_kind: ev.target_kind, target_id: targetId, quality_milli: evQualMilli }
       );
 
       // Update proposal governance status if evaluating an `infra_proposal` / `retraining_request`!
@@ -667,7 +702,8 @@ export async function recordVerifiedSubmissionCredAndProposals(db, ctx = {}) {
           const prevCnt = Number(propRow.independent_eval_count || 0);
           const prevMean = Number(propRow.mean_eval_quality_milli || 0);
           const nextCnt = prevCnt + 1;
-          const nextMean = Math.round((prevMean * prevCnt + Number(ev.quality_milli || 0)) / nextCnt);
+          const evalQualForMean = Number(ev.quality_milli ?? ev.updated_quality_milli ?? 0);
+          const nextMean = Math.round((prevMean * prevCnt + evalQualForMean) / nextCnt);
           const nextStatus =
             nextCnt >= REPUTATION_AND_PROPOSAL_GRID.proposal_admin_ready_min_evals &&
             nextMean >= REPUTATION_AND_PROPOSAL_GRID.proposal_admin_ready_min_quality_milli
@@ -730,7 +766,77 @@ export async function recordVerifiedSubmissionCredAndProposals(db, ctx = {}) {
     );
   }
 
-  // 5. Register clearly labeled `infra_proposal` / `retraining_request` / `pipeline_step_proposal` Task Objects
+  // 5. Zero-Cloud-Spend Client Distributed Indexing Cred (+4 dense+LSH, +4 block+leaf, +4 enrich/peer-review completion)
+  for (const ci of clientIndexSummaries) {
+    if (!ci || !ci.object_key) continue;
+    if (ci.has_verified_dense_and_lsh) {
+      await insertCredEvent(
+        `idx_dense_lsh:${ci.object_key}:${workerUuid}`,
+        "indexer_dense_lsh",
+        REPUTATION_AND_PROPOSAL_GRID.indexer_dense_lsh_points,
+        0,
+        0,
+        receiptHash,
+        ci.object_key,
+        {
+          embedding_dims: ci.embedding_dims,
+          has_verified_dense: true,
+          has_verified_lsh: true,
+        },
+        { unscaled: true }
+      );
+    }
+    if (ci.has_verified_blocks_and_leafs) {
+      await insertCredEvent(
+        `idx_block_leaf:${ci.object_key}:${workerUuid}`,
+        "indexer_block_leaf",
+        REPUTATION_AND_PROPOSAL_GRID.indexer_block_leaf_points,
+        0,
+        0,
+        receiptHash,
+        ci.object_key,
+        {
+          search_blocks_count: ci.search_blocks_count,
+          search_leafs_count: ci.search_leafs_count,
+        },
+        { unscaled: true }
+      );
+    }
+  }
+
+  const isIndexEnrichVerb = String(taskId || "").startsWith("verb_index_enrich_");
+  const isPeerReviewVerb = String(taskId || "").startsWith("verb_peer_review_");
+  if ((isIndexEnrichVerb || isPeerReviewVerb) && existingTask && !salvagedConcurrentTwinAttempt) {
+    const authorUuid = String(existingTask.producer_worker_uuid || "").trim();
+    const authorAgent = String(existingTask.producer_agent || "").trim().toLowerCase();
+    const isSelfAuthor =
+      (authorUuid && authorUuid === workerUuid) ||
+      (authorAgent && authorAgent === String(agentId || "").trim().toLowerCase());
+    const hasEnrichEvidence = isIndexEnrichVerb
+      ? clientIndexSummaries.some((ci) => ci && (ci.has_verified_dense || ci.has_verified_lsh || ci.has_verified_blocks_and_leafs))
+      : true;
+    if (!isSelfAuthor && hasEnrichEvidence) {
+      const targetKey = isIndexEnrichVerb
+        ? String(taskId).slice("verb_index_enrich_".length)
+        : String(taskId).slice("verb_peer_review_".length);
+      await insertCredEvent(
+        `idx_enrich_review:${taskId}:${workerUuid}`,
+        "indexer_enrich_review",
+        REPUTATION_AND_PROPOSAL_GRID.indexer_enrich_review_points,
+        0,
+        0,
+        receiptHash,
+        targetKey,
+        {
+          verb_type: isIndexEnrichVerb ? "verb_index_enrich" : "verb_peer_review",
+          reviewer_not_author_verified: true,
+        },
+        { unscaled: true }
+      );
+    }
+  }
+
+  // 6. Register clearly labeled `infra_proposal` / `retraining_request` / `pipeline_step_proposal` Task Objects
   const proposalsRegistered = [];
   for (let i = 0; i < storedObjects.length; i += 1) {
     const so = storedObjects[i];
@@ -779,25 +885,7 @@ export async function recordVerifiedSubmissionCredAndProposals(db, ctx = {}) {
   };
 }
 
-export async function buildWorkerScoreAndBadges(db, workerUuid) {
-  await ensureReputationAndProposalsSchema(db);
-  const wRow = await db
-    .prepare("SELECT * FROM herma_worker_registry WHERE worker_uuid = ?")
-    .bind(String(workerUuid))
-    .first();
-  const evRes = await db
-    .prepare(
-      `SELECT event_kind, points_awarded, unblock_bonus, prior_failed_workers, multiplier_milli,
-              evidence_ref, task_id, object_key, detail_json, ip_fingerprint, created_at
-       FROM herma_worker_cred_events
-       WHERE worker_uuid = ?
-       ORDER BY id DESC`
-    )
-    .bind(String(workerUuid))
-    .all();
-  const events = evRes?.results || [];
-
-  // Baseline historical solves in herma_worker_registry also contribute deterministic baseline cred
+function scoreWorkerFromRows(wRow, workerUuid, events, clientIdxBadgeRow) {
   const regNgo = Number(wRow?.ngo_completed || 0);
   const regEval = Number(wRow?.eval_completed || 0);
   const regOwn = Number(wRow?.own_completed || 0);
@@ -812,7 +900,9 @@ export async function buildWorkerScoreAndBadges(db, workerUuid) {
   let relayPubCount = 0;
   let bridgeBuilderCount = 0;
   let heavyEventCount = 0;
-  let latestIpFingerprint = "";
+  let vectorSmithCount = 0;
+  let cartographerCount = 0;
+  let leafCutterCount = 0;
 
   for (const ev of events) {
     ledgerPoints += Number(ev.points_awarded || 0);
@@ -821,15 +911,29 @@ export async function buildWorkerScoreAndBadges(db, workerUuid) {
     if (ev.event_kind === "independent_verify" || ev.event_kind === "verify_caught_defect") verifyCount += 1;
     if (ev.event_kind === "defect_erratum_caught" || ev.event_kind === "verify_caught_defect") eagleEyeCount += 1;
     if (ev.event_kind === "publish_relay_subproblem") relayPubCount += 1;
-    if (Number(ev.multiplier_milli || 1000) > REPUTATION_AND_PROPOSAL_GRID.milli_scale) heavyEventCount += 1;
-    if (!latestIpFingerprint && ev.ip_fingerprint) latestIpFingerprint = ev.ip_fingerprint;
+    if (ev.event_kind === "indexer_dense_lsh") {
+      vectorSmithCount += 1;
+      cartographerCount += 1;
+    }
+    if (ev.event_kind === "indexer_block_leaf") {
+      leafCutterCount += 1;
+    }
+    if (Number(ev.multiplier_milli || REPUTATION_AND_PROPOSAL_GRID.milli_scale) > REPUTATION_AND_PROPOSAL_GRID.milli_scale) {
+      heavyEventCount += 1;
+    }
     try {
       const det = JSON.parse(ev.detail_json || "{}");
       if (det.alternative_route_used) bridgeBuilderCount += 1;
+      if (det.has_verified_dense) vectorSmithCount += 1;
+      if (det.has_verified_lsh) cartographerCount += 1;
     } catch {
       // ignore
     }
   }
+
+  if (Number(clientIdxBadgeRow?.has_dense || 0) > 0) vectorSmithCount += 1;
+  if (Number(clientIdxBadgeRow?.has_lsh || 0) > 0) cartographerCount += 1;
+  if (Number(clientIdxBadgeRow?.has_bl || 0) > 0) leafCutterCount += 1;
 
   const baselineHistoricalPoints =
     events.length > 0
@@ -867,25 +971,91 @@ export async function buildWorkerScoreAndBadges(db, workerUuid) {
   if (regIters >= REPUTATION_AND_PROPOSAL_GRID.marathoner_min_cycles) {
     badges.push(BADGE_CATALOG.marathoner);
   }
+  if (vectorSmithCount >= 1) {
+    badges.push(BADGE_CATALOG.vector_smith);
+  }
+  if (cartographerCount >= 1) {
+    badges.push(BADGE_CATALOG.cartographer);
+  }
+  if (leafCutterCount >= 1) {
+    badges.push(BADGE_CATALOG.leaf_cutter);
+  }
 
   return {
     worker_uuid: String(workerUuid),
     agent_id: wRow?.agent_id || events[0]?.agent_id || "",
-    ip_signal_hash: latestIpFingerprint || null,
+    ip_signal_hash: null, // no address-derived value is shown; rows written before this change keep theirs in storage until cleared
     total_cred_points: totalPoints,
     ledger_event_points: ledgerPoints,
     unblock_bonus_points: unblockTotal,
     tasks_unblocked: unblockedTasks,
     badges: badges.map((b) => b.id),
     badge_details: badges,
-    recent_cred_events: events.slice(0, 15),
+    recent_cred_events: events.slice(0, REPUTATION_AND_PROPOSAL_GRID.max_recent_cred_events_per_worker),
   };
 }
 
-export async function handleLeaderboardRequest(url, db) {
+export async function buildWorkerScoreAndBadges(db, workerUuid) {
+  await ensureReputationAndProposalsSchema(db);
+  const wRow = await db
+    .prepare("SELECT * FROM herma_worker_registry WHERE worker_uuid = ?")
+    .bind(String(workerUuid))
+    .first();
+  const evRes = await db
+    .prepare(
+      `SELECT event_kind, points_awarded, unblock_bonus, prior_failed_workers, multiplier_milli,
+              evidence_ref, task_id, object_key, detail_json, ip_fingerprint, created_at
+       FROM herma_worker_cred_events
+       WHERE worker_uuid = ?
+       ORDER BY id DESC`
+    )
+    .bind(String(workerUuid))
+    .all();
+  const events = evRes?.results || [];
+  const clientIdxBadgeRow = await db
+    .prepare(
+      `SELECT COALESCE(MAX(has_verified_dense), 0) AS has_dense,
+              COALESCE(MAX(has_verified_lsh), 0) AS has_lsh,
+              COALESCE(MAX(has_verified_blocks_and_leafs), 0) AS has_bl
+       FROM herma_object_client_index
+       WHERE indexer_worker_uuid = ?`
+    )
+    .bind(String(workerUuid))
+    .first()
+    .catch(() => null);
+
+  return scoreWorkerFromRows(wRow, workerUuid, events, clientIdxBadgeRow);
+}
+
+// The standings are kept for 30 seconds in an isolate, per limit and badge, so a page or an agent that asks again does not pay for the scan again.
+const leaderboardCache = new Map();
+
+/** For tests: forget the standings an isolate remembers. */
+export function resetLeaderboardCache() {
+  leaderboardCache.clear();
+}
+
+/** ?limit= defaults to default_leaderboard_rows (25) when omitted/invalid, clamped to max_leaderboard_rows (100). */
+export function leaderboardLimit(raw) {
+  if (raw === null || raw === undefined || String(raw).trim() === "") {
+    return REPUTATION_AND_PROPOSAL_GRID.default_leaderboard_rows;
+  }
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n < 1) return REPUTATION_AND_PROPOSAL_GRID.default_leaderboard_rows;
+  return Math.min(n, REPUTATION_AND_PROPOSAL_GRID.max_leaderboard_rows);
+}
+
+export async function handleLeaderboardRequest(url, db, { nowMs = Date.now() } = {}) {
   await ensureReputationAndProposalsSchema(db);
   const badgeFilter = String(url.searchParams.get("badge") || "").trim().toLowerCase();
   const targetWorker = String(url.searchParams.get("worker_uuid") || "").trim();
+  const limit = leaderboardLimit(url.searchParams.get("limit"));
+  const cacheKey = `${limit}|${badgeFilter}`;
+  const cacheable = !targetWorker && (badgeFilter === "" || Object.hasOwn(BADGE_CATALOG, badgeFilter));
+  if (cacheable) {
+    const hit = leaderboardCache.get(cacheKey);
+    if (hit && nowMs - hit.at < REPUTATION_AND_PROPOSAL_GRID.leaderboard_cache_ms) return hit.body;
+  }
 
   if (targetWorker) {
     const single = await buildWorkerScoreAndBadges(db, targetWorker);
@@ -903,22 +1073,85 @@ export async function handleLeaderboardRequest(url, db) {
     };
   }
 
+  // Execute in <= 3 batch D1 queries total:
+  //   1. Rank candidate workers in SQL up to sqlLimit;
+  //   2. Fetch all cred events for those workers in one WHERE worker_uuid IN (...) query;
+  //   3. Fetch client-index badge flags for those workers in one WHERE indexer_worker_uuid IN (...) query.
+  const sqlLimit = badgeFilter ? REPUTATION_AND_PROPOSAL_GRID.max_leaderboard_rows : limit;
   const workersRes = await db
     .prepare(
-      `SELECT worker_uuid, agent_id, harness_tier, iteration_count, ngo_completed, eval_completed, own_completed,
-              mean_artifact_bytes, COALESCE(is_diagnostic_probe, 0) AS is_diag, updated_at
-       FROM herma_worker_registry
-       WHERE COALESCE(is_diagnostic_probe, 0) = 0
-         AND (iteration_count > 0 OR worker_uuid IN (SELECT DISTINCT worker_uuid FROM herma_worker_cred_events))
-       ORDER BY iteration_count DESC, updated_at DESC
-       LIMIT ?`
+      `SELECT r.worker_uuid, r.agent_id, r.harness_tier, r.iteration_count, r.ngo_completed, r.eval_completed, r.own_completed,
+              r.mean_artifact_bytes, COALESCE(r.is_diagnostic_probe, 0) AS is_diag, r.updated_at
+       FROM herma_worker_registry r
+       WHERE COALESCE(r.is_diagnostic_probe, 0) = 0
+         AND (r.iteration_count > 0 OR r.worker_uuid IN (SELECT DISTINCT worker_uuid FROM herma_worker_cred_events))
+       ORDER BY
+         (COALESCE((SELECT SUM(e.points_awarded) FROM herma_worker_cred_events e WHERE e.worker_uuid = r.worker_uuid), 0)
+          + CASE WHEN EXISTS (SELECT 1 FROM herma_worker_cred_events e WHERE e.worker_uuid = r.worker_uuid) THEN 0
+                 ELSE COALESCE(r.ngo_completed, 0) * (?1 + ?2) + COALESCE(r.own_completed, 0) * ?1 + COALESCE(r.eval_completed, 0) * ?3 END) DESC,
+         (SELECT COUNT(*) FROM herma_worker_cred_events e WHERE e.worker_uuid = r.worker_uuid AND e.prior_failed_workers > 0) DESC,
+         COALESCE(r.ngo_completed, 0) DESC, r.iteration_count DESC, r.updated_at DESC
+       LIMIT ?4`
     )
-    .bind(REPUTATION_AND_PROPOSAL_GRID.max_leaderboard_rows)
+    .bind(
+      REPUTATION_AND_PROPOSAL_GRID.solve_points,
+      REPUTATION_AND_PROPOSAL_GRID.ngo_bonus_points,
+      REPUTATION_AND_PROPOSAL_GRID.verify_points,
+      sqlLimit
+    )
     .all();
 
+  const ranked = workersRes?.results || [];
+  const eventsByWorker = new Map();
+  const clientIdxByWorker = new Map();
+
+  if (ranked.length > 0) {
+    const uuids = ranked.map((w) => String(w.worker_uuid));
+    const placeholders = uuids.map(() => "?").join(",");
+    const [batchEventsRes, batchClientIdxRes] = await Promise.all([
+      db
+        .prepare(
+          `SELECT worker_uuid, agent_id, event_kind, points_awarded, unblock_bonus, prior_failed_workers, multiplier_milli,
+                  evidence_ref, task_id, object_key, detail_json, ip_fingerprint, created_at
+           FROM herma_worker_cred_events
+           WHERE worker_uuid IN (${placeholders})
+           ORDER BY id DESC`
+        )
+        .bind(...uuids)
+        .all(),
+      db
+        .prepare(
+          `SELECT indexer_worker_uuid,
+                  COALESCE(MAX(has_verified_dense), 0) AS has_dense,
+                  COALESCE(MAX(has_verified_lsh), 0) AS has_lsh,
+                  COALESCE(MAX(has_verified_blocks_and_leafs), 0) AS has_bl
+           FROM herma_object_client_index
+           WHERE indexer_worker_uuid IN (${placeholders})
+           GROUP BY indexer_worker_uuid`
+        )
+        .bind(...uuids)
+        .all()
+        .catch(() => ({ results: [] })),
+    ]);
+
+    for (const ev of batchEventsRes?.results || []) {
+      const key = String(ev.worker_uuid || "");
+      let arr = eventsByWorker.get(key);
+      if (!arr) {
+        arr = [];
+        eventsByWorker.set(key, arr);
+      }
+      arr.push(ev);
+    }
+    for (const row of batchClientIdxRes?.results || []) {
+      clientIdxByWorker.set(String(row.indexer_worker_uuid || ""), row);
+    }
+  }
+
   const standings = [];
-  for (const w of workersRes?.results || []) {
-    const scored = await buildWorkerScoreAndBadges(db, w.worker_uuid);
+  for (const w of ranked) {
+    const uid = String(w.worker_uuid);
+    const scored = scoreWorkerFromRows(w, uid, eventsByWorker.get(uid) || [], clientIdxByWorker.get(uid) || null);
     if (badgeFilter && !scored.badges.includes(badgeFilter)) continue;
     standings.push({
       worker_uuid: w.worker_uuid,
@@ -943,7 +1176,7 @@ export async function handleLeaderboardRequest(url, db) {
       b.ngo_completed - a.ngo_completed
   );
 
-  return {
+  const body = {
     ok: true,
     schema: REPUTATION_AND_PROPOSAL_GRID.schema_id,
     scoring_policy: {
@@ -960,12 +1193,20 @@ export async function handleLeaderboardRequest(url, db) {
       high_bandwidth_multiplier: "1.25x",
       badges_available: Object.values(BADGE_CATALOG),
     },
-    total_ranked_workers: standings.length,
-    leaderboard: standings,
+    limit,
+    total_ranked_workers: Math.min(standings.length, limit),
+    leaderboard: standings.slice(0, limit),
   };
+  if (cacheable) {
+    if (leaderboardCache.size >= REPUTATION_AND_PROPOSAL_GRID.leaderboard_cache_entries) {
+      leaderboardCache.delete(leaderboardCache.keys().next().value);
+    }
+    leaderboardCache.set(cacheKey, { at: nowMs, body });
+  }
+  return body;
 }
 
-export async function handleProposalsGovernanceRequest(url, db, publicUrl = "https://herma.ta-amps.workers.dev") {
+export async function handleProposalsGovernanceRequest(url, db, publicUrl = "https://shim.teleionlabs.com") {
   await ensureReputationAndProposalsSchema(db);
   const statusFilter = String(url.searchParams.get("status") || "").trim().toLowerCase();
   const kindFilter = String(url.searchParams.get("kind") || "").trim().toLowerCase();

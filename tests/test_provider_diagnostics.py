@@ -88,7 +88,7 @@ def test_unknown_bodies_do_not_invent_a_cause(raw: bytes, state: str) -> None:
 
 
 def test_arbitrary_error_fields_and_sensitive_echoes_never_escape() -> None:
-    private = "sk-" + "synthetic" * 8
+    private = "sk-" + "example" * 8
     for value in (private, {"nested": private}, [private], True, 987654321):
         raw = json.dumps(
             {
@@ -96,7 +96,7 @@ def test_arbitrary_error_fields_and_sensitive_echoes_never_escape() -> None:
                     "type": value,
                     "code": value,
                     "param": value,
-                    "message": f"Prompt: {private}; account acct_synthetic_private; request req_synthetic_private",
+                    "message": f"Prompt: {private}; account acct_example_private; request req_example_private",
                     "metadata": {"raw": private},
                 },
                 "request_id": private,
@@ -117,7 +117,7 @@ def test_arbitrary_error_fields_and_sensitive_echoes_never_escape() -> None:
     )
     assert result["code"] == 404 and result["reason"] == "no_eligible_provider_endpoint"
     assert private not in json.dumps(result)
-    # Native Ollama uses an error string; it can be classified without retaining it.
+    # A bare error string (no nested object) can be classified without retaining it.
     assert normalize_provider_error(b'{"error":"model not found"}')["reason"] == "model_unavailable"
 
 
@@ -132,7 +132,7 @@ def test_arbitrary_error_fields_and_sensitive_echoes_never_escape() -> None:
 def test_error_receipt_keeps_reservation_and_replay_without_raw_echo(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: int, code: str, outcome: str
 ) -> None:
-    private = "sk-" + "synthetic" * 8
+    private = "sk-" + "example" * 8
     monkeypatch.setenv("OPENAI_API_KEY", private)
     store = ProvisionStore(tmp_path / "state.db")
     seed(store, "key:alice")
@@ -144,15 +144,15 @@ def test_error_receipt_keeps_reservation_and_replay_without_raw_echo(
         assert request.headers["authorization"] == "Bearer " + private
         return httpx.Response(
             status,
-            headers={"Retry-After": "17", "X-Request-ID": "req_synthetic_private"},
+            headers={"Retry-After": "17", "X-Request-ID": "req_example_private"},
             json={
                 "error": {
                     "type": "invalid_request_error",
                     "code": "unsupported_parameter",
                     "param": "parallel_tool_calls",
-                    "message": private + " acct_synthetic_private " + str(request.content),
+                    "message": private + " acct_example_private " + str(request.content),
                 },
-                "account_id": "acct_synthetic_private",
+                "account_id": "acct_example_private",
             },
         )
 
@@ -183,8 +183,7 @@ def test_error_receipt_keeps_reservation_and_replay_without_raw_echo(
         engine.state.snapshot("key:alice", "conversation-one")
     )
     assert all(
-        value not in encoded
-        for value in (private, "acct_synthetic_private", "req_synthetic_private")
+        value not in encoded for value in (private, "acct_example_private", "req_example_private")
     )
     if status in {429, 503}:
         assert attempt["available_after"] > 0
@@ -198,9 +197,9 @@ class ErrorStream(httpx.AsyncByteStream):
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
         if self.mode == "unavailable":
-            raise httpx.ReadTimeout("SYNTHETIC sensitive transport explanation")
+            raise httpx.ReadTimeout("EXAMPLE sensitive transport explanation")
         if self.mode == "stream_error":
-            raise RuntimeError("SYNTHETIC sensitive stream explanation")
+            raise RuntimeError("EXAMPLE sensitive stream explanation")
         if self.mode == "cancelled":
             raise asyncio.CancelledError()
         for _ in range(20):
@@ -215,7 +214,7 @@ class ErrorStream(httpx.AsyncByteStream):
 def test_error_read_failure_keeps_known_status_and_stops_bounded_read(
     monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "example-key")
     stream = ErrorStream(mode)
     response = httpx.Response(
         429,
@@ -244,7 +243,7 @@ def test_error_read_failure_keeps_known_status_and_stops_bounded_read(
 def test_external_cancellation_is_not_hidden_by_diagnostics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "example-key")
     stream = ErrorStream("cancelled")
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(

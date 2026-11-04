@@ -5,6 +5,17 @@
 {
   "name": "herma",
   "main": "entry.js",
+  // The release guard: wrangler runs this before it uploads anything, from any checkout of this repository, and a failure
+  // stops the deploy. It needs a clean committed tree that contains the commit that is live now, current page assets, a
+  // passing banned-word gate (scripts/release_gate.mjs) and a passing light check (make light-check, MUST-FOLLOW rule 13).
+  // The first step builds the git-ignored module that the display filter imports from the ONE shared banned-word list, which lives
+  // outside this repository (MUST-FOLLOW rule 16). Without that list the build fails, an override of its path is dropped, and the last
+  // step checks again that the module the bundle will contain still comes from the real list.
+  // Whoever deploys re-reads Cloudflare first and updates deploy/cloudflare/release-policy.json in the same commit.
+  "build": {
+    "cwd": ".",
+    "command": "cd \"$(git rev-parse --show-toplevel)\" && unset BANNED_WORDS_LIST BANNED_NEUTRAL_NAMES && node scripts/banned_list.mjs && python3 scripts/check_release.py --check && make light-check && node scripts/banned_list.mjs --check"
+  },
   "compatibility_date": "2026-10-01",
   "workers_dev": true,
   "durable_objects": {
@@ -29,22 +40,35 @@
       "service": "tessera"
     }
   ],
+  // The public pages' stylesheet, fonts and shared agent-banner script. Cloudflare serves these before the Worker runs
+  // (no Worker request, no CPU); herma/static is the single source and the Python app serves the same folder.
+  "assets": { "directory": "../../herma/static" },
   // "routes": [{ "pattern": "herma.<your-domain>", "custom_domain": true }],
   "vars": {
     "HERMA_CONVERSATION_ENABLED": "true",
     "HERMA_CONVERSATION_MAX_OUTPUT": "1600",
     "HERMA_CONVERSATION_DISABLED_PROVIDERS": "[\"anthropic\",\"openrouter\"]",
     "HERMA_META_BUDGET_USD": "5",
-    "HERMA_OLLAMA_CALLS_PER_DAY": "30",
     "STORAGE_MODE": "cloud",
-    "PUBLIC_URL": "https://herma.ta-amps.workers.dev",
+    "PUBLIC_URL": "https://shim.teleionlabs.com",
+    "CANONICAL_REDIRECT": "on",
     "TESSERA_URL": "https://tessera.ta-amps.workers.dev",
     "ORIGIN": "https://herma-api.fly.dev"
   },
+  // Privacy (finding F-PRIV-LOGS-001): Cloudflare's persisted traces and automatic request logs keep a visitor's address, browser and rough
+  // location for days. Persisted traces and invocation logs are off and query strings are redacted; only the Worker's own log lines are
+  // kept, and none of them carries an address.
   "observability": {
     "enabled": true,
+    "redact_query_string": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": false,
+      "persist": true
+    },
     "traces": {
-      "enabled": true
+      "enabled": false,
+      "persist": false
     }
   }
 }

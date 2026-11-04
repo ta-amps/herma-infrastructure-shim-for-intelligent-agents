@@ -453,7 +453,7 @@ class ProfileCompareRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=16_000)
     profiles: list[CallerProfileId] = Field(default_factory=list, max_length=8)
     wire_format: Literal["chat_completions", "responses", "messages"] = "chat_completions"
-    model: str = Field(default="muse-spark-open", max_length=120)
+    model: str = Field(default="muse-spark-1.3", max_length=120)
     workspace_paths: list[str] = Field(default_factory=list, max_length=32)
 
 

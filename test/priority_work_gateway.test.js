@@ -245,7 +245,7 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     });
     expect(beat1SubRes.status).toBe(200);
     const beat1Sub = await beat1SubRes.json();
-    expect(beat1Sub.applied_evaluations.length).toBe(2);
+    expect(beat1Sub.applied_evaluations.length).toBe(0); // a maker's scores on its own work are dropped
     expect(beat1Sub.worker_iteration_state.next_honor_beat_slot).toBe("own");
 
     // 4. Beat 2 (iteration 2 -> own): Worker A automatically claims its own UUID-tagged continuation verb!
@@ -271,7 +271,7 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     expect(promptsPageRes.status).toBe(200);
     expect(promptsPageRes.headers.get("content-security-policy")).toContain("script-src 'self'");
     const promptsHtml = await promptsPageRes.text();
-    expect(promptsHtml).toContain("Copy &amp; Paste Agent Worker Prompts");
+    expect(promptsHtml).toContain("<h1>Prompts for your agent</h1>");
     expect(promptsHtml).toContain('<script src="/q/prompts.js" defer></script>');
 
     const promptsJsRes = await callGateway("/q/prompts.js");
@@ -343,6 +343,12 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     expect(subJson.contribution_permalink).toContain("/c/");
     expect(subJson.worker_permalink).toContain("/w/w_kitpackager_001");
     expect(subJson.dashboard_url).toContain("/dashboard");
+    // The two plain lines the agent shows its person: links to the Task Object, the worker and the dashboard, then the next turn; no hash.
+    const printed = String(subJson.contributor_printout).split("\n");
+    expect(printed).toHaveLength(2);
+    expect(printed[0]).toMatch(/^Links: your contribution \S+\/c\/portable_agent_kit_test_v1 \u00b7 your worker \S+\/w\/w_kitpackager_001 \u00b7 dashboard \S+\/dashboard$/);
+    expect(printed[1]).toMatch(/^Next turn: (help a nonprofit|check someone else\u2019s work|its own project)\.$/);
+    expect(subJson.contributor_printout).not.toMatch(/[0-9a-f]{12,}|receipt|sha/i);
     expect(subJson.stored_task_objects[0].chunk_count).toBeGreaterThanOrEqual(3);
     expect(subJson.stored_task_objects[0].total_payload_bytes).toBeGreaterThan(320000);
 
@@ -371,7 +377,7 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     expect(dashRes.status).toBe(200);
     expect(dashRes.headers.get("content-security-policy")).toContain("script-src 'self'");
     const dashHtml = await dashRes.text();
-    expect(dashHtml).toContain("Live Autonomous Worker Swarm");
+    expect(dashHtml).toContain("What the workers are doing");
     expect(dashHtml).toContain("portable_agent_kit_test_v1");
 
     const dashJsRes = await callGateway("/q/dashboard.js");
@@ -380,7 +386,7 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     const permRes = await callGateway("/c/portable_agent_kit_test_v1");
     expect(permRes.status).toBe(200);
     const permHtml = await permRes.text();
-    expect(permHtml).toContain("SHA-256 Verified");
+    expect(permHtml).toContain("Put back together exactly from");
     expect(permHtml).toContain("skills/offline_triage/SKILL.md");
 
     const workerPageRes = await callGateway("/w/w_kitpackager_001");
@@ -522,7 +528,7 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     const statusRes = await callGateway("/status");
     expect(statusRes.status).toBe(200);
     const statusJson = await statusRes.json();
-    expect(statusJson.schema).toBe("herma.priority_work_gateway.grid.v6_7");
+    expect(statusJson.schema).toBe("herma.priority_work_gateway.grid.v6_8");
 
     const missingWorkerRes = await callGateway("/w/w_nonexistent_unit_probe_404");
     expect(missingWorkerRes.status).toBe(404);
@@ -726,11 +732,12 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     expect(nestedEvalJson.applied_evaluations.length).toBe(1);
     expect(nestedEvalJson.applied_evaluations[0].target_id).toBe("portable_agent_kit_test_v1");
 
-    // 3. Verify demo runner JS contains escHtml and demo HTML escapes untrusted tags
+    // 3. Verify the demo runner builds its nodes with DOM calls (never innerHTML) and the demo HTML escapes untrusted tags
     const demoRunnerRes = await callGateway("/q/demo-runner.js");
     expect(demoRunnerRes.status).toBe(200);
     const demoRunnerJs = await demoRunnerRes.text();
-    expect(demoRunnerJs).toContain("function escHtml");
+    expect(demoRunnerJs).toContain("textContent");
+    expect(demoRunnerJs).not.toContain("innerHTML");
 
     const demoHtmlRes = await callGateway("/q/demo/nested_eval_and_xss_guard_probe_v1");
     expect(demoHtmlRes.status).toBe(200);
@@ -744,7 +751,7 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     expect(codexCardRes.status).toBe(200);
     const codexCardTxt = await codexCardRes.text();
     expect(codexCardTxt).toContain("codex-gpt-astra-09");
-    expect(codexCardTxt).toContain("herma-codex-astra/1.0");
+    expect(codexCardTxt).toContain("herma-worker/6.3");
     expect(codexCardTxt).toContain("batch_size");
   });
 });

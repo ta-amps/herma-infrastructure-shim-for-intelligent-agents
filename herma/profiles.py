@@ -192,7 +192,6 @@ CALLER_PROFILES_LIST: tuple[CallerProfile, ...] = (
             "shelter",
             "helpline",
             "intake",
-            "synthetic",
             "escalat",
             "survivor",
         ),

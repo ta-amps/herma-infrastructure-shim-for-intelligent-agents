@@ -26,8 +26,9 @@ LEGACY_GRANT_SETTINGS = (
 CALLER_SCOPE = re.compile(r"key:[A-Za-z0-9_.:-]{1,120}")
 MAX_GRANTS = 1000
 MAX_GRANT_CHOICES = 16
-# OpenRouter author slugs that name the same vendor as a direct provider.
-VENDOR_ALIASES = {"meta-llama": "meta"}
+# OpenRouter author slugs that name the same vendor as a direct provider, when the slug differs
+# from the provider name. Meta's models use the author slug `meta`, which already folds to `meta`.
+VENDOR_ALIASES: dict[str, str] = {}
 
 
 def upstream_identity(provider: str, model: str) -> str:
@@ -60,7 +61,7 @@ def refuse_contributor_choices(choices: object) -> None:
 
 class ProviderChoice(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    provider: Literal["meta", "ollama", "openai", "anthropic", "openrouter"]
+    provider: Literal["meta", "openai", "anthropic", "openrouter"]
     model: str = Field(min_length=1, max_length=100)
     routing_provider: str | None = Field(default=None, min_length=1, max_length=100)
 

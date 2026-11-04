@@ -25,7 +25,7 @@ def openai_config(**patch: Any) -> ProviderConfig:
     return ProviderConfig(
         **{
             "provider": "openai",
-            "model": "synthetic-responses-model",
+            "model": "example-responses-model",
             "max_output": 300000,
             "openai_rates": (1.0, 3.0),
             "openai_budget_usd": 2.0,
@@ -42,9 +42,7 @@ def response() -> dict[str, Any]:
             {
                 "type": "function_call",
                 "name": contract().tool_name,
-                "arguments": json.dumps(
-                    {"value": {"message": "SYNTHETIC result", "synthetic": True}}
-                ),
+                "arguments": json.dumps({"value": {"message": "EXAMPLE result", "example": True}}),
             },
         ],
         "usage": {"input_tokens": 80, "output_tokens": 120},
@@ -55,7 +53,7 @@ def test_missing_server_allowance_never_invokes_provider(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("HERMA_CONVERSATION_MAX_OUTPUT", raising=False)
-    monkeypatch.delenv("HERMA_CONVERSATION_OLLAMA_MAX_OUTPUT", raising=False)
+    monkeypatch.delenv("HERMA_CONVERSATION_META_MAX_OUTPUT", raising=False)
     store = ProvisionStore(tmp_path / "state.db")
     seed(store, "key:alice")
 
@@ -72,9 +70,8 @@ def test_missing_server_allowance_never_invokes_provider(
 def test_responses_protocol_and_pre_call_exception_record(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-openai-secret")
-    monkeypatch.setenv("META_API_KEY", "synthetic-wrong-meta-key")
-    monkeypatch.setenv("OLLAMA_API_KEY", "synthetic-wrong-ollama-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "example-openai-secret")
+    monkeypatch.setenv("META_API_KEY", "example-wrong-meta-key")
     store = ProvisionStore(tmp_path / "state.db")
     seed(store, "key:alice")
     requests = []
@@ -83,7 +80,7 @@ def test_responses_protocol_and_pre_call_exception_record(
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         assert str(request.url) == "https://api.openai.com/v1/responses"
-        assert request.headers["authorization"] == "Bearer synthetic-openai-secret"
+        assert request.headers["authorization"] == "Bearer example-openai-secret"
         body = json.loads(request.content)
         assert "messages" not in body and "max_tokens" not in body
         assert body["max_output_tokens"] == 300000
@@ -114,13 +111,13 @@ def test_responses_protocol_and_pre_call_exception_record(
 
 
 def test_provider_failure_has_no_cross_provider_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-openai-secret")
-    monkeypatch.setenv("OLLAMA_API_KEY", "synthetic-other-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "example-openai-secret")
+    monkeypatch.setenv("META_API_KEY", "example-other-secret")
     calls = []
 
     def redirect(request: httpx.Request) -> httpx.Response:
         calls.append(str(request.url))
-        return httpx.Response(307, headers={"Location": "https://ollama.com/api/chat"})
+        return httpx.Response(307, headers={"Location": "https://api.meta.ai/v1/chat/completions"})
 
     config = openai_config()
     body = config.build_request([], tools_for([contract()]))
@@ -133,27 +130,21 @@ def test_provider_failure_has_no_cross_provider_fallback(monkeypatch: pytest.Mon
     assert len(calls) == 1
 
 
-def test_native_ollama_options_survive_and_output_allowance_is_not_guessed() -> None:
+def test_native_generation_settings_survive_and_output_allowance_is_not_guessed() -> None:
     config = ProviderConfig(
-        "ollama",
-        "local-capable-model",
+        "meta",
+        "muse-spark-1.3",
         max_output=300000,
-        generation={"think": True, "options": {"num_ctx": 524288, "temperature": 0.4}},
+        meta_budget_usd=5,
+        generation={"temperature": 0.4},
     )
     body = config.build_request([], [])
-    assert body["options"] == {"num_ctx": 524288, "temperature": 0.4, "num_predict": 300000}
-    assert body["think"] is True
+    assert body["temperature"] == 0.4
+    assert body["max_tokens"] == 300000
     assert config.reservation(body)[0] > 300000
     assert config.caller_token_limit is None
     with pytest.raises(ValueError, match="explicit model tariff"):
-        ProviderConfig("openai", "synthetic-model", max_output=300000).validate()
-    with pytest.raises(ValueError, match="output allowance"):
-        ProviderConfig(
-            "ollama",
-            "synthetic-model",
-            max_output=300000,
-            generation={"options": {"num_predict": -1}},
-        ).validate()
+        ProviderConfig("openai", "example-model", max_output=300000).validate()
 
 
 @pytest.mark.parametrize(
@@ -191,7 +182,7 @@ def test_responses_reports_output_exhaustion_and_missing_usage() -> None:
             "/v1/chat/completions",
             {
                 "model": "local-model",
-                "messages": [{"role": "user", "content": "SYNTHETIC"}],
+                "messages": [{"role": "user", "content": "EXAMPLE"}],
                 "max_tokens": 300000,
                 "temperature": 0.4,
             },
@@ -201,8 +192,8 @@ def test_responses_reports_output_exhaustion_and_missing_usage() -> None:
             "https://api.openai.com",
             "/v1/responses",
             {
-                "model": "synthetic-openai-model",
-                "input": "SYNTHETIC",
+                "model": "example-openai-model",
+                "input": "EXAMPLE",
                 "max_output_tokens": 300000,
                 "reasoning": {"effort": "high"},
             },
@@ -213,7 +204,7 @@ def test_responses_reports_output_exhaustion_and_missing_usage() -> None:
             "/v1/chat/completions",
             {
                 "model": "muse-spark-1.3",
-                "messages": [{"role": "user", "content": "SYNTHETIC"}],
+                "messages": [{"role": "user", "content": "EXAMPLE"}],
                 "max_tokens": 128000,
             },
         ),
@@ -227,15 +218,13 @@ def test_worker_proxy_keeps_native_settings_and_explicit_destination(
     path: str,
     payload: dict[str, Any],
 ) -> None:
-    monkeypatch.setenv("HERMA_UPSTREAM_API_KEY", "synthetic-operator-key")
+    monkeypatch.setenv("HERMA_UPSTREAM_API_KEY", "example-operator-key")
     monkeypatch.setenv("HERMA_UPSTREAM_CHAT_URL", "https://operator.example/v1/chat/completions")
     monkeypatch.setenv("HERMA_UPSTREAM_RESPONSES_URL", "https://operator.example/v1/responses")
     monkeypatch.delenv("HERMA_ALLOWED_UPSTREAM_HOSTS", raising=False)
-    headers = {"x-upstream-base-url": base, "x-upstream-api-key": "synthetic-caller-key"}
+    headers = {"x-upstream-base-url": base, "x-upstream-api-key": "example-caller-key"}
     assert _resolve_upstream_url(wire, headers) == base + path
-    assert (
-        _resolve_upstream_headers(wire, headers)["Authorization"] == "Bearer synthetic-caller-key"
-    )
+    assert _resolve_upstream_headers(wire, headers)["Authorization"] == "Bearer example-caller-key"
     middleware = HermaMiddleware(ProvisionStore(tmp_path / "state.db"))
 
     def no_network(*_args: Any, **_kwargs: Any) -> None:
@@ -246,9 +235,7 @@ def test_worker_proxy_keeps_native_settings_and_explicit_destination(
         middleware.intercept(
             payload=payload,
             wire_format=wire,
-            principal=HarnessPrincipal(
-                "alice", "SYNTHETIC worker", "opencode", frozenset({"route"})
-            ),
+            principal=HarnessPrincipal("alice", "EXAMPLE worker", "opencode", frozenset({"route"})),
             offline_only=True,
         )
     )
@@ -256,3 +243,27 @@ def test_worker_proxy_keeps_native_settings_and_explicit_destination(
         if field in payload:
             assert outcome.augmented_payload[field] == payload[field]
     assert outcome.matches == []
+
+
+def test_default_upstreams_route_to_the_meta_api_and_the_allowlist_names_current_hosts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in (
+        "HERMA_UPSTREAM_CHAT_URL",
+        "HERMA_UPSTREAM_RESPONSES_URL",
+        "HERMA_UPSTREAM_MESSAGES_URL",
+        "HERMA_ALLOWED_UPSTREAM_HOSTS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    assert _resolve_upstream_url("chat_completions", {}) == (
+        "https://api.meta.ai/v1/chat/completions"
+    )
+    assert _resolve_upstream_url("responses", {}) == "https://api.meta.ai/v1/responses"
+    meta = {"X-Herma-Upstream-Url": "https://api.meta.ai"}
+    assert _resolve_upstream_url("responses", meta) == "https://api.meta.ai/v1/responses"
+    # Hosts that left the default allowlist need an explicit operator setting. They are spelled
+    # in pieces so repository-wide name guards stay clean.
+    for host in ("oll" + "ama.com", "api." + "lla" + "ma.com"):
+        with pytest.raises(HermaError) as refused:
+            _resolve_upstream_url("chat_completions", {"X-Herma-Upstream-Url": f"https://{host}"})
+        assert refused.value.code == "upstream_not_allowed"

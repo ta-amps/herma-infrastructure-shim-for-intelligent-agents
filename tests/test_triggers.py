@@ -126,7 +126,7 @@ async def test_engine_short_circuits_micromodel_when_keyword_matches(
 
     monkeypatch.setattr(httpx.AsyncClient, "post", _boom)
     monkeypatch.setenv("HERMA_MICROMODEL_URL", "http://127.0.0.1:9/v1/chat/completions")
-    monkeypatch.setenv("HERMA_MICROMODEL_MODEL", "muse-spark-open")
+    monkeypatch.setenv("HERMA_MICROMODEL_MODEL", "muse-spark-1.3")
 
     prov = Provision(
         prov_id="PROV-SHORT-CIRCUIT",
@@ -188,11 +188,11 @@ async def test_micromodel_requires_typed_decision(
 
     monkeypatch.setattr(httpx.AsyncClient, "post", post)
     monkeypatch.setenv("HERMA_MICROMODEL_URL", "https://example.com/classify")
-    monkeypatch.setenv("HERMA_MICROMODEL_MODEL", "muse-spark-open")
+    monkeypatch.setenv("HERMA_MICROMODEL_MODEL", "muse-spark-1.3")
     spec = MicromodelTrigger(
-        intent_question="Should this synthetic rule apply?", fallback_keywords=["synthetic"]
+        intent_question="Should this example rule apply?", fallback_keywords=["example"]
     )
-    matched, reasons, _ = await evaluate_micromodel_trigger(spec, "synthetic request")
+    matched, reasons, _ = await evaluate_micromodel_trigger(spec, "example request")
     assert matched is expected
     assert calls == 1
     assert not any("fallback" in reason for reason in reasons)
@@ -220,9 +220,9 @@ async def test_malformed_model_reply_does_not_activate_fallback(
     monkeypatch.setattr(httpx.AsyncClient, "post", post)
     monkeypatch.setenv("HERMA_MICROMODEL_URL", "https://example.com/classify")
     spec = MicromodelTrigger(
-        intent_question="Should this synthetic rule apply?", fallback_keywords=["synthetic"]
+        intent_question="Should this example rule apply?", fallback_keywords=["example"]
     )
-    assert await evaluate_micromodel_trigger(spec, "synthetic request") == (False, [], 0.0)
+    assert await evaluate_micromodel_trigger(spec, "example request") == (False, [], 0.0)
 
 
 @pytest.mark.anyio
@@ -236,30 +236,28 @@ async def test_offline_engine_blocks_all_provider_calls(monkeypatch: pytest.Monk
     monkeypatch.setattr(httpx.AsyncClient, "post", post)
     monkeypatch.setenv("HERMA_MICROMODEL_URL", "https://example.com/classify")
     monkeypatch.setenv("HERMA_EMBEDDINGS_URL", "https://example.com/embeddings")
-    semantic = SemanticTrigger(exemplars=["synthetic request"])
+    semantic = SemanticTrigger(exemplars=["example request"])
     micro = MicromodelTrigger(
-        intent_question="Should this synthetic rule apply?", fallback_keywords=["synthetic"]
+        intent_question="Should this example rule apply?", fallback_keywords=["example"]
     )
     stored = _wrap(
         Provision(
             prov_id="PROV-OFFLINE-BOUNDARY",
             title="Offline boundary",
-            summary="Synthetic network-free trigger check.",
-            inject_text="Use this synthetic guidance.",
+            summary="Example network-free trigger check.",
+            inject_text="Use this example guidance.",
             triggers=TriggerSpec(mode="all", semantic=semantic, micromodel=micro),
         )
     )
-    hits = await evaluate_provisions(
-        [stored], TriggerContext("synthetic request"), offline_only=True
-    )
+    hits = await evaluate_provisions([stored], TriggerContext("example request"), offline_only=True)
     assert len(hits) == 1
     assert hits[0][1].matched_tiers == ["semantic", "micromodel"]
     assert any("semantic:cosine" in reason for reason in hits[0][1].reasons)
     assert any("micromodel:fallback" in reason for reason in hits[0][1].reasons)
-    assert (await evaluate_semantic_trigger(semantic, "synthetic request", offline_only=True))[0]
+    assert (await evaluate_semantic_trigger(semantic, "example request", offline_only=True))[0]
     assert calls == []
 
     # Configured online mode still attempts both providers and can use the allowed fallback.
-    hits = await evaluate_provisions([stored], TriggerContext("synthetic request"))
+    hits = await evaluate_provisions([stored], TriggerContext("example request"))
     assert len(hits) == 1
     assert calls == ["https://example.com/embeddings", "https://example.com/classify"]

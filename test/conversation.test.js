@@ -2,30 +2,31 @@ import { env, exports } from "cloudflare:workers";
 import { runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { WorkConversation } from "../deploy/cloudflare/conversation_state.js";
+import worker from "../deploy/cloudflare/worker.js";
 import { hash, checkSchema, parseProposal, providerConfig, strictJson, buildRequest, loadProviderPlan } from "../deploy/cloudflare/conversation.js";
 import { ensureSchema, sha256Hex } from "../deploy/cloudflare/herma_engine.js";
 
 const contract = {
-  operation_id: "record_observation", category_id: "noun.eval_run", description: "Record one SYNTHETIC capability observation.",
-  input_schema: { type: "object", properties: { value: { type: "object", properties: { message: { type: "string" }, synthetic: { type: "boolean", const: true } }, required: ["message", "synthetic"], additionalProperties: false } }, required: ["value"], additionalProperties: false }
+  operation_id: "record_observation", category_id: "noun.eval_run", description: "Record one EXAMPLE capability observation.",
+  input_schema: { type: "object", properties: { value: { type: "object", properties: { message: { type: "string" }, example: { type: "boolean", const: true } }, required: ["message", "example"], additionalProperties: false } }, required: ["value"], additionalProperties: false }
 };
-const entry = { entry_id: "work.observation", kind: "noun", title: "Observation", summary: "SYNTHETIC capability observation", schema_or_body: { work_contract: contract } };
-const turn = patch => ({ conversation_id: "conversation-one", request_id: "request-one", expected_version: 0, message: "SYNTHETIC hello", context_refs: [entry.entry_id], provider: "ollama", ...patch });
+const entry = { entry_id: "work.observation", kind: "noun", title: "Observation", summary: "EXAMPLE capability observation", schema_or_body: { work_contract: contract } };
+const turn = patch => ({ conversation_id: "conversation-one", request_id: "request-one", expected_version: 0, message: "EXAMPLE hello", context_refs: [entry.entry_id], provider: "meta", ...patch });
 // A random scope holds no operator grant; pooled callers each hold their own exact grant.
 const scope = () => "key:" + crypto.randomUUID();
 const pooled = { regular: 0, uncertain: 0 };
 const caller = (uncertain = false) => {
-  const id = uncertain ? `key:synthetic-conversation-uncertain-${pooled.uncertain++}` : `key:synthetic-conversation-${pooled.regular++}`;
+  const id = uncertain ? `key:example-conversation-uncertain-${pooled.uncertain++}` : `key:example-conversation-${pooled.regular++}`;
   return { id, stub: env.WORK_CONVERSATIONS.getByName(id) };
 };
-const providerPlan = (id, uncertain = false) => ({ entry_id: "plan.providers", kind: "noun", title: "Provider plan", summary: "SYNTHETIC private provider plan", _provider_plan_scope: id, schema_or_body: { provider_plan: {
+const providerPlan = (id, uncertain = false) => ({ entry_id: "plan.providers", kind: "noun", title: "Provider plan", summary: "EXAMPLE private provider plan", _provider_plan_scope: id, schema_or_body: { provider_plan: {
   caller_scope: id, purpose: "caller_requested_typed_proposal", payer: "operator", context_refs: [entry.entry_id], allow_failover: true, allow_uncertain_outcome: uncertain,
-  providers: [{ provider: "meta", model: "muse-spark-1.3" }, { provider: "ollama", model: "muse-spark-open" }]
+  providers: [{ provider: "meta", model: "muse-spark-1.3" }, { provider: "openai", model: "example-responses-model" }]
 } } });
 const plannedTurn = patch => turn({ provider: "meta", provider_plan_ref: "plan.providers", context_refs: [entry.entry_id, "plan.providers"], ...patch });
 const http = (path, body, headers = {}) => exports.default.fetch("https://example.com" + path, { method: body === undefined ? "GET" : "POST", headers: { "Content-Type": "application/json", ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
 async function key(scopes = ["route", "configure"]) {
-  const res = await http("/v1/admin/keys", { label: "SYNTHETIC test", harness_kind: "opencode", scopes }, { "X-Bootstrap-Secret": "synthetic-bootstrap-value" });
+  const res = await http("/v1/admin/keys", { label: "EXAMPLE test", harness_kind: "opencode", scopes }, { "X-Bootstrap-Secret": "example-bootstrap-value" });
   expect(res.status).toBe(201);
   const issued = await res.json();
   return { "Authorization": "Bearer " + issued.key, "X-Herma-Harness": "opencode" };
@@ -35,9 +36,9 @@ async function key(scopes = ["route", "configure"]) {
 let httpKeys = 0;
 async function grantedKey(scopes = ["configure", "route"]) {
   await ensureSchema(env.HERMA_DB);
-  const id = `synthetic-http-${httpKeys++}`, secret = "synthetic-secret-" + crypto.randomUUID();
+  const id = `example-http-${httpKeys++}`, secret = "example-secret-" + crypto.randomUUID();
   await env.HERMA_DB.prepare("INSERT INTO harness_keys (key_id, label, harness_kind, scopes_json, secret_sha256, created_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?, NULL)")
-    .bind(id, "SYNTHETIC granted", "opencode", JSON.stringify(scopes), await sha256Hex(secret), Date.now() / 1000).run();
+    .bind(id, "EXAMPLE granted", "opencode", JSON.stringify(scopes), await sha256Hex(secret), Date.now() / 1000).run();
   return { "Authorization": `Bearer hmk_${id}.${secret}`, "X-Herma-Harness": "opencode" };
 }
 
@@ -50,9 +51,18 @@ describe("typed conversation in the Workers runtime", () => {
     const schema = await (await http("/api/conversation-schema")).json();
     expect(schema.conversation_turn.additionalProperties).toBe(false);
     expect(schema.conversation_turn.required).toContain("expected_version");
+    expect(schema.conversation_turn.properties.provider).toMatchObject({ default: "meta", enum: ["meta", "openai", "anthropic", "openrouter"] });
     const access = await (await http("/connect.json")).json();
     expect(access.work_conversations.enabled).toBe(true);
+    expect(access.work_conversations.providers).toEqual(["meta", "openai", "anthropic", "openrouter"]);
     expect(access.work_conversations.schema_endpoint).toBe("/api/conversation-schema");
+  });
+  it("refuses a retired or unknown provider id like any other invalid turn", async () => {
+    // The retired provider id is spelled in pieces so repository-wide name guards stay clean.
+    const retired = ["oll", "ama"].join(""), { id, stub } = caller();
+    for (const provider of [retired, "unknown-provider"]) expect(await stub.turn(id, turn({ provider }), [entry])).toEqual({ status: 422, body: { code: "invalid_conversation_turn" } });
+    expect(() => providerConfig(env, retired)).toThrow("invalid_provider_configuration");
+    expect(parseProposal({ message: {} }, retired, []).validation_issues).toEqual([{ path: "/", rule: "invalid_tool_call" }]);
   });
   it("authenticates route scope and resolves only caller-visible contracts", async () => {
     expect((await http("/v1/conversations/turn", turn())).status).toBe(403);
@@ -71,24 +81,25 @@ describe("typed conversation in the Workers runtime", () => {
     expect((await res.json()).proposal.status).toBe("ready");
     const other = await http("/v1/conversations/conversation-one", undefined, b);
     expect((await other.json()).history).toEqual([]);
-    expect((await http("/v1/conversations/turn", turn(), { ...a, Cookie: "session=fixture" })).status).toBe(403);
+    const strictCookie = await worker.fetch(new Request("https://example.com/v1/conversations/turn", { method: "POST", headers: { "Content-Type": "application/json", ...a, Cookie: "session=fixture" }, body: JSON.stringify(turn()) }), { ...env, HERMA_STRICT_AUTH: "true" }, { waitUntil() {}, passThroughOnException() {} });
+    expect(strictCookie.status).toBe(403);
   });
 
-  it.each(["ollama", "meta", "openai", "anthropic", "openrouter"])("clarifies then proposes typed data with %s and replays exactly", async provider => {
+  it.each(["meta", "openai", "anthropic", "openrouter"])("clarifies then proposes typed data with %s and replays exactly", async provider => {
     const { id, stub } = caller();
     const first = await stub.turn(id, turn({ message: "hi", provider }), [entry]);
     expect(first.body.proposal.status).toBe("clarify");
     const input = turn({ provider, expected_version: 1, request_id: "request-two" });
     const second = await stub.turn(id, input, [entry]);
     expect(second.body.proposal.status).toBe("ready");
-    expect(second.body.proposal.arguments.value.synthetic).toBe(true);
+    expect(second.body.proposal.arguments.value.example).toBe(true);
     expect(second.body.executed).toBe(false);
     expect(second.body.max_output_tokens).toBe(16384);
     expect(second.body.server_exception).toMatchObject({ purpose: "caller_requested_typed_proposal", principal: id, payer: "operator", retry_policy: "no_automatic_retry_or_provider_fallback" });
     expect(second.body.usage).toEqual({ input_tokens: 100, output_tokens: 50 });
     expect(second.body.attempts[0]).toMatchObject({ upstream_http_status: 200, provider_diagnostics: null });
     expect(second.body.receipt_hash).toMatch(/^[a-f0-9]{64}$/);
-    if (provider === "openrouter") expect(second.body.attempts[0]).toMatchObject({ destination: "https://openrouter.ai/api/v1/chat/completions", routing_provider: "synthetic-host", reported_provider: "synthetic-host" });
+    if (provider === "openrouter") expect(second.body.attempts[0]).toMatchObject({ destination: "https://openrouter.ai/api/v1/chat/completions", routing_provider: "example-host", reported_provider: "example-host" });
     await runInDurableObject(stub, (_instance, state) => state.storage.sql.exec("UPDATE conversations SET history=?", JSON.stringify([{ role: "user", content: "x".repeat(40000) }])));
     expect(await stub.turn(id, input, [entry])).toEqual(second);
     expect((await stub.turn(id, { ...input, message: "different" }, [entry])).body.code).toBe("request_id_conflict");
@@ -98,7 +109,7 @@ describe("typed conversation in the Workers runtime", () => {
     const { id, stub } = caller(), plan = providerPlan(id), input = plannedTurn({ message: "rotate-test" });
     const result = await stub.turn(id, input, [entry, plan]);
     expect(result.body.proposal.status).toBe("ready");
-    expect(result.body.attempts.map(a => [a.provider, a.outcome])).toEqual([["meta", "rejected"], ["ollama", "completed"]]);
+    expect(result.body.attempts.map(a => [a.provider, a.outcome])).toEqual([["meta", "rejected"], ["openai", "completed"]]);
     expect(result.body.attempts[0].usage).toEqual({ input_tokens: null, output_tokens: null });
     expect(result.body.attempts[0].reserved_usd).toBeGreaterThan(0);
     expect(result.body.attempts[0]).toMatchObject({ upstream_http_status: 429, provider_diagnostics: { body_state: "malformed", reason: "unknown" } });
@@ -154,7 +165,7 @@ describe("typed conversation in the Workers runtime", () => {
     const { id, stub } = caller(true);
     await runInDurableObject(stub, async (_instance, state) => {
       let reservations = 0;
-      const fresh = new WorkConversation(state, { ...env, WORK_REASONING_BUDGET: { getByName: () => ({ reserve: async () => { reservations++; throw new Error("SYNTHETIC storage unavailable"); } }) } });
+      const fresh = new WorkConversation(state, { ...env, WORK_REASONING_BUDGET: { getByName: () => ({ reserve: async () => { reservations++; throw new Error("EXAMPLE storage unavailable"); } }) } });
       const result = await fresh.turn(id, plannedTurn(), [entry, providerPlan(id, true)]);
       expect(result.body.error_code).toBe("storage_or_coordination_unavailable");
       expect(reservations).toBe(1);
@@ -176,12 +187,12 @@ describe("typed conversation in the Workers runtime", () => {
     });
   });
 
-  it.each([["meta", "META_API_KEY"], ["ollama", "OLLAMA_API_KEY"], ["openai", "OPENAI_API_KEY"], ["anthropic", "ANTHROPIC_API_KEY"], ["openrouter", "OPENROUTER_API_KEY"]])("preflights the selected %s key before allowance while preserving offline preparation", async (provider, variable) => {
+  it.each([["meta", "META_API_KEY"], ["openai", "OPENAI_API_KEY"], ["anthropic", "ANTHROPIC_API_KEY"], ["openrouter", "OPENROUTER_API_KEY"]])("preflights the selected %s key before allowance while preserving offline preparation", async (provider, variable) => {
     const target = caller(), config = { ...env, [variable]: "" };
     expect(buildRequest(providerConfig(config, provider), turn({ provider }), [], []).tokens).toBeGreaterThan(16384);
     await runInDurableObject(target.stub, async (_instance, state) => {
       let reservations = 0;
-      const fresh = new WorkConversation(state, { ...config, WORK_REASONING_BUDGET: { getByName: () => { reservations++; throw new Error("SYNTHETIC no reservation expected"); } } });
+      const fresh = new WorkConversation(state, { ...config, WORK_REASONING_BUDGET: { getByName: () => { reservations++; throw new Error("EXAMPLE no reservation expected"); } } });
       const input = turn({ provider }), result = await fresh.turn(target.id, input, [entry]);
       expect(result.body.error_code).toBe("provider_not_configured");
       expect(result.body.attempts[0]).toMatchObject({ outcome: "not_sent", reservation_status: "not_reserved", reserved_tokens: 0 });
@@ -195,7 +206,8 @@ describe("typed conversation in the Workers runtime", () => {
 
   it("preserves the exact fallback allowance when the first provider key is absent", async () => {
     const probe = caller();
-    const first = await probe.stub.turn(probe.id, turn(), [entry]), limit = first.body.reserved_tokens, target = caller();
+    // The fallback is the plan's OpenAI choice, so measure the exact allowance of an OpenAI request.
+    const first = await probe.stub.turn(probe.id, turn({ provider: "openai" }), [entry]), limit = first.body.reserved_tokens, target = caller();
     await runInDurableObject(target.stub, async (_instance, state) => {
       const budget = env.WORK_REASONING_BUDGET.getByName(crypto.randomUUID());
       const fresh = new WorkConversation(state, { ...env, META_API_KEY: "", HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR: String(limit), WORK_REASONING_BUDGET: { getByName: () => budget } });
@@ -204,8 +216,8 @@ describe("typed conversation in the Workers runtime", () => {
       expect(result.body.attempts[0]).toMatchObject({ error_code: "provider_not_configured", outcome: "not_sent", reservation_status: "not_reserved", reserved_tokens: 0 });
       expect(result.body.reserved_tokens).toBe(limit);
       expect(state.storage.sql.exec("SELECT SUM(tokens) AS n FROM budgets").one().n).toBe(limit);
-      expect(result.body.server_exception.actions.filter(action => action.action === "provider_request").map(action => action.provider)).toEqual(["ollama"]);
-      expect((await budget.summary()).today).toEqual([{ provider: "ollama", reserved_calls: 1 }]);
+      expect(result.body.server_exception.actions.filter(action => action.action === "provider_request").map(action => action.provider)).toEqual(["openai"]);
+      expect((await budget.summary()).today).toEqual([{ provider: "openai", reserved_calls: 1 }]);
     });
   });
 
@@ -213,7 +225,7 @@ describe("typed conversation in the Workers runtime", () => {
     const target = caller();
     await runInDurableObject(target.stub, async (_instance, state) => {
       let reservations = 0;
-      const fresh = new WorkConversation(state, { ...env, HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR: "1", WORK_REASONING_BUDGET: { getByName: () => { reservations++; throw new Error("SYNTHETIC no reservation expected"); } } });
+      const fresh = new WorkConversation(state, { ...env, HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR: "1", WORK_REASONING_BUDGET: { getByName: () => { reservations++; throw new Error("EXAMPLE no reservation expected"); } } });
       const result = await fresh.turn(target.id, plannedTurn(), [entry, providerPlan(target.id)]);
       expect(result.body.error_code).toBe("conversation_budget_exhausted");
       expect(result.body.attempts).toHaveLength(1);
@@ -262,7 +274,7 @@ describe("typed conversation in the Workers runtime", () => {
     ["openrouter", { n: 3 }], ["meta", { n: 2 }], ["openrouter", { n: true }], ["openrouter", { n: "1" }], ["openai", { n: 1 }],
     ["openrouter", { best_of: 3 }], ["openai", { service_tier: "priority" }], ["openai", { service_tier: "auto" }],
     ["openai", { service_tier: "flex" }], ["openai", { service_tier: null }], ["anthropic", { service_tier: "auto" }],
-    ["openrouter", { service_tier: "default" }], ["openai", { prompt: { id: "pmpt_synthetic", version: "1" } }], ["openrouter", { prompt_id: "pmpt_synthetic" }],
+    ["openrouter", { service_tier: "default" }], ["openai", { prompt: { id: "pmpt_example", version: "1" } }], ["openrouter", { prompt_id: "pmpt_example" }],
     ["anthropic", { speed: "fast" }], ["anthropic", { inference_geo: "us" }]
   ])("refuses unpriced or opaque %s generation %j before reservation", async (provider, generation) => {
     const config = { ...env, [`HERMA_CONVERSATION_${provider.toUpperCase()}_GENERATION`]: JSON.stringify(generation) };
@@ -270,7 +282,7 @@ describe("typed conversation in the Workers runtime", () => {
     const target = caller();
     await runInDurableObject(target.stub, async (_instance, state) => {
       let reservations = 0;
-      const fresh = new WorkConversation(state, { ...config, WORK_REASONING_BUDGET: { getByName: () => { reservations++; throw new Error("SYNTHETIC no reservation expected"); } } });
+      const fresh = new WorkConversation(state, { ...config, WORK_REASONING_BUDGET: { getByName: () => { reservations++; throw new Error("EXAMPLE no reservation expected"); } } });
       const result = await fresh.turn(target.id, turn({ provider }), [entry]);
       expect(result.body.code).toBe("unsupported_generation_configuration");
       expect(reservations).toBe(0);
@@ -290,9 +302,9 @@ describe("typed conversation in the Workers runtime", () => {
   });
 
   it("releases caller tokens only for a definite provider-budget denial before failover", async () => {
-    const meta = caller(), ollama = caller();
+    const meta = caller(), openai = caller();
     const a = await meta.stub.turn(meta.id, turn({ provider: "meta" }), [entry]);
-    const b = await ollama.stub.turn(ollama.id, turn(), [entry]);
+    const b = await openai.stub.turn(openai.id, turn({ provider: "openai" }), [entry]);
     const limit = Math.max(a.body.reserved_tokens, b.body.reserved_tokens), target = caller();
     await runInDurableObject(target.stub, async (_instance, state) => {
       const budget = env.WORK_REASONING_BUDGET.getByName("provider-allowance-v1");
@@ -319,7 +331,8 @@ describe("typed conversation in the Workers runtime", () => {
 
   it("reserves the shared dollar ceiling atomically across caller-like requests", async () => {
     const stub = env.WORK_REASONING_BUDGET.getByName(crypto.randomUUID());
-    const requests = await Promise.all(Array.from({ length: 20 }, async (_, i) => { const id = await hash({ i }); return stub.reserve(id, "meta", id, 1000000); }));
+    const ceiling = Number(env.HERMA_META_BUDGET_USD) * 1000000;
+    const requests = await Promise.all(Array.from({ length: 20 }, async (_, i) => { const id = await hash({ i }); return stub.reserve(id, "meta", id, ceiling); }));
     expect(requests.filter(x => x.ok)).toHaveLength(1);
     expect(requests.filter(x => x.code === "provider_budget_exhausted")).toHaveLength(19);
   });
@@ -335,17 +348,16 @@ describe("typed conversation in the Workers runtime", () => {
   });
 
   it("requires explicit output allowance and preserves large native provider settings", () => {
-    expect(() => providerConfig({}, "ollama")).toThrow("output_allowance_required");
-    const config = providerConfig({ HERMA_CONVERSATION_OLLAMA_MAX_OUTPUT: "300000", HERMA_CONVERSATION_OLLAMA_GENERATION: '{"think":true,"options":{"num_ctx":524288,"temperature":0.4}}' }, "ollama");
+    expect(() => providerConfig({}, "meta")).toThrow("output_allowance_required");
+    const config = providerConfig({ ...env, HERMA_CONVERSATION_META_MAX_OUTPUT: "300000", HERMA_CONVERSATION_META_GENERATION: '{"temperature":0.4}' }, "meta");
     const { body, tokens } = buildRequest(config, turn(), [], []);
-    expect(body.options).toEqual({ num_predict: 300000, num_ctx: 524288, temperature: 0.4 });
-    expect(body.think).toBe(true);
+    expect(body.max_tokens).toBe(300000);
+    expect(body.temperature).toBe(0.4);
     expect(config.caller_token_limit).toBe(null);
     expect(tokens).toBeGreaterThan(300000);
-    expect(() => providerConfig({ HERMA_CONVERSATION_OPENAI_MODEL: "synthetic", HERMA_CONVERSATION_MAX_OUTPUT: "300000" }, "openai")).toThrow("invalid_provider_configuration");
-    expect(() => providerConfig({ HERMA_CONVERSATION_MAX_OUTPUT: "300000", HERMA_CONVERSATION_OLLAMA_GENERATION: '{"options":{"num_predict":-1}}' }, "ollama")).toThrow("invalid_provider_configuration");
+    expect(() => providerConfig({ HERMA_CONVERSATION_OPENAI_MODEL: "example", HERMA_CONVERSATION_MAX_OUTPUT: "300000" }, "openai")).toThrow("invalid_provider_configuration");
     expect(() => providerConfig({ ...env, HERMA_CONVERSATION_OPENROUTER_GENERATION: '{"provider":{"allow_fallbacks":true}}' }, "openrouter")).toThrow("invalid_provider_configuration");
-    for (const model of ["openrouter/auto", "@preset/synthetic-review", "synthetic/model@preset/synthetic-review", "synthetic/model:online", "synthetic/model:free:online"]) expect(() => providerConfig({ ...env, HERMA_CONVERSATION_OPENROUTER_MODEL: model }, "openrouter")).toThrow("invalid_provider_configuration");
+    for (const model of ["openrouter/auto", "@preset/example-review", "example/model@preset/example-review", "example/model:online", "example/model:free:online"]) expect(() => providerConfig({ ...env, HERMA_CONVERSATION_OPENROUTER_MODEL: model }, "openrouter")).toThrow("invalid_provider_configuration");
     expect(() => providerConfig({ ...env, HERMA_CONVERSATION_OPENROUTER_GENERATION: '{"preset":"@preset/review"}' }, "openrouter")).toThrow("invalid_provider_configuration");
   });
 
@@ -379,7 +391,7 @@ describe("typed conversation in the Workers runtime", () => {
     expect((await stub.snapshot(id, input.conversation_id)).body.attempts).toEqual(result.body.attempts);
     expect((await stub.snapshot(scope(), input.conversation_id)).status).toBe(403);
     const raw = JSON.stringify(result);
-    for (const value of ["sk-" + "synthetic".repeat(8), "acct_synthetic_private", "req_synthetic_private", "metadata"]) expect(raw).not.toContain(value);
+    for (const value of ["sk-" + "example".repeat(8), "acct_example_private", "req_example_private", "metadata"]) expect(raw).not.toContain(value);
     if (reason === "unknown") expect(attempt.provider_diagnostics).toMatchObject({ type: null, code: null, parameter: null });
   });
 

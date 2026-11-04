@@ -1,7 +1,7 @@
 {
   "prov_id": "PROV-HARNESS-FEEDS-GUIDE",
-  "title": "Agent Harness Research Feeds & HarnessTax Benchmark Context",
-  "summary": "Shims structured guidance on encapsulating Feed Task Objects, HarnessTax token overhead, and receipt-backed benchmarks across Harness Square / Harness2, OpenCode, Pi, and Muse Code.",
+  "title": "Teleion Fabric Delta Feeds & Agent Harness Research Feeds",
+  "summary": "Shims structured guidance on Delta Feeds (GET https://fabric.teleionlabs.com/v1/feeds), encapsulating Feed Task Objects, HarnessTax token overhead, and verified benchmarks across Harness Square / Harness2, OpenCode, Pi, and Muse Code.",
   "priority": 275,
   "enabled": true,
   "action": "shim_context",
@@ -12,19 +12,19 @@
   "inject_position": "system_prefix",
   "dedupe_mode": "once_per_conversation",
   "max_chars": 2600,
-  "inject_text": "Agent Harness Research Feeds are encapsulating `Feed` Task Objects (`nouns` on the wire) that bundle dated harness capability profiles, measured `HarnessTax` static prompt/tool-schema token overhead, and reproducible benchmark receipts across Harness Square / Harness2, OpenCode, Pi, and Muse Code. Keep comparative harness claims tied to content-addressed receipts, separate static `HarnessTax` overhead from task-specific shimmed bytes, and update feed heads via compare-and-set `expected_version`.",
+  "inject_text": "Teleion Fabric Delta Feeds (GET https://fabric.teleionlabs.com/v1/feeds) and Agent Harness Research Feeds are encapsulating `Feed` Task Objects that show what is new across Task Objects, dated harness capability profiles, measured `HarnessTax` static prompt and tool-schema token overhead, and reproducible benchmark digests across Harness Square / Harness2, OpenCode, Pi, and Muse Code. Keep comparative harness claims tied to content-addressed benchmark digests, separate static `HarnessTax` overhead from task-specific shimmed bytes, and update feed heads via compare-and-set `expected_version`.",
   "uris": [
     {
-      "uri": "https://ta-amps.github.io/agora-public-overview-architecture-setup-and-contribution/",
-      "label": "Agora Public Surface & Harness Ecosystem Overview",
+      "uri": "https://fabric.teleionlabs.com/v1/feeds",
+      "label": "Teleion Fabric Delta Feeds Endpoint",
       "kind": "doc",
-      "inline_excerpt": "Encapsulating Feed Task Objects, HarnessTax accounting, and multi-harness routing across Muse Code, OpenCode, Pi, and Harness Square."
+      "inline_excerpt": "Incremental what's-new Feed Task Objects across shared queues and harness profiles."
     },
     {
       "uri": "urn:ta-amps:spec:harness-feeds-v1",
       "label": "Agent Harness Research Feed Task Object Spec",
       "kind": "schema",
-      "inline_excerpt": "Tracks harness profile, HarnessTax prompt overhead, wire support, and SHA-256 benchmark receipts."
+      "inline_excerpt": "Tracks harness profile, HarnessTax prompt overhead, wire support, and content-addressed benchmark digests."
     }
   ],
   "metadata_tags": {
@@ -36,6 +36,12 @@
     "mode": "any",
     "keyword": {
       "any_keywords": [
+        "feeds",
+        "delta feed",
+        "delta feeds",
+        "agent feeds",
+        "what's new",
+        "whats new",
         "agent harness feeds",
         "agent harness research feeds",
         "harness research feeds",

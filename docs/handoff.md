@@ -23,7 +23,7 @@ certification.
 
 ## Earlier handoff
 
-> Herma: context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic noun, verb, and URI context from a user-configured database before LLM execution.
+> Herma: context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic Task Object, Task, and URI context from a user-configured database before LLM execution.
 
 - **Built & Verified (`v0.1.0`)**:
   - Strict Pydantic v2 schemas (`Provision` with `action: "shim_context" | "respond_directly"` and `context_refs`, versioned `ContextEntry` for `noun`/`verb`/`detail` records, `WorkingEntity`, `RuleOutcomeRecord`, `InsightsResponse`, `DryRunResponse`, `InjectionReceipt`).

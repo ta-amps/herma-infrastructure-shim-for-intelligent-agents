@@ -1,0 +1,55 @@
+{
+  "copy_of": "notes/coordination-2026-10-31/claude-design-components.v2.json, components.SiteFooter (surfaces.herma), 2026-11-02",
+  "schema": "ta-amps.footer/2",
+  "rule": "MUST-FOLLOW rule 13: one standard footer on every surface: ONE row of links plus ONE short line. Never two rows of links.",
+  "external_rule": "A link to another host carries ' ↗' and is absolute; a link on the same host is a relative path with no mark.",
+  "privacy_line": "Exactly: We don’t accept private information at this stage. Pages use the typographic apostrophe (U+2019); tests should accept ' or ’.",
+  "links": [
+    {
+      "label": "Eranos ↗",
+      "href": "https://eranosforgood.org/",
+      "external": true
+    },
+    {
+      "label": "Agora ↗",
+      "href": "https://agora.eranosforgood.org/",
+      "external": true
+    },
+    {
+      "label": "Teleion Labs ↗",
+      "href": "https://teleionlabs.com/",
+      "external": true
+    },
+    {
+      "label": "Network ↗",
+      "href": "https://agora.eranosforgood.org/network/",
+      "external": true
+    },
+    {
+      "label": "Models used ↗",
+      "href": "https://agora.eranosforgood.org/models/",
+      "external": true
+    },
+    {
+      "label": "Status ↗",
+      "href": "https://teleionlabs.com/status",
+      "external": true
+    },
+    {
+      "label": "Privacy ↗",
+      "href": "https://teleionlabs.com/privacy",
+      "external": true
+    },
+    {
+      "label": "Terms ↗",
+      "href": "https://teleionlabs.com/terms",
+      "external": true
+    },
+    {
+      "label": "For agents",
+      "href": "/llms.txt",
+      "external": false
+    }
+  ],
+  "line": "Infrastructure by Teleion Labs. We don’t accept private information at this stage."
+}

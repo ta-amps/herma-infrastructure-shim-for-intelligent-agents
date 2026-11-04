@@ -1,793 +1,620 @@
-// Interactive Worker Swarm Visualization Dashboard (`/dashboard`, `/q/dashboard`, `/q/dashboard.js`)
-// & Shareable Contribution / Worker Permalinks (`/c/<id>`, `/w/<worker_uuid>`) for Herma v6.3.
+// The live dashboard (`/dashboard`, `/q/dashboard`), a contribution's page (`/c/<id>`) and a worker's page (`/w/<id>`),
+// plus the small script they share (`/q/dashboard.js`: the search enhancement and the copy buttons).
 //
-// Strictly CSP-compliant (`DEFAULT_CSP_PAGE`: `script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'`).
-// Plain-language public vocabulary: Task, Task Queue, and Task Object.
+// Style: Paper & Ink, light only, on the shared page shell (page_shell.js). Plain words: Tasks and Task Objects, no
+// receipts or hashes (each "Record" link opens the full JSON), no inline styles or scripts (the page's CSP forbids them).
+// Text that workers wrote goes through tidyText() first, on the server (it applies the shared banned-word list, MUST-FOLLOW
+// rule 16); the Record links keep the original words. No word rule is ever sent to a browser: the search runs on the server too.
+
+import {
+  MODELS_USED_LINK,
+  documentHtml,
+  escapeHtml,
+  formatBytes,
+  formatWhen,
+  humanize,
+  stateLabel,
+  taskKindLabel,
+  tidyText,
+  workerLabel,
+} from "./page_shell.js";
 
 export const DASHBOARD_GRID = Object.freeze({
-  schema_id: "herma.dashboard_and_permalinks.grid.v2",
-  kib_bytes: 1024,
-  mib_bytes: 1048576,
-  preview_json_chars: 16384,
-  summary_clip_chars: 320,
-  hash_short_chars: 12,
+  schema_id: "herma.dashboard_and_permalinks.grid.v1",
+  summary_clip_chars: 220,
   percent_scale: 100,
-  milli_scale: 1000,
+  milli_scale: 10,
+  workers_shown: 50,
 });
 
-function escapeHtml(val) {
-  return String(val ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
+const GOAL_OPTIONS = [
+  ["cheapest_per_1k_ops", "Cheapest per 1,000 operations"],
+  ["fastest_p99_sub10ms", "Fastest (under 10 ms)"],
+  ["runs_on_small_4gb_laptop", "Runs on a small 4 GB laptop"],
+  ["single_maintainer_zero_dep", "One maintainer, no dependencies"],
+  ["works_with_legacy_csv_sms", "Works with old CSV and SMS systems"],
+  ["full_end_to_end_runnable_process", "A complete runnable process"],
+  ["kubernetes_production_ready", "Ready for Kubernetes"],
+];
+const LANGUAGE_OPTIONS = [
+  ["Python_3_12_Stdlib", "Python 3.12 (standard library)"],
+  ["TypeScript_Cloudflare_Workers", "TypeScript on Workers"],
+  ["Rust_ZeroAlloc_CLI", "Rust command line"],
+  ["Go_Static_Binary", "Go program"],
+  ["SQLite_D1_Pure_SQL", "SQL (SQLite or D1)"],
+  ["POSIX_Shell_Awk", "POSIX shell and awk"],
+  ["Kubernetes_YAML_Helm", "Kubernetes YAML"],
+  ["HTML5_Canvas_ZeroDep_Demo", "HTML canvas demo"],
+];
+const KIND_OPTIONS = [
+  ["portable_agent_kit", "Portable agent kit"],
+  ["demo_and_video", "Demo and video"],
+  ["runnable_cli_pipeline", "Runnable command-line pipeline"],
+  ["verified_schema_and_tests", "Schema and tests"],
+];
 
-function formatBytes(bytes) {
-  const n = Number(bytes || 0);
-  if (n >= DASHBOARD_GRID.mib_bytes) {
-    return `${(n / DASHBOARD_GRID.mib_bytes).toFixed(2)} MiB (${n.toLocaleString()} B)`;
-  }
-  if (n >= DASHBOARD_GRID.kib_bytes) {
-    return `${(n / DASHBOARD_GRID.kib_bytes).toFixed(1)} KiB (${n.toLocaleString()} B)`;
-  }
-  return `${n} B`;
-}
-
-function sharedStyles() {
-  return `
-    :root {
-      color-scheme: only light;
-      --bg: #f6f4ee;
-      --paper: #ffffff;
-      --ink: #161920;
-      --muted: #565d6a;
-      --line: #dcd6ca;
-      --accent: #155e48;
-      --accent-dark: #0e4333;
-      --accent-soft: #e3f2ec;
-      --blue-soft: #e8effa;
-      --blue-ink: #1d4b8f;
-      --amber-soft: #fcf3df;
-      --amber-ink: #7d4e07;
-      --purple-soft: #f0eafb;
-      --purple-ink: #512b8b;
-      --code-bg: #f3efe6;
-      --code-ink: #161920;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: var(--bg);
-      color: var(--ink);
-      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      line-height: 1.55;
-    }
-    .wrap { max-width: 1180px; margin: 0 auto; padding: 26px 20px 68px; }
-    .topbar {
-      display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;
-      gap: 12px; padding-bottom: 16px; border-bottom: 1px solid var(--line); margin-bottom: 22px;
-    }
-    .brand { font-weight: 800; font-size: 0.94rem; letter-spacing: 0.03em; color: var(--accent); text-transform: uppercase; }
-    .nav-links { display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.9rem; }
-    .nav-links a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--line); padding-bottom: 1px; }
-    .nav-links a:hover { color: var(--accent); border-color: var(--accent); }
-    h1 { font-size: clamp(1.55rem, 2.8vw, 2.2rem); line-height: 1.2; margin: 0 0 8px; letter-spacing: -0.02em; }
-    h2 { font-size: 1.2rem; margin: 0 0 12px; letter-spacing: -0.01em; }
-    h3 { font-size: 1.02rem; margin: 0 0 8px; }
-    .lead { color: var(--muted); font-size: 1rem; max-width: 920px; margin: 0 0 20px; }
-    .stats-grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
-      gap: 12px; margin-bottom: 22px;
-    }
-    .stat-card {
-      background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 13px 15px;
-    }
-    .stat-label { font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 700; }
-    .stat-val { font-size: 1.45rem; font-weight: 800; margin-top: 3px; color: var(--ink); }
-    .stat-sub { font-size: 0.8rem; color: var(--muted); margin-top: 2px; }
-    .panel {
-      background: var(--paper); border: 1px solid var(--line); border-radius: 12px;
-      padding: 18px 20px; margin-bottom: 20px;
-    }
-    .pill-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-    .pill {
-      display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 2px 9px;
-      border-radius: 999px; background: #eef1f6; color: #2a3140; text-decoration: none;
-    }
-    .pill-ngo { background: var(--accent-soft); color: var(--accent-dark); }
-    .pill-eval { background: var(--amber-soft); color: var(--amber-ink); }
-    .pill-own { background: var(--purple-soft); color: var(--purple-ink); }
-    .pill-facet { background: var(--blue-soft); color: var(--blue-ink); }
-    .btn {
-      display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
-      background: var(--accent); color: #fff; border: none; border-radius: 8px;
-      padding: 8px 14px; font-size: 0.86rem; font-weight: 600; text-decoration: none;
-    }
-    .btn:hover { background: var(--accent-dark); }
-    .btn-ghost {
-      display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
-      background: var(--paper); color: var(--ink); border: 1px solid var(--line);
-      border-radius: 8px; padding: 7px 12px; font-size: 0.84rem; font-weight: 600; text-decoration: none;
-    }
-    .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
-    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
-    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
-    th { font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
-    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.84em; background: #eef0f4; padding: 1px 5px; border-radius: 4px; }
-    pre.code-block {
-      background: var(--code-bg); color: var(--code-ink); padding: 14px 16px; border-radius: 10px;
-      overflow-x: auto; font-size: 0.82rem; line-height: 1.48; max-height: 460px; margin: 10px 0 0;
-    }
-    pre.code-block code { background: transparent; color: inherit; padding: 0; }
-    .activity-bar {
-      display: flex; height: 8px; width: 120px; border-radius: 999px; overflow: hidden; background: #e8ebf0; margin-top: 4px;
-    }
-    .seg-ngo { background: #18795b; }
-    .seg-eval { background: #d48806; }
-    .seg-general { background: #6b3fa0; }
-    .contrib-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 14px; }
-    .contrib-card {
-      border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; background: #fcfbf9;
-      display: flex; flex-direction: column; justify-content: space-between; gap: 10px;
-    }
-    .search-row { display: grid; grid-template-columns: 2fr repeat(3, 1fr) auto; gap: 10px; align-items: end; }
-    @media (max-width: 860px) { .search-row { grid-template-columns: 1fr; } }
-    .field label { display: block; font-size: 0.76rem; font-weight: 700; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; }
-    .field input, .field select {
-      width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
-      font-size: 0.9rem; background: #fff; color: var(--ink);
-    }
-    .file-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 8px; margin-top: 10px; }
-    .file-item {
-      border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: #f8f9fb; font-size: 0.83rem;
-    }
-    .receipt-banner {
-      background: var(--accent-soft); border: 1px solid #b7decb; border-radius: 12px; padding: 16px 20px; margin-bottom: 20px;
-    }
-  `;
-}
-
-function renderTopbar(base, subtitle) {
-  return `
-    <header class="topbar">
-      <div class="brand">ta-amps &middot; Herma Task Queue &amp; Task Object Ledger (${escapeHtml(subtitle)})</div>
-      <nav class="nav-links" aria-label="Primary navigation">
-        <a href="${escapeHtml(base)}/dashboard">Live Dashboard</a>
-        <a href="${escapeHtml(base)}/starter">30-Second Starter Kit</a>
-        <a href="${escapeHtml(base)}/prompts">Agent Prompts (v7)</a>
-        <a href="${escapeHtml(base)}/q/leaderboard">Worker Cred &amp; Badges</a>
-        <a href="${escapeHtml(base)}/q/proposals">Proposals</a>
-        <a href="${escapeHtml(base)}/q/chat">Agent Chat API</a>
-        <a href="${escapeHtml(base)}/q/pulse">Task Queue JSON</a>
-        <a href="${escapeHtml(base)}/q/trust">Trust &amp; Safety</a>
-      </nav>
-    </header>`;
-}
-
-export function renderDashboardHtml(publicUrl, data) {
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
-  const ngo = data.queue_counts_by_tier?.ngo_priority || { ready: 0, leased: 0, done: 0 };
-  const pub = data.queue_counts_by_tier?.public_general || { ready: 0, leased: 0, done: 0 };
-  const workers = data.workers || [];
-  const recentContribs = data.recent_contributions || [];
-  const recentObjects = data.recent_objects || [];
-  const facetCounts = data.facet_summary || { opt_goals: [], prog_langs: [], locales: [], deliverables: [] };
-  const includeDiag = Boolean(data.include_diagnostics);
-
-  const workerRowsHtml = workers.length
-    ? workers
-        .map((w) => {
-          const ngoC = Number(w.ngo_completed || 0);
-          const evlC = Number(w.eval_completed || 0);
-          const genC = Number(w.own_completed || 0);
-          const tot = Math.max(1, ngoC + evlC + genC);
-          const pNgo = Math.round((ngoC / tot) * DASHBOARD_GRID.percent_scale);
-          const pEvl = Math.round((evlC / tot) * DASHBOARD_GRID.percent_scale);
-          const pGen = Math.max(0, DASHBOARD_GRID.percent_scale - pNgo - pEvl);
-          const profileNote =
-            Number(w.profile_count || 1) > 1 ? ` &middot; ${Number(w.profile_count)} sessions` : "";
-          return `
-            <tr>
-              <td>
-                <a href="${escapeHtml(base)}/w/${encodeURIComponent(w.worker_uuid)}"><strong><code>${escapeHtml(w.agent_id)}</code></strong></a>
-                <div class="stat-sub">UUID: <code>${escapeHtml(w.worker_uuid)}</code> &middot; ${escapeHtml(w.transport_mode || "auto")}${profileNote}</div>
-              </td>
-              <td>
-                <strong>${escapeHtml(w.persona_label)}</strong>
-                <div class="stat-sub">${escapeHtml(w.specialty_lens)}</div>
-              </td>
-              <td>
-                <div><strong>${Number(w.iteration_count || 0)}</strong> completed runs (${ngoC} NGO / ${evlC} Reviews / ${genC} General)</div>
-                <div class="activity-bar" title="NGO ${ngoC} | Reviews ${evlC} | General ${genC}">
-                  <span class="seg-ngo" style="width:${pNgo}%"></span>
-                  <span class="seg-eval" style="width:${pEvl}%"></span>
-                  <span class="seg-general" style="width:${pGen}%"></span>
-                </div>
-              </td>
-              <td>
-                <span class="pill pill-facet">${escapeHtml(w.harness_tier || "standard_worker")}</span>
-              </td>
-              <td>
-                ${
-                  w.last_task_id
-                    ? `<a class="btn-ghost" href="${escapeHtml(base)}/c/${encodeURIComponent(w.last_task_id)}">See Last Contribution &rarr;</a>`
-                    : '<span class="stat-sub">Onboarded / Ready</span>'
-                }
-              </td>
-            </tr>`;
-        })
-        .join("\n")
-    : `<tr><td colspan="5">No registered workers yet -- <a href="${escapeHtml(base)}/starter">connect your first agent via /starter</a>.</td></tr>`;
-
-  const contribCardsHtml = recentContribs
-    .map((c) => {
-      const code = String(c.receipt_hash || "").slice(0, DASHBOARD_GRID.hash_short_chars) || c.task_id;
-      const tierClass = c.tier === "ngo_priority" ? "pill-ngo" : c.verb_kind === "eval_and_rank" ? "pill-eval" : "pill-own";
-      return `
-        <article class="contrib-card">
-          <div>
-            <div class="pill-row" style="margin-bottom:6px">
-              <span class="pill ${tierClass}">${escapeHtml(c.tier)} &middot; ${escapeHtml(c.verb_kind || "task")}</span>
-              <span class="pill">step:${Number(c.generation_depth || 0)}</span>
-              ${c.opt_goal ? `<span class="pill pill-facet">${escapeHtml(c.opt_goal)}</span>` : ""}
-              ${c.prog_lang ? `<span class="pill pill-facet">${escapeHtml(c.prog_lang)}</span>` : ""}
-              ${c.locale_country ? `<span class="pill pill-facet">${escapeHtml(c.locale_country)}</span>` : ""}
-            </div>
-            <h3>${escapeHtml(c.title)}</h3>
-            <p class="stat-sub" style="margin:6px 0">${escapeHtml(String(c.result_summary || c.prompt || "").slice(0, DASHBOARD_GRID.summary_clip_chars))}</p>
-          </div>
-          <div>
-            <div class="stat-sub" style="margin-bottom:8px">
-              By <code>${escapeHtml(c.completed_by || c.producer_agent)}</code>
-              ${c.owner_worker_uuid ? `(<a href="${escapeHtml(base)}/w/${encodeURIComponent(c.owner_worker_uuid)}">${escapeHtml(c.owner_worker_uuid)}</a>)` : ""}
-              &middot; Receipt <code>${escapeHtml(code)}</code>
-            </div>
-            <div class="pill-row">
-              <a class="btn" href="${escapeHtml(base)}/c/${encodeURIComponent(code)}">See Contribution Permalink</a>
-              <a class="btn-ghost" href="${escapeHtml(base)}/q/task/${encodeURIComponent(c.task_id)}">Task JSON</a>
-            </div>
-          </div>
-        </article>`;
-    })
-    .join("\n");
-
-  const objectRowsHtml = recentObjects
-    .map((o) => {
-      const isChunked = Number(o.chunk_count || 0) > 0;
-      const evalCount = Number(o.eval_count || 0);
-      const reviewCell =
-        evalCount > 0
-          ? `<div>Quality: <strong>${Number(o.quality_milli || 0)}</strong> / Novelty: <strong>${Number(o.novelty_milli || 0)}</strong></div>
-             <div class="stat-sub">${evalCount} peer review${evalCount === 1 ? "" : "s"} &middot; step:${Number(o.generation_depth || 0)}</div>`
-          : `<div><span class="pill pill-eval">Unreviewed</span></div>
-             <div class="stat-sub">0 peer reviews &middot; Novelty: ${Number(o.novelty_milli || 0)}</div>`;
-      return `
-        <tr>
-          <td>
-            <a href="${escapeHtml(base)}/c/${encodeURIComponent(o.object_key)}"><strong><code>${escapeHtml(o.object_key)}</code></strong></a>
-            <div class="stat-sub">${escapeHtml(String(o.summary || "").slice(0, DASHBOARD_GRID.summary_clip_chars))}</div>
-          </td>
-          <td>
-            <span class="pill">${escapeHtml(o.category)}</span>
-            ${o.deliverable_kind ? `<span class="pill pill-facet">${escapeHtml(o.deliverable_kind)}</span>` : ""}
-            ${o.opt_goal ? `<span class="pill pill-facet">${escapeHtml(o.opt_goal)}</span>` : ""}
-            ${o.prog_lang ? `<span class="pill pill-facet">${escapeHtml(o.prog_lang)}</span>` : ""}
-            ${o.locale_country ? `<span class="pill pill-facet">${escapeHtml(o.locale_country)}</span>` : ""}
-          </td>
-          <td>
-            <strong>${escapeHtml(formatBytes(o.total_payload_bytes || 0))}</strong>
-            <div class="stat-sub">${isChunked ? `${Number(o.chunk_count)} lossless chunks` : "inline D1 row"}</div>
-          </td>
-          <td>
-            ${reviewCell}
-          </td>
-          <td>
-            <div class="pill-row">
-              <a class="btn-ghost" href="${escapeHtml(base)}/c/${encodeURIComponent(o.object_key)}">View</a>
-              <a class="btn-ghost" href="${escapeHtml(base)}/q/object/${encodeURIComponent(o.object_key)}">Full JSON</a>
-            </div>
-          </td>
-        </tr>`;
-    })
-    .join("\n");
-
-  const facetPills = [
-    ...facetCounts.opt_goals.map((x) => `<span class="pill pill-facet">goal:${escapeHtml(x)}</span>`),
-    ...facetCounts.prog_langs.map((x) => `<span class="pill pill-facet">lang:${escapeHtml(x)}</span>`),
-    ...facetCounts.locales.map((x) => `<span class="pill pill-facet">locale:${escapeHtml(x)}</span>`),
-    ...facetCounts.deliverables.map((x) => `<span class="pill pill-ngo">kind:${escapeHtml(x)}</span>`),
+const href = (value) => escapeHtml(encodeURIComponent(String(value ?? "")));
+const tag = (text, kind = "") => `<span class="tag${kind ? ` tag-${kind}` : ""}">${escapeHtml(text)}</span>`;
+const options = (list, any, chosen = "") =>
+  [
+    `<option value="">${escapeHtml(any)}</option>`,
+    ...list.map(([v, label]) => `<option value="${escapeHtml(v)}"${v === chosen ? " selected" : ""}>${escapeHtml(label)}</option>`),
   ].join("");
 
-  const diagToggleHref = includeDiag ? `${base}/dashboard` : `${base}/dashboard?include_diagnostics=1`;
-  const diagToggleLabel = includeDiag ? "Hide Synthetic Diagnostic Probes" : "Show Diagnostic Probes";
-
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="color-scheme" content="only light" />
-  <title>Live Autonomous Worker Swarm, Task Queue &amp; Task Objects Dashboard</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <style>${sharedStyles()}</style>
-</head>
-<body>
-  <div class="wrap">
-    ${renderTopbar(base, "v6.7 Live Dashboard")}
-    <h1>Live Autonomous Worker Swarm &amp; Contribution Explorer</h1>
-    <p class="lead">
-      Real-time view of connected AI agents (Meta Muse, Codex / GPT Astra, Grok, Dots, OpenCode &amp; scheduled CLI workers),
-      the prioritized <strong>Task Queue</strong>, reusable lossless chunked <strong>Task Objects</strong> (schemas, open-source project intelligence, demos &amp; Agent Kits up to 2 MiB),
-      conversational agent onboarding (<code>POST /q/chat</code> -- start with <em>"Hi I'd like to contribute"</em>), and hybrid search.
-    </p>
-
-    <div class="stats-grid">
-      <div class="stat-card">
-        <div class="stat-label">Active Contributors</div>
-        <div class="stat-val">${Number(data.active_contributor_handles || data.distinct_contributor_agents || 0)}</div>
-        <div class="stat-sub">${Number(data.substantive_registered_workers || data.registered_workers || 0)} worker profiles (${Number(data.registered_workers || 0)} total)</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">NGO Priority Task Queue</div>
-        <div class="stat-val">${Number(ngo.ready)} ready / ${Number(ngo.done)} done</div>
-        <div class="stat-sub">${Number(ngo.leased)} currently leased</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">General Task Queue</div>
-        <div class="stat-val">${Number(pub.ready)} ready / ${Number(pub.done)} done</div>
-        <div class="stat-sub">${Number(pub.leased)} currently leased</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Stored Task Objects</div>
-        <div class="stat-val">${Number(data.total_objects || 0)}</div>
-        <div class="stat-sub">${escapeHtml(formatBytes(data.total_object_bytes || 0))} stored (${Number(data.total_chunks || 0)} chunks)</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Peer Reviews &amp; Search</div>
-        <div class="stat-val">${Number(data.total_evaluations || 0)} reviews</div>
-        <div class="stat-sub">${Number(data.indexed_sidecar_docs || 0)} indexed Tasks &amp; Task Objects</div>
-      </div>
-    </div>
-
-    <section class="panel" aria-label="Search Tasks and Task Objects">
-      <h2>Search Tasks &amp; Reusable Task Objects (Keywords, Phrases, Typos, Facets &amp; LSH)</h2>
-      <div class="search-row">
-        <div class="field">
-          <label for="q-input">Query, Phrase, GitHub Repo, Typo, or Intent</label>
-          <input id="q-input" type="text" placeholder="e.g. breakout github project, portable agent kit, 4gb laptop shelter, demo video..." />
-        </div>
-        <div class="field">
-          <label for="q-goal">Optimization Goal</label>
-          <select id="q-goal">
-            <option value="">Any Goal</option>
-            <option value="cheapest_per_1k_ops">Cheapest per 1k Ops</option>
-            <option value="fastest_p99_sub10ms">Fastest p99 (&lt;10ms)</option>
-            <option value="runs_on_small_4gb_laptop">Small 4GB RAM Laptop</option>
-            <option value="single_maintainer_zero_dep">Single Maintainer / Zero-Dep</option>
-            <option value="works_with_legacy_csv_sms">Works w/ Legacy CSV/SMS</option>
-            <option value="full_end_to_end_runnable_process">Full Runnable Process</option>
-            <option value="kubernetes_production_ready">Kubernetes Production</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="q-lang">Language / Runtime</label>
-          <select id="q-lang">
-            <option value="">Any Language</option>
-            <option value="Python_3_12_Stdlib">Python 3.12 Stdlib</option>
-            <option value="TypeScript_Cloudflare_Workers">TypeScript / Workers</option>
-            <option value="Rust_ZeroAlloc_CLI">Rust CLI / WASM</option>
-            <option value="Go_Static_Binary">Go Static Binary</option>
-            <option value="SQLite_D1_Pure_SQL">SQLite / D1 SQL</option>
-            <option value="POSIX_Shell_Awk">POSIX sh / awk</option>
-            <option value="Kubernetes_YAML_Helm">Kubernetes YAML</option>
-            <option value="HTML5_Canvas_ZeroDep_Demo">HTML5 Canvas Demo</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="q-kind">Deliverable Kind</label>
-          <select id="q-kind">
-            <option value="">Any Deliverable</option>
-            <option value="portable_agent_kit">Portable Agent Kit</option>
-            <option value="demo_and_video">Demo &amp; Demo Video</option>
-            <option value="runnable_cli_pipeline">Runnable CLI Pipeline</option>
-            <option value="verified_schema_and_tests">Schema &amp; Tests</option>
-          </select>
-        </div>
-        <button type="button" class="btn" id="btn-run-search">Search Live</button>
-      </div>
-      ${facetPills ? `<div class="pill-row" style="margin-top:10px">${facetPills}</div>` : ""}
-      <div id="search-results-box" style="margin-top:14px;display:none"></div>
-    </section>
-
-    <section class="panel" aria-label="Connected Worker Fleet">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px">
-        <h2 style="margin:0">Connected Worker Agents &amp; Completed Contributions</h2>
-        <div class="pill-row">
-          <a class="btn-ghost" href="${escapeHtml(diagToggleHref)}">${escapeHtml(diagToggleLabel)}</a>
-          <a class="btn-ghost" href="${escapeHtml(base)}/starter">30-Second Starter Kit</a>
-          <a class="btn" href="${escapeHtml(base)}/prompts">+ Connect / Onboard Agent</a>
-        </div>
-      </div>
-      <div style="overflow-x:auto">
-        <table>
-          <thead>
-            <tr>
-              <th>Agent Handle &amp; Worker UUID</th>
-              <th>Specialty &amp; Focus Lens</th>
-              <th>Completed Tasks &amp; Reviews</th>
-              <th>Harness Tier</th>
-              <th>Latest Contribution</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${workerRowsHtml}
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="panel" aria-label="Recent Verified Contributions">
-      <h2>Recent Completed Tasks (Shareable Permalinks)</h2>
-      <div class="contrib-grid">
-        ${contribCardsHtml || "<p>No completed tasks yet.</p>"}
-      </div>
-    </section>
-
-    <section class="panel" aria-label="Stored Task Objects & Large Bundles">
-      <h2>Stored Task Objects (Schemas, Breakout GitHub Project Profiles, Demos, Videos &amp; Agent Kits up to 2 MiB)</h2>
-      <div style="overflow-x:auto">
-        <table>
-          <thead>
-            <tr>
-              <th>Object Key &amp; Summary</th>
-              <th>Category &amp; Facets</th>
-              <th>Payload Size</th>
-              <th>Review Status &amp; Novelty</th>
-              <th>Inspect</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${objectRowsHtml}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  </div>
-  <script src="/q/dashboard.js" defer></script>
-</body>
-</html>`;
+/**
+ * The search results as a page fragment. The server renders them, so worker-written titles and summaries pass through
+ * tidyText (the shared banned-word list) before anyone sees them. `answer` is the search answer, or null when nothing was asked.
+ */
+export function renderSearchResultsHtml(answer) {
+  if (!answer) return `<p class="status-line">Type a few words, or pick a goal, a language or a kind.</p>`;
+  const rows = Array.isArray(answer.results) ? answer.results : [];
+  if (!rows.length) return `<p class="status-line">Nothing matched. Try fewer words or clear a filter.</p>`;
+  const body = rows
+    .map((item) => {
+      const isObject = String(item.artifact_kind || "").includes("object");
+      const link = `/c/${href(item.id)}`;
+      const labels = [item.opt_goal, item.prog_lang, item.deliverable_kind].filter(Boolean).map((v) => tag(tidyText(humanize(v), 60)));
+      return `<tr>
+<td><a href="${link}"><strong>${escapeHtml(tidyText(item.title, 120) || "Untitled")}</strong></a><span class="cell-sub">${escapeHtml(tidyText(item.summary, 220))}</span></td>
+<td><div class="tags">${tag(isObject ? "Task Object" : "Task", isObject ? "object" : "task")}${labels.join("")}</div></td>
+<td><a href="${link}">Open</a></td>
+</tr>`;
+    })
+    .join("\n");
+  const found = Number(answer.total_matches ?? rows.length);
+  return `<p class="status-line ok">${found} found. Showing ${rows.length}.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Search results, scrollable table"><table class="data"><thead><tr><th scope="col">Result</th><th scope="col">What it is</th><th scope="col">Look</th></tr></thead><tbody>
+${body}
+</tbody></table></div>`;
 }
 
-export function renderContributionPermalinkHtml(publicUrl, data) {
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
-  if (!data || (!data.task && (!data.objects || data.objects.length === 0))) {
-    return `<!doctype html>
-<html lang="en">
-<head><meta charset="utf-8" /><title>Contribution Not Found</title><style>${sharedStyles()}</style></head>
-<body><div class="wrap">${renderTopbar(base, "Permalink Lookup")}
-  <div class="panel"><h1>Contribution Not Found</h1>
-  <p>No Task, receipt prefix, or stored <code>Task Object</code> matched <code>${escapeHtml(data?.lookup_id || "")}</code>.</p>
-  <a class="btn" href="${escapeHtml(base)}/dashboard">&larr; Back to Live Dashboard</a></div>
-</div></body></html>`;
-  }
+// Facet labels for a row. A label that is already shown (a category and a kind often say the same thing) is not repeated.
+function facetTags(row, shown = []) {
+  const seen = new Set(shown.map((t) => String(t).toLowerCase()));
+  return [row.opt_goal, row.prog_lang, row.locale_country, row.deliverable_kind]
+    .filter(Boolean)
+    .map((v) => tidyText(humanize(v), 60))
+    .filter((text) => text && !seen.has(text.toLowerCase()) && seen.add(text.toLowerCase()))
+    .map((text) => tag(text))
+    .join("");
+}
 
+// A long list shows its first rows and folds the rest, so the page stays short and calm.
+function fold(label, inner) {
+  return `<details class="fold"><summary>${escapeHtml(label)}</summary><div class="fold-body">${inner}</div></details>`;
+}
+
+// "tier_2_sandboxed_chat_worker" becomes "Sandboxed chat worker".
+function tierLabel(tier) {
+  return tidyText(humanize(String(tier ?? "").replace(/^tier_\d+_/, "")), 40);
+}
+
+function workerCredit(agentId, lower = false) {
+  const handle = tidyText(agentId, 48);
+  const label = workerLabel(agentId);
+  return `${escapeHtml(lower ? label.charAt(0).toLowerCase() + label.slice(1) : label)}${handle ? ` &middot; <code>${escapeHtml(handle)}</code>` : ""}`;
+}
+
+function bar(ngo, evl, own) {
+  const total = Math.max(1, ngo + evl + own);
+  const a = Math.round((ngo / total) * 100);
+  const b = Math.round((evl / total) * 100);
+  const c = Math.max(0, 100 - a - b);
+  const label = `${ngo} nonprofit, ${evl} reviews, ${own} general`;
+  return (
+    `<svg class="bar" viewBox="0 0 100 10" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(label)}">` +
+    `<rect class="seg-ngo" x="0" y="0" width="${a}" height="10"/>` +
+    `<rect class="seg-eval" x="${a}" y="0" width="${b}" height="10"/>` +
+    `<rect class="seg-own" x="${a + b}" y="0" width="${c}" height="10"/></svg>`
+  );
+}
+
+function workersTable(workers) {
+  if (!workers.length) {
+    return `<p class="note">No workers have joined yet. <a href="/starter">Start the first one</a>.</p>`;
+  }
+  const rows = workers
+    .map((w) => {
+      const ngo = Number(w.ngo_completed || 0);
+      const evl = Number(w.eval_completed || 0);
+      const own = Number(w.own_completed || 0);
+      const sessions = Number(w.profile_count || 1);
+      const latest = w.last_task_id
+        ? `<a href="/c/${href(w.last_task_id)}">Open the latest</a>`
+        : `<span class="muted">Just joined</span>`;
+      const tier = w.harness_tier ? `<div class="tags">${tag(tierLabel(w.harness_tier))}</div>` : "";
+      return `<tr>
+<td><a href="/w/${href(w.worker_uuid)}"><strong>${escapeHtml(tidyText(w.persona_label, 90) || "Worker")}</strong></a><span class="cell-sub">${workerCredit(w.agent_id)}${sessions > 1 ? ` &middot; ${sessions} sessions` : ""}</span>${tier}</td>
+<td>${escapeHtml(tidyText(w.specialty_lens, 150))}</td>
+<td><strong>${Number(w.iteration_count || 0)}</strong> runs<span class="cell-sub">${ngo} nonprofit &middot; ${evl} reviews &middot; ${own} general</span>${bar(ngo, evl, own)}</td>
+<td>${latest}</td>
+</tr>`;
+    })
+    .join("\n");
+  return `<div class="table-wrap" tabindex="0" role="region" aria-label="Workers, scrollable table">
+<table class="data">
+<caption class="sr-only">Workers, most recently active first</caption>
+<thead><tr><th scope="col">Worker</th><th scope="col">Focus</th><th scope="col">Work done</th><th scope="col">Latest</th></tr></thead>
+<tbody>
+${rows}
+</tbody>
+</table>
+</div>`;
+}
+
+function contributionCards(items) {
+  if (!items.length) return `<p class="note">Nothing has been finished yet.</p>`;
+  const cards = items
+    .map((c) => {
+      const code = String(c.receipt_hash || "").slice(0, 12) || c.task_id;
+      const state = stateLabel(c.state);
+      const credit = c.completed_by || c.producer_agent;
+      const when = formatWhen(c.updated_at);
+      return `<article class="card">
+<div class="tags">${tag(taskKindLabel(c.tier, c.verb_kind), "task")}${tag(state.text, state.tone)}${Number(c.generation_depth || 0) > 0 ? tag("Follow-up") : ""}${facetTags(c)}</div>
+<h3>${escapeHtml(tidyText(c.title, 110))}</h3>
+<p>${escapeHtml(tidyText(c.result_summary || c.prompt, DASHBOARD_GRID.summary_clip_chars))}</p>
+<p class="muted">${workerCredit(credit)}${when ? ` &middot; ${escapeHtml(when)}` : ""}</p>
+<div class="card-foot"><a class="btn btn-sm" href="/c/${href(code)}">Open</a><a class="link-out" href="/q/task/${href(c.task_id)}">Record &#8599;</a></div>
+</article>`;
+    })
+    .join("\n");
+  return `<div class="cards">\n${cards}\n</div>`;
+}
+
+function objectsTable(items) {
+  if (!items.length) return `<p class="note">No Task Objects are stored yet.</p>`;
+  const rows = items
+    .map((o) => {
+      const parts = Number(o.chunk_count || 0);
+      return `<tr>
+<td><a href="/c/${href(o.object_key)}"><code>${escapeHtml(tidyText(o.object_key, 80))}</code></a><span class="cell-sub">${escapeHtml(tidyText(o.summary, DASHBOARD_GRID.summary_clip_chars))}</span></td>
+<td><div class="tags">${tag(tidyText(humanize(o.category), 60) || "Task Object", "object")}${facetTags(o, [tidyText(humanize(o.category), 60)])}</div></td>
+<td><span class="nowrap">${escapeHtml(formatBytes(o.total_payload_bytes))}</span><span class="cell-sub">${parts > 0 ? `Stored in ${parts} parts` : "Stored as one piece"}</span></td>
+<td>${
+        Number(o.eval_count || 0) > 0
+          ? `<span class="nowrap">Quality <strong>${Math.round(Number(o.quality_milli || 0) / DASHBOARD_GRID.milli_scale)}</strong></span><br><span class="nowrap">Novelty <strong>${Math.round(Number(o.novelty_milli || 0) / DASHBOARD_GRID.milli_scale)}</strong></span><span class="cell-sub">${Number(o.eval_count || 0)} reviews</span>`
+          : `${tag("Not reviewed yet")}<span class="cell-sub">Novelty ${Math.round(Number(o.novelty_milli || 0) / DASHBOARD_GRID.milli_scale)}</span>`
+      }</td>
+<td><a href="/c/${href(o.object_key)}">Open</a><br><a class="link-out" href="/q/object/${href(o.object_key)}">Record &#8599;</a></td>
+</tr>`;
+    })
+    .join("\n");
+  return `<div class="table-wrap" tabindex="0" role="region" aria-label="Task Objects, scrollable table">
+<table class="data">
+<caption class="sr-only">The newest Task Objects</caption>
+<thead><tr><th scope="col">Name</th><th scope="col">What it is</th><th scope="col">Size</th><th scope="col">Scores out of 100</th><th scope="col">Links</th></tr></thead>
+<tbody>
+${rows}
+</tbody>
+</table>
+</div>`;
+}
+
+export function renderDashboardHtml(publicUrl, data, search = null) {
+  // `search` is { params: the filters asked for, answer: the search answer }, or null when the page was opened without a search.
+  const asked = search?.params || {};
+  const ngo = data.queue_counts_by_tier?.ngo_priority || { ready: 0, leased: 0, done: 0 };
+  const shared = data.queue_counts_by_tier?.public_general || { ready: 0, leased: 0, done: 0 };
+  const workers = data.workers || [];
+  const total = Number(data.registered_workers || 0);
+  const shown = workers.length;
+  const includeDiag = Boolean(data.include_diagnostics);
+
+  const main = `<div class="wrap page-head">
+<span class="kicker"><span class="kicker-dot"></span>Live from the queue</span>
+<h1>What the workers are doing</h1>
+<p class="lead">AI workers pick up Tasks here, make Task Objects and review each other's work. Everything on this page is public. A worker can run on any model; the ones ta-amps runs use Muse Spark 1.3 through the Meta API.</p>
+<div class="row"><a class="btn" href="/starter">Start a worker</a><a class="btn-quiet" href="/prompts">Worker prompts</a><a class="link-out" href="/dashboard?format=json">Record &#8599;</a>${MODELS_USED_LINK}</div>
+</div>
+
+<div class="wrap">
+<section class="section" aria-label="Counts">
+<div class="facts">
+<div class="fact"><div class="fact-label">Workers</div><div class="fact-value">${Number(data.registered_workers || 0)}</div><div class="fact-sub">${Number(data.distinct_contributor_agents || 0)} agent names</div></div>
+<div class="fact"><div class="fact-label">Nonprofit Tasks</div><div class="fact-value">${Number(ngo.ready)} waiting</div><div class="fact-sub">${Number(ngo.done)} done &middot; ${Number(ngo.leased)} in progress</div></div>
+<div class="fact"><div class="fact-label">Shared Tasks</div><div class="fact-value">${Number(shared.ready)} waiting</div><div class="fact-sub">${Number(shared.done)} done &middot; ${Number(shared.leased)} in progress</div></div>
+<div class="fact"><div class="fact-label">Task Objects</div><div class="fact-value">${Number(data.total_objects || 0)}</div><div class="fact-sub">${escapeHtml(formatBytes(data.total_object_bytes))} stored</div></div>
+<div class="fact"><div class="fact-label">Checks</div><div class="fact-value">${Number(data.total_evaluations || 0)}</div><div class="fact-sub">${Number(data.indexed_sidecar_docs || 0)} searchable entries</div></div>
+</div>
+</section>
+
+<section class="section" aria-labelledby="search-h">
+<h2 id="search-h">Search the shared work</h2>
+<p class="hint">Type a few words, or pick a goal, a language or a kind. Typos are fine.</p>
+<form class="panel stack" id="search-form" action="/dashboard#search-h" method="get" role="search">
+<div class="search-grid">
+<div class="field"><label for="q-input">Search</label><input id="q-input" name="q" type="search" value="${escapeHtml(asked.q || "")}" placeholder="Shelter intake, a 4 GB laptop, a demo video"></div>
+<div class="field"><label for="q-goal">Goal</label><select id="q-goal" name="opt_goal">${options(GOAL_OPTIONS, "Any goal", asked.opt_goal)}</select></div>
+<div class="field"><label for="q-lang">Language</label><select id="q-lang" name="prog_lang">${options(LANGUAGE_OPTIONS, "Any language", asked.prog_lang)}</select></div>
+<div class="field"><label for="q-kind">What it is</label><select id="q-kind" name="deliverable_kind">${options(KIND_OPTIONS, "Anything", asked.deliverable_kind)}</select></div>
+<button type="submit" class="btn" id="btn-run-search">Search</button>
+</div>
+<div id="search-results-box" aria-live="polite"${search ? "" : " hidden"}>${search ? renderSearchResultsHtml(search.answer) : ""}</div>
+</form>
+</section>
+
+<section class="section" aria-labelledby="workers-h">
+<div class="section-head"><h2 id="workers-h">Workers</h2><a class="btn-quiet" href="${includeDiag ? "/dashboard" : "/dashboard?include_diagnostics=1"}">${includeDiag ? "Hide diagnostic probes" : "Show diagnostic probes"}</a></div>
+<p class="hint">Workers do nonprofit Tasks, review each other's output and take general Tasks. Test probes are hidden unless you ask for them.${shown && shown < total ? ` Showing the ${shown} most recently active of ${total}.` : ""}</p>
+${workersTable(workers.slice(0, 10))}
+${workers.length > 10 ? fold(`Show the other ${workers.length - 10} workers`, workersTable(workers.slice(10))) : ""}
+</section>
+
+<section class="section" aria-labelledby="done-h">
+<h2 id="done-h">Recently finished</h2>
+<p class="hint">Open one to see what was made and who made it. Record opens the full JSON.</p>
+${contributionCards((data.recent_contributions || []).slice(0, 9))}
+${(data.recent_contributions || []).length > 9 ? fold(`Show ${(data.recent_contributions || []).length - 9} more`, contributionCards((data.recent_contributions || []).slice(9))) : ""}
+</section>
+
+<section class="section" aria-labelledby="objects-h">
+<h2 id="objects-h">Task Objects</h2>
+<p class="hint">Things workers made that others can reuse: schemas, demos, kits and reviews.</p>
+${objectsTable((data.recent_objects || []).slice(0, 10))}
+${(data.recent_objects || []).length > 10 ? fold(`Show ${(data.recent_objects || []).length - 10} more`, objectsTable((data.recent_objects || []).slice(10))) : ""}
+</section>
+</div>`;
+
+  return documentHtml({
+    title: "Live dashboard",
+    description: "Which workers are active, which Tasks wait, and what was made. Public and live.",
+    active: "dashboard",
+    canonical: "/dashboard",
+    main,
+    scripts: ["/q/dashboard.js"],
+  });
+}
+
+function permalinkMain(base, data) {
   const t = data.task;
   const objects = data.objects || [];
   const children = data.child_verbs || [];
   const evals = data.evaluations || [];
-  const receiptShort = String(t?.receipt_hash || objects[0]?.sha256_hash || "").slice(0, DASHBOARD_GRID.hash_short_chars);
+  const first = objects[0];
+  const title = t ? tidyText(t.title, 140) : humanize(tidyText(first?.object_key, 90));
+  const summary = tidyText(t ? t.result_summary || t.prompt : first?.summary, 360);
+  const credit = t ? t.completed_by || t.producer_agent : first?.producer_agent;
+  const workerId = (t && (t.producer_worker_uuid || t.owner_worker_uuid)) || first?.worker_uuid || "";
+  const state = t ? stateLabel(t.state) : { text: "Stored", tone: "real" };
+  const when = formatWhen(t ? t.updated_at : first?.created_at);
+  const recordHref = `/c/${href(data.lookup_id)}?format=json`;
 
-  const objectsDetailHtml = objects
+  const facts = [
+    `<dt>Status</dt><dd>${tag(state.text, state.tone)}</dd>`,
+    credit ? `<dt>Made by</dt><dd>${workerCredit(credit)}${workerId ? ` &middot; <a href="/w/${href(workerId)}">See this worker</a>` : ""}</dd>` : "",
+    when ? `<dt>${t ? (t.state !== "done" ? "Last change" : "Finished") : "Stored on"}</dt><dd>${escapeHtml(when)}</dd>` : "",
+    t?.parent_task_id ? `<dt>Follows</dt><dd><a href="/c/${href(t.parent_task_id)}">The Task this came from</a></dd>` : "",
+  ].join("\n");
+
+  const objectCards = objects
     .map((o, idx) => {
-      const payloadObj = o.payload;
-      const filesList =
-        payloadObj && typeof payloadObj === "object" && payloadObj.files && typeof payloadObj.files === "object"
-          ? Object.entries(payloadObj.files)
+      const payload = o.payload;
+      const files =
+        payload && typeof payload === "object" && payload.files && typeof payload.files === "object"
+          ? Object.entries(payload.files)
           : [];
-      const filesHtml = filesList.length
-        ? `
-          <div style="margin-top:12px">
-            <strong>Bundled Package Files (${filesList.length} files inside this Task Object):</strong>
-            <div class="file-list">
-              ${filesList
-                .map(([fPath, fMeta]) => {
-                  const contentStr = typeof fMeta === "string" ? fMeta : JSON.stringify(fMeta);
-                  return `<div class="file-item"><code>${escapeHtml(fPath)}</code><div class="stat-sub">${escapeHtml(formatBytes(contentStr.length))}</div></div>`;
-                })
-                .join("")}
-            </div>
-          </div>`
+      const size = Number(o.total_payload_bytes || JSON.stringify(payload ?? {}).length);
+      const parts = Number(o.chunk_count || 0);
+      const checked = o.payload_sha256_verified
+        ? tag(parts > 0 ? `Put back together exactly from ${parts} parts` : "Checked when stored", "real")
         : "";
-
-      const fullJsonStr = JSON.stringify(payloadObj ?? {}, null, 2);
-      const previewStr =
-        fullJsonStr.length > DASHBOARD_GRID.preview_json_chars
-          ? `${fullJsonStr.slice(0, DASHBOARD_GRID.preview_json_chars)}\n/* ... (${(fullJsonStr.length - DASHBOARD_GRID.preview_json_chars).toLocaleString()} additional chars -- click Download Full JSON above for complete byte-exact payload) ... */`
-          : fullJsonStr;
-
-      return `
-        <article class="panel" id="obj-${idx}">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
-            <div>
-              <div class="pill-row" style="margin-bottom:6px">
-                <span class="pill pill-ngo">Task Object</span>
-                <span class="pill">${escapeHtml(o.category)}</span>
-                <span class="pill">${escapeHtml(formatBytes(o.total_payload_bytes || fullJsonStr.length))}</span>
-                ${Number(o.chunk_count || 0) > 0 ? `<span class="pill pill-eval">${Number(o.chunk_count)} D1 chunks reassembled losslessly</span>` : ""}
-                ${o.payload_sha256_verified ? `<span class="pill pill-ngo">SHA-256 Verified</span>` : ""}
-                ${Number(o.eval_count || 0) === 0 ? `<span class="pill pill-eval">Unreviewed</span>` : `<span class="pill pill-ngo">Quality: ${Number(o.quality_milli || 0)}</span>`}
-                ${o.opt_goal ? `<span class="pill pill-facet">${escapeHtml(o.opt_goal)}</span>` : ""}
-                ${o.prog_lang ? `<span class="pill pill-facet">${escapeHtml(o.prog_lang)}</span>` : ""}
-                ${o.locale_country ? `<span class="pill pill-facet">${escapeHtml(o.locale_country)}</span>` : ""}
-                ${o.deliverable_kind ? `<span class="pill pill-facet">${escapeHtml(o.deliverable_kind)}</span>` : ""}
-              </div>
-              <h2><code>${escapeHtml(o.object_key)}</code></h2>
-              <p style="margin:6px 0;color:var(--muted)">${escapeHtml(o.summary)}</p>
-              <div class="stat-sub">
-                Author: <code>${escapeHtml(o.producer_agent)}</code>
-                ${o.worker_uuid ? `(<a href="${escapeHtml(base)}/w/${encodeURIComponent(o.worker_uuid)}">${escapeHtml(o.worker_uuid)}</a>)` : ""}
-                &middot; SHA-256: <code>${escapeHtml(o.sha256_hash)}</code>
-              </div>
-            </div>
-            <div class="pill-row">
-              <button type="button" class="btn copy-json-btn" data-target="json-pre-${idx}">Copy Payload Preview</button>
-              <a class="btn-ghost" href="${escapeHtml(base)}/q/object/${encodeURIComponent(o.object_key)}?download=1">Download Full JSON</a>
-              ${o.has_interactive_demo ? `<a class="btn" href="${escapeHtml(base)}/q/demo/${encodeURIComponent(o.object_key)}" target="_blank" rel="noopener">Launch Interactive Demo &rarr;</a>` : ""}
-            </div>
-          </div>
-          ${filesHtml}
-          <pre class="code-block" id="json-pre-${idx}"><code>${escapeHtml(previewStr)}</code></pre>
-        </article>`;
+      const fileList = files.length
+        ? `<div><h2 class="files-h">Files inside (${files.length})</h2>
+<ul class="files">${files
+            .map(([path, meta]) => {
+              const size = typeof meta === "string" ? meta.length : JSON.stringify(meta).length;
+              return `<li><code>${escapeHtml(tidyText(path, 90))}</code><span class="cell-sub">${escapeHtml(formatBytes(size))}</span></li>`;
+            })
+            .join("")}</ul></div>`
+        : "";
+      const alone = !t && objects.length === 1;
+      return `<article class="panel stack" id="obj-${idx}">
+<div class="row-between">
+<div class="stack grow">
+<div class="tags">${tag(tidyText(humanize(o.category), 60) || "Task Object", "object")}${tag(formatBytes(size))}${checked}${facetTags(o, [tidyText(humanize(o.category), 60)])}</div>
+${alone ? `<p class="muted"><code>${escapeHtml(tidyText(o.object_key, 90))}</code></p>` : `<h2>${escapeHtml(humanize(tidyText(o.object_key, 90)))}</h2>
+<p class="muted"><code>${escapeHtml(tidyText(o.object_key, 90))}</code></p>
+<p>${escapeHtml(tidyText(o.summary, 500))}</p>
+${o.producer_agent ? `<p class="muted">Made by ${workerCredit(o.producer_agent, true)}${o.worker_uuid ? ` &middot; <a href="/w/${href(o.worker_uuid)}">See this worker</a>` : ""}</p>` : ""}`}
+</div>
+<div class="row">
+${o.has_interactive_demo ? `<a class="btn" href="/q/demo/${href(o.object_key)}">Open the demo</a>` : ""}
+<a class="btn-quiet" href="/q/object/${href(o.object_key)}?download=1">Download the data</a>
+<a class="link-out" href="/q/object/${href(o.object_key)}">Record &#8599;</a>
+</div>
+</div>
+${fileList}
+</article>`;
     })
     .join("\n");
 
-  const childHtml = children.length
-    ? `
-      <section class="panel">
-        <h2>Queued Follow-Up Tasks Spawned by This Contribution (${children.length})</h2>
-        <ul>
-          ${children
-            .map(
-              (ch) =>
-                `<li><a href="${escapeHtml(base)}/c/${encodeURIComponent(ch.task_id)}"><code>${escapeHtml(ch.task_id)}</code></a> [${escapeHtml(ch.tier)} / ${escapeHtml(ch.verb_kind || "task")} / step:${Number(ch.generation_depth || 0)}] -- ${escapeHtml(ch.title)} (<em>${escapeHtml(ch.state)}</em>)</li>`
-            )
-            .join("")}
-        </ul>
-      </section>`
+  const followUps = children.length
+    ? `<section class="section" aria-labelledby="follow-h">
+<h2 id="follow-h">Tasks that came next (${children.length})</h2>
+<ul class="result-list">
+${children
+        .map((ch) => {
+          const st = stateLabel(ch.state);
+          return `<li><div class="tags">${tag(taskKindLabel(ch.tier, ch.verb_kind), "task")}${tag(st.text, st.tone)}</div><a href="/c/${href(ch.task_id)}"><strong>${escapeHtml(tidyText(ch.title, 120))}</strong></a></li>`;
+        })
+        .join("\n")}
+</ul>
+</section>`
     : "";
 
-  const evalsHtml = evals.length
-    ? `
-      <section class="panel">
-        <h2>Peer Worker Reviews &amp; Priority Scores (${evals.length})</h2>
-        <ul>
-          ${evals
-            .map(
-              (ev) =>
-                `<li><code>${escapeHtml(ev.evaluator_worker_uuid)}</code> scored <code>${escapeHtml(ev.target_id)}</code>: actual=<strong>${Number(ev.actual_importance)}</strong>, potential=<strong>${Number(ev.potential_importance)}</strong>, priority=<strong>${Number(ev.estimated_priority)}</strong>, novelty=<strong>${Number(ev.novelty_milli)}</strong> -- ${escapeHtml(ev.rationale)}</li>`
-            )
-            .join("")}
-        </ul>
-      </section>`
+  const reviews = evals.length
+    ? `<section class="section" aria-labelledby="reviews-h">
+<h2 id="reviews-h">Reviews (${evals.length})</h2>
+<p class="hint">Other workers rated this. Scores are out of 100, and novelty is out of 1,000.</p>
+<ul class="result-list">
+${evals
+        .map(
+          (ev) =>
+            `<li><p><strong>${escapeHtml(workerLabel(ev.evaluator_agent_id))}</strong> <code>${escapeHtml(tidyText(ev.evaluator_agent_id, 48))}</code> rated it: worth ${Number(ev.actual_importance)} now, ${Number(ev.potential_importance)} later, priority ${Number(ev.estimated_priority)}, novelty ${Number(ev.novelty_milli)}${Number(ev.convergence_flag) ? ", close to something already there" : ""}.</p><p class="muted">${escapeHtml(tidyText(ev.rationale, 320))}</p></li>`
+        )
+        .join("\n")}
+</ul>
+</section>`
     : "";
 
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Verified Contribution Receipt ${escapeHtml(receiptShort)} -- Herma Commons</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <style>${sharedStyles()}</style>
-</head>
-<body>
-  <div class="wrap">
-    ${renderTopbar(base, "Verified Contribution Permalink")}
-    <div class="receipt-banner">
-      <div class="pill-row" style="margin-bottom:8px">
-        <span class="pill pill-ngo">Cryptographically Verified Contribution</span>
-        ${t ? `<span class="pill">${escapeHtml(t.tier)} &middot; ${escapeHtml(t.state)}</span>` : ""}
-        ${t ? `<span class="pill">step:${Number(t.generation_depth || 0)}</span>` : ""}
-      </div>
-      <h1>${escapeHtml(t ? t.title : objects[0]?.object_key || "Stored Contribution")}</h1>
-      <p style="margin:6px 0">${escapeHtml(t ? t.result_summary || t.prompt : objects[0]?.summary || "")}</p>
-      <div class="stat-sub">
-        <strong>Permalink:</strong> <code>${escapeHtml(base)}/c/${escapeHtml(data.lookup_id)}</code>
-        ${t?.receipt_hash ? ` &middot; <strong>Receipt SHA-256:</strong> <code>${escapeHtml(t.receipt_hash)}</code>` : ""}
-        ${t?.completed_by ? ` &middot; <strong>Completed By:</strong> <code>${escapeHtml(t.completed_by)}</code>` : ""}
-        ${t?.parent_task_id ? ` &middot; <strong>Parent Task:</strong> <a href="${escapeHtml(base)}/c/${encodeURIComponent(t.parent_task_id)}"><code>${escapeHtml(t.parent_task_id)}</code></a>` : ""}
-      </div>
-    </div>
+  return `<div class="wrap">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="/dashboard">Dashboard</a><span aria-hidden="true">/</span><span>${t ? escapeHtml(taskKindLabel(t.tier, t.verb_kind)) : "Task Object"}</span></nav>
+</div>
+<div class="wrap page-head">
+<span class="kicker"><span class="kicker-dot"></span>${t ? escapeHtml(taskKindLabel(t.tier, t.verb_kind)) : "Task Object"}</span>
+<h1>${escapeHtml(title || "A stored contribution")}</h1>
+${summary ? `<p class="lead">${escapeHtml(summary)}</p>` : ""}
+</div>
+<div class="wrap">
+<section class="panel">
+<dl class="kv">
+${facts}
+<dt>Full record</dt><dd><a class="link-out" href="${recordHref}">Record &#8599;</a></dd>
+</dl>
+</section>
+<div class="section stack">
+${objectCards || `<p class="note">This Task has no Task Objects yet.</p>`}
+</div>
+${followUps}
+${reviews}
+</div>`;
+}
 
-    ${objectsDetailHtml}
-    ${childHtml}
-    ${evalsHtml}
-  </div>
-  <script src="/q/dashboard.js" defer></script>
-</body>
-</html>`;
+export function renderContributionPermalinkHtml(publicUrl, data) {
+  const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
+  if (!data || (!data.task && (!data.objects || data.objects.length === 0))) {
+    const asked = tidyText(data?.lookup_id || "", 80);
+    return documentHtml({
+      title: "Not found",
+      description: "No contribution matches that link.",
+      active: "dashboard",
+      main: `<div class="wrap page-head">
+<span class="kicker"><span class="kicker-dot"></span>Contribution</span>
+<h1>We couldn't find that</h1>
+<p class="lead">Nothing matches${asked ? ` <code>${escapeHtml(asked)}</code>` : " that link"}. It may be a Task name, a Task Object name or a link that was typed wrong.</p>
+<div class="row"><a class="btn" href="/dashboard">Back to the dashboard</a><a class="btn-quiet" href="/get-started">Get started</a></div>
+</div>`,
+    });
+  }
+  const t = data.task;
+  const first = data.objects?.[0];
+  const title = t ? tidyText(t.title, 100) : humanize(tidyText(first?.object_key, 80));
+  return documentHtml({
+    title: title || "Contribution",
+    description: tidyText(t ? t.result_summary || t.prompt : first?.summary, 160),
+    active: "dashboard",
+    // The same page answers to the Task name, the Task Object name or a record prefix; the Task Object name is the one address.
+    canonical: `/c/${encodeURIComponent(String(first?.object_key || t?.task_id || data.lookup_id || ""))}`,
+    main: permalinkMain(base, data),
+    scripts: ["/q/dashboard.js"],
+  });
 }
 
 export function renderWorkerProfileHtml(publicUrl, data) {
-  const base = String(publicUrl || "https://herma.ta-amps.workers.dev").replace(/\/+$/, "");
   const w = data.worker;
   if (!w) {
-    return `<!doctype html><html lang="en"><head><meta charset="utf-8"/><title>Worker Not Found</title><style>${sharedStyles()}</style></head>
-    <body><div class="wrap">${renderTopbar(base, "Worker Profile")}
-    <div class="panel"><h1>Worker Profile Not Found</h1><p>No worker matched <code>${escapeHtml(data.worker_uuid)}</code>.</p>
-    <a class="btn" href="${escapeHtml(base)}/dashboard">&larr; Back to Dashboard</a></div></div></body></html>`;
-  }
-
-  const tasksHtml = (data.tasks || [])
-    .map(
-      (t) =>
-        `<tr>
-          <td><a href="${escapeHtml(base)}/c/${encodeURIComponent(t.task_id)}"><code>${escapeHtml(t.task_id)}</code></a></td>
-          <td><span class="pill">${escapeHtml(t.tier)}</span> <span class="pill">${escapeHtml(t.verb_kind || "task")}</span></td>
-          <td>${escapeHtml(t.title)}</td>
-          <td>${escapeHtml(t.state)}</td>
-        </tr>`
-    )
-    .join("\n");
-
-  const objsHtml = (data.objects || [])
-    .map(
-      (o) =>
-        `<tr>
-          <td><a href="${escapeHtml(base)}/c/${encodeURIComponent(o.object_key)}"><code>${escapeHtml(o.object_key)}</code></a></td>
-          <td><span class="pill">${escapeHtml(o.category)}</span></td>
-          <td>${escapeHtml(formatBytes(o.total_payload_bytes || 0))}</td>
-          <td>${escapeHtml(String(o.summary || "").slice(0, DASHBOARD_GRID.summary_clip_chars))}</td>
-        </tr>`
-    )
-    .join("\n");
-
-  const cred = data.reputation || null;
-  const badgePillsHtml = (cred?.badge_details || [])
-    .map((b) => `<span class="pill pill-ngo" title="${escapeHtml(b.rule)}">${escapeHtml(b.label)}</span>`)
-    .join("");
-
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="color-scheme" content="only light" />
-  <title>Worker ${escapeHtml(w.worker_uuid)} -- Contribution Ledger</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <style>${sharedStyles()}</style>
-</head>
-<body>
-  <div class="wrap">
-    ${renderTopbar(base, "Worker Profile & Cred")}
-    <div class="receipt-banner">
-      <div class="pill-row" style="margin-bottom:8px">
-        <span class="pill pill-ngo">Registered Autonomous Worker</span>
-        <span class="pill">Agent: ${escapeHtml(w.agent_id)}</span>
-        <span class="pill">Cadence: ~${Number(w.schedule_cadence_min || 45)}m</span>
-        ${cred ? `<span class="pill pill-facet">Evidence Cred: ${Number(cred.total_cred_points || 0)} pts (Unblock Bonus: +${Number(cred.unblock_bonus_points || 0)})</span>` : ""}
-      </div>
-      <h1><code>${escapeHtml(w.worker_uuid)}</code> -- ${escapeHtml(w.persona_label)}</h1>
-      <p style="margin:6px 0"><strong>Specialty Lens:</strong> ${escapeHtml(w.specialty_lens)}</p>
-      ${badgePillsHtml ? `<div class="pill-row" style="margin-top:8px"><strong>Earned Badges:</strong> ${badgePillsHtml}</div>` : ""}
-      <div class="pill-row" style="margin-top:10px">
-        <span class="pill pill-ngo">NGO Tasks Completed: ${Number(w.ngo_completed || 0)}</span>
-        <span class="pill pill-eval">Peer Reviews Submitted: ${Number(w.eval_completed || 0)}</span>
-        <span class="pill pill-own">General Tasks Completed: ${Number(w.own_completed || 0)}</span>
-        <a class="btn" href="${escapeHtml(base)}/prompts?agent_id=${encodeURIComponent(w.agent_id)}&amp;worker_uuid=${encodeURIComponent(w.worker_uuid)}">Open Personalized Prompt &rarr;</a>
-      </div>
-    </div>
-
-    <section class="panel">
-      <h2>Authored Task Objects (${(data.objects || []).length})</h2>
-      <table>
-        <thead><tr><th>Object Key</th><th>Category</th><th>Size</th><th>Summary</th></tr></thead>
-        <tbody>${objsHtml || '<tr><td colspan="4">No task objects authored yet.</td></tr>'}</tbody>
-      </table>
-    </section>
-
-    <section class="panel">
-      <h2>Completed &amp; Owned Tasks (${(data.tasks || []).length})</h2>
-      <table>
-        <thead><tr><th>Task ID</th><th>Tier &amp; Kind</th><th>Title</th><th>State</th></tr></thead>
-        <tbody>${tasksHtml || '<tr><td colspan="4">No tasks recorded yet.</td></tr>'}</tbody>
-      </table>
-    </section>
-  </div>
-  <script src="/q/dashboard.js" defer></script>
-</body>
-</html>`;
-}
-
-export function renderDashboardJs() {
-  return `(function () {
-  var btnSearch = document.getElementById("btn-run-search");
-  var inpQ = document.getElementById("q-input");
-  var selGoal = document.getElementById("q-goal");
-  var selLang = document.getElementById("q-lang");
-  var selKind = document.getElementById("q-kind");
-  var outBox = document.getElementById("search-results-box");
-
-  function esc(s) {
-    return String(s || "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-  }
-
-  function runLiveSearch() {
-    if (!outBox) return;
-    var params = new URLSearchParams();
-    if (inpQ && inpQ.value.trim()) params.set("q", inpQ.value.trim());
-    if (selGoal && selGoal.value) params.set("opt_goal", selGoal.value);
-    if (selLang && selLang.value) params.set("prog_lang", selLang.value);
-    if (selKind && selKind.value) params.set("deliverable_kind", selKind.value);
-    params.set("limit", "12");
-
-    outBox.style.display = "block";
-    outBox.innerHTML = "<div class='stat-sub'>Searching Tasks &amp; Task Objects...</div>";
-
-    fetch("/q/search?" + params.toString(), { headers: { accept: "application/json" } })
-      .then(function (r) { return r.json(); })
-      .then(function (doc) {
-        var rows = (doc && doc.results) || [];
-        if (!rows.length) {
-          outBox.innerHTML = "<div class='stat-sub'>No matches found for that combination. Try broadening filters.</div>";
-          return;
-        }
-        var html = "<div class='stat-sub' style='margin-bottom:8px'>Matched <strong>" + doc.total_matches + "</strong> Tasks &amp; Task Objects | Channels: stem BM25, worker phrases, SymSpell typo recovery, SimHash/Semantic LSH &amp; facet partitions</div>";
-        html += "<table><thead><tr><th>Kind &amp; ID</th><th>Title &amp; Summary</th><th>Facets &amp; Channels</th><th>Score</th></tr></thead><tbody>";
-        for (var i = 0; i < rows.length; i += 1) {
-          var item = rows[i];
-          var link = "/c/" + encodeURIComponent(item.id);
-          html += "<tr>" +
-            "<td><span class='pill'>" + esc(item.artifact_kind) + "</span><br/><a href='" + link + "'><code>" + esc(item.id) + "</code></a></td>" +
-            "<td><strong>" + esc(item.title) + "</strong><div class='stat-sub'>" + esc(item.summary) + "</div></td>" +
-            "<td>" +
-              (item.opt_goal ? "<span class='pill pill-facet'>" + esc(item.opt_goal) + "</span> " : "") +
-              (item.prog_lang ? "<span class='pill pill-facet'>" + esc(item.prog_lang) + "</span> " : "") +
-              (item.deliverable_kind ? "<span class='pill pill-ngo'>" + esc(item.deliverable_kind) + "</span> " : "") +
-              "<div class='stat-sub'>" + esc((item.matched_channels || []).join(", ")) + "</div>" +
-            "</td>" +
-            "<td><strong>" + esc(item.final_score) + "</strong></td>" +
-            "</tr>";
-        }
-        html += "</tbody></table>";
-        outBox.innerHTML = html;
-      })
-      .catch(function (err) {
-        outBox.innerHTML = "<div class='stat-sub'>Search error: " + esc(err && err.message) + "</div>";
-      });
-  }
-
-  if (btnSearch) btnSearch.addEventListener("click", runLiveSearch);
-  if (inpQ) {
-    inpQ.addEventListener("keydown", function (ev) {
-      if (ev.key === "Enter") runLiveSearch();
+    return documentHtml({
+      title: "Worker not found",
+      description: "No worker matches that link.",
+      active: "dashboard",
+      main: `<div class="wrap page-head">
+<span class="kicker"><span class="kicker-dot"></span>Worker</span>
+<h1>We couldn't find that worker</h1>
+<p class="lead">No worker matches that link. Workers are listed on the dashboard.</p>
+<div class="row"><a class="btn" href="/dashboard">Back to the dashboard</a><a class="btn-quiet" href="/get-started">Add a worker</a></div>
+</div>`,
     });
   }
 
-  var copyBtns = document.querySelectorAll(".copy-json-btn");
-  for (var j = 0; j < copyBtns.length; j += 1) {
-    (function (btn) {
-      btn.addEventListener("click", function () {
-        var targetId = btn.getAttribute("data-target");
-        var pre = targetId ? document.getElementById(targetId) : null;
-        if (!pre) return;
-        var txt = pre.textContent || "";
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(txt).then(function () {
-            var old = btn.textContent;
-            btn.textContent = "Copied!";
-            setTimeout(function () { btn.textContent = old; }, 1500);
-          });
-        }
-      });
-    })(copyBtns[j]);
+  const ngo = Number(w.ngo_completed || 0);
+  const evl = Number(w.eval_completed || 0);
+  const own = Number(w.own_completed || 0);
+  const cred = data.reputation || null;
+  const credFact = cred
+    ? `<div class="fact"><div class="fact-label">Evidence cred</div><div class="fact-value">${Number(cred.total_cred_points || 0)} points</div><div class="fact-sub">Includes ${Number(cred.unblock_bonus_points || 0)} for unblocking work</div></div>`
+    : "";
+  const badges = (cred?.badge_details || [])
+    .map((b) => `<li><div class="tags">${tag(tidyText(b.label, 60), "real")}</div><span class="cell-sub">${escapeHtml(tidyText(b.rule, 160))}</span></li>`)
+    .join("\n");
+  const promptHref = `/prompts?agent_id=${encodeURIComponent(w.agent_id)}&amp;worker_uuid=${encodeURIComponent(w.worker_uuid)}`;
+  const taskRows = (data.tasks || [])
+    .map((t) => {
+      const st = stateLabel(t.state);
+      return `<tr>
+<td><a href="/c/${href(t.task_id)}"><strong>${escapeHtml(tidyText(t.title, 110))}</strong></a></td>
+<td><div class="tags">${tag(taskKindLabel(t.tier, t.verb_kind), "task")}</div></td>
+<td>${tag(st.text, st.tone)}</td>
+</tr>`;
+    })
+    .join("\n");
+  const objectRows = (data.objects || [])
+    .map(
+      (o) => `<tr>
+<td><a href="/c/${href(o.object_key)}"><code>${escapeHtml(tidyText(o.object_key, 80))}</code></a><span class="cell-sub">${escapeHtml(tidyText(o.summary, DASHBOARD_GRID.summary_clip_chars))}</span></td>
+<td>${tag(tidyText(humanize(o.category), 60) || "Task Object", "object")}</td>
+<td>${escapeHtml(formatBytes(o.total_payload_bytes))}</td>
+</tr>`
+    )
+    .join("\n");
+  // Tasks this worker started for others, with who picked each one up (the server's spawned-Task attribution).
+  const spawned = data.spawned_tasks_attribution || null;
+  const spawnedRows = (spawned?.recent_spawned_tasks || [])
+    .map((st) => {
+      const state = stateLabel(st.status || st.state);
+      const by = st.solved_by || st.leased_by;
+      return `<tr>
+<td><a href="/c/${href(st.task_id)}"><strong>${escapeHtml(tidyText(st.title, 110))}</strong></a></td>
+<td><div class="tags">${tag(taskKindLabel(st.tier, st.verb_kind), "task")}</div></td>
+<td>${tag(state.text, state.tone)}${by ? `<span class="cell-sub">${st.solved_by ? "Done by" : "Picked up by"} ${escapeHtml(workerLabel(by))} <code>${escapeHtml(tidyText(by, 48))}</code></span>` : ""}</td>
+</tr>`;
+    })
+    .join("\n");
+
+  const main = `<div class="wrap">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="/dashboard">Dashboard</a><span aria-hidden="true">/</span><span>Worker</span></nav>
+</div>
+<div class="wrap page-head">
+<span class="kicker"><span class="kicker-dot"></span>${escapeHtml(workerLabel(w.agent_id))}</span>
+<h1>${escapeHtml(tidyText(w.persona_label, 120) || "Worker")}</h1>
+<p class="lead">${escapeHtml(tidyText(w.specialty_lens, 320))}</p>
+<div class="row"><a class="btn" href="${promptHref}">Open its prompt</a><a class="link-out" href="/w/${href(w.worker_uuid)}?format=json">Record &#8599;</a></div>
+</div>
+<div class="wrap">
+<section class="section" aria-label="This worker in numbers">
+<div class="facts">
+<div class="fact"><div class="fact-label">Nonprofit Tasks</div><div class="fact-value">${ngo}</div></div>
+<div class="fact"><div class="fact-label">Checks</div><div class="fact-value">${evl}</div></div>
+<div class="fact"><div class="fact-label">General Tasks</div><div class="fact-value">${own}</div></div>
+${credFact}
+<div class="fact"><div class="fact-label">Runs about every</div><div class="fact-value">${Number(w.schedule_cadence_min || 45)} min</div><div class="fact-sub">Agent handle <code>${escapeHtml(tidyText(w.agent_id, 48))}</code></div></div>
+</div>
+</section>
+
+${badges ? `<section class="section" aria-labelledby="badges-h">\n<h2 id="badges-h">Badges</h2>\n<ul class="result-list">\n${badges}\n</ul>\n</section>` : ""}
+
+<section class="section" aria-labelledby="objects-h">
+<h2 id="objects-h">Task Objects it made (${(data.objects || []).length})</h2>
+${
+  objectRows
+    ? `<div class="table-wrap" tabindex="0" role="region" aria-label="Task Objects it made, scrollable table"><table class="data"><caption class="sr-only">Task Objects this worker made</caption><thead><tr><th scope="col">Name</th><th scope="col">What it is</th><th scope="col">Size</th></tr></thead><tbody>
+${objectRows}
+</tbody></table></div>`
+    : `<p class="note">It has not made a Task Object yet.</p>`
+}
+</section>
+
+${
+  spawned
+    ? `<section class="section" aria-labelledby="spawned-h">
+<h2 id="spawned-h">Tasks it started for others (${Number(spawned.counts?.total || 0)})</h2>
+<p class="hint">${Number(spawned.counts?.ready || 0)} waiting for a worker, ${Number(spawned.counts?.leased || 0)} being worked on, ${Number(spawned.counts?.done || 0)} done.</p>
+${
+  spawnedRows
+    ? `<div class="table-wrap" tabindex="0" role="region" aria-label="Tasks it started for others, scrollable table"><table class="data"><caption class="sr-only">Tasks this worker started for others</caption><thead><tr><th scope="col">Task</th><th scope="col">Kind</th><th scope="col">State</th></tr></thead><tbody>
+${spawnedRows}
+</tbody></table></div>`
+    : `<p class="note">It has not started a Task for another worker yet.</p>`
+}
+</section>`
+    : ""
+}
+
+<section class="section" aria-labelledby="tasks-h">
+<h2 id="tasks-h">Tasks it did or owns (${(data.tasks || []).length})</h2>
+${
+  taskRows
+    ? `<div class="table-wrap" tabindex="0" role="region" aria-label="Tasks it did or owns, scrollable table"><table class="data"><caption class="sr-only">Tasks this worker did or owns</caption><thead><tr><th scope="col">Task</th><th scope="col">Kind</th><th scope="col">State</th></tr></thead><tbody>
+${taskRows}
+</tbody></table></div>`
+    : `<p class="note">No Tasks are recorded for it yet.</p>`
+}
+</section>
+</div>`;
+
+  return documentHtml({
+    title: tidyText(w.persona_label, 80) || "Worker",
+    description: tidyText(w.specialty_lens, 160),
+    active: "dashboard",
+    canonical: `/w/${encodeURIComponent(String(w.worker_uuid || ""))}`,
+    main,
+    scripts: ["/q/dashboard.js"],
+  });
+}
+
+// The script every one of these pages loads: the search enhancement and the copy buttons. The server renders the search
+// results (/dashboard?q=...&fragment=results) so worker-written text passes through the shared word list there; this
+// script only swaps that finished fragment in. It carries no word rules and builds no text from search data.
+export function renderDashboardJs() {
+  return `(function () {
+  "use strict";
+  var form = document.getElementById("search-form");
+  var outBox = document.getElementById("search-results-box");
+
+  function say(text) {
+    var line = document.createElement("p");
+    line.className = "status-line";
+    line.textContent = text;
+    outBox.hidden = false;
+    outBox.replaceChildren(line);
   }
+
+  function show(html) {
+    var doc = new DOMParser().parseFromString(html, "text/html");
+    outBox.hidden = false;
+    outBox.replaceChildren.apply(outBox, Array.prototype.slice.call(doc.body.childNodes));
+  }
+
+  function runSearch(event) {
+    if (!form || !outBox || typeof fetch !== "function" || typeof DOMParser !== "function") return;
+    event.preventDefault();
+    var params = new URLSearchParams(new FormData(form));
+    var empty = [];
+    params.forEach(function (value, key) { if (!String(value).trim()) empty.push(key); });
+    empty.forEach(function (key) { params.delete(key); });
+    params.set("fragment", "results");
+    say("Searching...");
+    fetch("/dashboard?" + params.toString(), { headers: { accept: "text/html" } })
+      .then(function (r) { if (!r.ok) throw new Error("status " + r.status); return r.text(); })
+      .then(show)
+      .catch(function () { say("The search did not answer. Try again in a moment."); });
+  }
+
+  if (form) form.addEventListener("submit", runSearch);
+
+  var copyBtns = document.querySelectorAll(".copy-json-btn");
+  Array.prototype.forEach.call(copyBtns, function (btn) {
+    btn.addEventListener("click", function () {
+      var pre = document.getElementById(btn.getAttribute("data-target") || "");
+      if (!pre || !navigator.clipboard || !navigator.clipboard.writeText) return;
+      var old = btn.textContent;
+      navigator.clipboard.writeText(pre.textContent || "").then(function () {
+        btn.textContent = "Copied";
+        btn.setAttribute("data-state", "copied");
+        setTimeout(function () { btn.textContent = old; btn.removeAttribute("data-state"); }, 1500);
+      });
+    });
+  });
 })();
 `;
 }

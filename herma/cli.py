@@ -32,7 +32,7 @@ def _default_db() -> Path:
     return Path.cwd() / ".herma" / "herma.db"
 
 
-async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> dict[str, Any]:
+async def _run_demo(*, live_meta: bool = False, meta_key_file: str = "") -> dict[str, Any]:
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
         tessera_db = tmp_dir / "tessera.db"
@@ -76,7 +76,7 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
         )
         h_store.put_provision(enriched, check_cas=False)
         published_ids = h_store.publish_to_tessera_store(t_store)
-        # The temporary demo operator approves bundled synthetic fixtures explicitly.
+        # The temporary demo operator approves bundled example fixtures explicitly.
         # Ordinary publication remains unverified until an authorized publisher approves it.
         for store_name in ("tessera.nouns", "herma.provisions", "herma.provisions.context"):
             fixtures = t_store.list_records(store_name)
@@ -90,7 +90,7 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
                         producer_surface="surface:herma",
                         visibility_scope="public_commons",
                         target_cohorts=["all"],
-                        tags=["status:verified", "synthetic:true"],
+                        tags=["status:verified", "example:true"],
                     )
                     for record in fixtures
                 ]
@@ -135,9 +135,9 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
             principal=assistant_principal,
             wire_format="chat_completions",
             payload={
-                "model": "muse-spark-open",
+                "model": "muse-spark-1.3",
                 "messages": [
-                    {"role": "user", "content": "Help organize this synthetic practice task."}
+                    {"role": "user", "content": "Help organize this example practice task."}
                 ],
             },
             offline_only=True,
@@ -162,10 +162,10 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
             contributor_refused = True
 
         # 3. Fire Tier 1 (keyword/path + noun/verb shim), Tier 2 (semantic), Tier 3 (micromodel), and Direct Response:
-        if live_ollama and ollama_key_file:
-            key_txt = Path(ollama_key_file).read_text(encoding="utf-8").strip()
-            os.environ["HERMA_MICROMODEL_URL"] = "https://ollama.com/v1/chat/completions"
-            os.environ["HERMA_MICROMODEL_MODEL"] = "muse-spark-open"
+        if live_meta and meta_key_file:
+            key_txt = Path(meta_key_file).read_text(encoding="utf-8").strip()
+            os.environ["HERMA_MICROMODEL_URL"] = "https://api.meta.ai/v1/chat/completions"
+            os.environ["HERMA_MICROMODEL_MODEL"] = "muse-spark-1.3"
             os.environ["HERMA_MICROMODEL_API_KEY"] = key_txt
 
         # Tier-1 keyword + path match + atomic noun/verb context shimming:
@@ -173,7 +173,7 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
             principal=principal,
             wire_format="chat_completions",
             payload={
-                "model": "muse-spark-open",
+                "model": "muse-spark-1.3",
                 "messages": [
                     {
                         "role": "user",
@@ -187,7 +187,7 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
             principal=principal,
             wire_format="responses",
             payload={
-                "model": "muse-spark-open",
+                "model": "muse-spark-1.3",
                 "input": "Prevent two concurrent background workers in a swarm from double-processing the same backlog item.",
             },
         )
@@ -196,7 +196,7 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
             principal=principal,
             wire_format="chat_completions",
             payload={
-                "model": "muse-spark-open",
+                "model": "muse-spark-1.3",
                 "messages": [
                     {
                         "role": "user",
@@ -210,7 +210,7 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
             principal=principal,
             wire_format="chat_completions",
             payload={
-                "model": "muse-spark-open",
+                "model": "muse-spark-1.3",
                 "messages": [
                     {
                         "role": "user",
@@ -236,14 +236,14 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
         out_dedupe = await mw.intercept(
             principal=principal,
             wire_format="chat_completions",
-            payload={"model": "muse-spark-open", "messages": turn2_messages},
+            payload={"model": "muse-spark-1.3", "messages": turn2_messages},
         )
 
         live_completion_excerpt = None
-        if live_ollama and ollama_key_file:
-            key_txt = Path(ollama_key_file).read_text(encoding="utf-8").strip()
+        if live_meta and meta_key_file:
+            key_txt = Path(meta_key_file).read_text(encoding="utf-8").strip()
             prompt_payload = {
-                "model": "muse-spark-open",
+                "model": "muse-spark-1.3",
                 "messages": [
                     {
                         "role": "user",
@@ -268,7 +268,7 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
             )
             async with httpx.AsyncClient(timeout=45.0) as client:
                 r = await client.post(
-                    "https://ollama.com/v1/chat/completions",
+                    "https://api.meta.ai/v1/chat/completions",
                     headers={"Authorization": f"Bearer {key_txt}"},
                     json=live_out.augmented_payload,
                 )
@@ -313,7 +313,7 @@ async def _run_demo(*, live_ollama: bool = False, ollama_key_file: str = "") -> 
             "direct_response_receipt": out_direct.receipt.receipt_sha256,
             "direct_response_preview": (out_direct.receipt.direct_response_text or "")[:140],
             "turn2_deduped_skipped": out_dedupe.receipt.deduped_skipped,
-            "live_ollama_excerpt": live_completion_excerpt,
+            "live_meta_excerpt": live_completion_excerpt,
         }
 
 
@@ -353,15 +353,15 @@ def main(argv: list[str] | None = None) -> int:
         "dry-run", help="Evaluate triggers and preview shimmed context or direct response locally"
     )
     dry_p.add_argument("--prompt", required=True)
-    dry_p.add_argument("--model", default="muse-spark-open")
+    dry_p.add_argument("--model", default="muse-spark-1.3")
     dry_p.add_argument("--path", action="append", default=[])
 
     demo_p = sub.add_parser(
         "demo",
         help="Run end-to-end 3-tier trigger + noun/verb shim + direct response + Tessera sync check",
     )
-    demo_p.add_argument("--live-ollama", action="store_true")
-    demo_p.add_argument("--ollama-key-file", default="")
+    demo_p.add_argument("--live-meta", action="store_true")
+    demo_p.add_argument("--meta-key-file", default="")
 
     serve_p = sub.add_parser("serve", help="Run the Herma HTTP middleware server")
     serve_p.add_argument("--host", default="127.0.0.1")
@@ -466,8 +466,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "demo":
         res = asyncio.run(
             _run_demo(
-                live_ollama=bool(args.live_ollama),
-                ollama_key_file=str(args.ollama_key_file),
+                live_meta=bool(args.live_meta),
+                meta_key_file=str(args.meta_key_file),
             )
         )
         print(json.dumps(res, indent=2))

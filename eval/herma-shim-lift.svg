@@ -1,40 +1,43 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 430" width="920" height="430" role="img" aria-labelledby="chart-title chart-desc">
-  <title id="chart-title">Herma Context-Shim Lift and Meta Model Memory Regimes</title>
-  <desc id="chart-desc">Measured synthetic 150-row tool-call accuracy showing Llama 3.2 3B rising from 52.0% base to 64.7% with zero-weight Herma context shimming and 72.7% with promoted LoRA, Muse Glimmer 30B rising from 93.3% to 99.3% with QLoRA, and 3-tier natural-language shim routing.</desc>
+  <title id="chart-title">Muse Glimmer Tool-Call Accuracy and Herma Shim Routing</title>
+  <desc id="chart-desc">Measured on a fixed 150-task evaluation: Muse Glimmer fine-tuned by ta-amps rises from 93.3% to 99.3% exact tool-call match, from 96.7% to 100.0% valid JSON, and from 97.3% to 99.3% refusal accuracy with a 4-bit QLoRA adapter, next to 3-tier natural-language shim routing.</desc>
   <rect width="920" height="430" rx="14" fill="#0c1017"/>
   <rect x="16" y="16" width="888" height="398" rx="11" fill="#131a24" stroke="#253244" stroke-width="1.5"/>
 
-  <text x="40" y="54" fill="#eef2f7" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="20" font-weight="700">Herma Zero-Weight Shim Lift &amp; Parametric LoRA Progression</text>
-  <text x="40" y="77" fill="#9fb0c5" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13">150-row synthetic Task (verb) &amp; Task Object (noun) contract benchmark -- Standard mode only (-contributor refused)</text>
+  <text x="40" y="54" fill="#eef2f7" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="20" font-weight="700">Muse Glimmer Tool Calls &amp; Herma Shim Routing</text>
+  <text x="40" y="77" fill="#9fb0c5" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13">Fixed 150-task Task &amp; Task Object contract evaluation -- Standard mode only (-contributor refused)</text>
 
   <rect x="40" y="98" width="520" height="292" rx="10" fill="#0f151e" stroke="#253244" stroke-width="1"/>
-  <text x="58" y="124" fill="#67b7ff" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="700">EXACT CONTRACT ACCURACY (%)</text>
+  <text x="58" y="124" fill="#67b7ff" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="700">MUSE GLIMMER, FINE-TUNED BY TA-AMPS (%)</text>
 
-  <text x="58" y="158" fill="#eef2f7" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600">Llama 3.2 3B -- Base (raw prompt, 0 shim)</text>
-  <rect x="58" y="166" width="420" height="18" rx="5" fill="#1b2738"/>
-  <rect x="58" y="166" width="218.4" height="18" rx="5" fill="#5b6f8a"/>
-  <text x="488" y="180" fill="#9fb0c5" font-family="ui-monospace, SFMono-Regular, monospace" font-size="13" font-weight="700">52.0%</text>
+  <text x="58" y="158" fill="#eef2f7" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600">Exact tool-call match -- base model</text>
+  <rect x="58" y="166" width="420" height="16" rx="4" fill="#1b2738"/>
+  <rect x="58" y="166" width="391.9" height="16" rx="4" fill="#5b6f8a"/>
+  <text x="488" y="179" fill="#9fb0c5" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12" font-weight="700">93.3% base</text>
 
-  <text x="58" y="210" fill="#eef2f7" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="700">Llama 3.2 3B + Herma Context Shim (0 weight updates)</text>
-  <rect x="58" y="218" width="420" height="20" rx="5" fill="#1b2738"/>
-  <rect x="58" y="218" width="271.7" height="20" rx="5" fill="#67b7ff"/>
-  <text x="488" y="233" fill="#67b7ff" font-family="ui-monospace, SFMono-Regular, monospace" font-size="13" font-weight="700">64.7% (+12.7)</text>
+  <rect x="58" y="188" width="420" height="18" rx="4" fill="#1b2738"/>
+  <rect x="58" y="188" width="417.1" height="18" rx="4" fill="#53d69a"/>
+  <text x="488" y="202" fill="#53d69a" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12" font-weight="700">99.3% QLoRA (+6.0)</text>
 
-  <text x="58" y="264" fill="#eef2f7" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600">Llama 3.2 3B + Promoted PEFT LoRA (r=32)</text>
-  <rect x="58" y="272" width="420" height="18" rx="5" fill="#1b2738"/>
-  <rect x="58" y="272" width="305.3" height="18" rx="5" fill="#53d69a"/>
-  <text x="488" y="286" fill="#53d69a" font-family="ui-monospace, SFMono-Regular, monospace" font-size="13" font-weight="700">72.7% (+20.7)</text>
+  <line x1="58" y1="224" x2="540" y2="224" stroke="#253244" stroke-width="1"/>
+
+  <text x="58" y="248" fill="#eef2f7" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600">Valid JSON -- base vs QLoRA</text>
+  <rect x="58" y="256" width="420" height="14" rx="4" fill="#1b2738"/>
+  <rect x="58" y="256" width="406.1" height="14" rx="4" fill="#5b6f8a"/>
+  <text x="488" y="267" fill="#9fb0c5" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12" font-weight="700">96.7% base</text>
+  <rect x="58" y="276" width="420" height="14" rx="4" fill="#1b2738"/>
+  <rect x="58" y="276" width="420" height="14" rx="4" fill="#53d69a"/>
+  <text x="488" y="287" fill="#53d69a" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12" font-weight="700">100.0% QLoRA</text>
 
   <line x1="58" y1="306" x2="540" y2="306" stroke="#253244" stroke-width="1"/>
 
-  <text x="58" y="330" fill="#eef2f7" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600">Muse Glimmer 30B -- Base vs 4-bit QLoRA Holdout</text>
+  <text x="58" y="330" fill="#eef2f7" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="600">Refusal accuracy -- base vs QLoRA</text>
   <rect x="58" y="338" width="420" height="14" rx="4" fill="#1b2738"/>
-  <rect x="58" y="338" width="391.9" height="14" rx="4" fill="#5b6f8a"/>
-  <text x="488" y="349" fill="#9fb0c5" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12" font-weight="700">93.3% base</text>
-
-  <rect x="58" y="358" width="420" height="16" rx="4" fill="#1b2738"/>
-  <rect x="58" y="358" width="417.1" height="16" rx="4" fill="#53d69a"/>
-  <text x="488" y="370" fill="#53d69a" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12" font-weight="700">99.3% QLoRA</text>
+  <rect x="58" y="338" width="408.7" height="14" rx="4" fill="#5b6f8a"/>
+  <text x="488" y="349" fill="#9fb0c5" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12" font-weight="700">97.3% base</text>
+  <rect x="58" y="358" width="420" height="14" rx="4" fill="#1b2738"/>
+  <rect x="58" y="358" width="417.1" height="14" rx="4" fill="#53d69a"/>
+  <text x="488" y="369" fill="#53d69a" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12" font-weight="700">99.3% QLoRA</text>
 
   <rect x="578" y="98" width="302" height="292" rx="10" fill="#0f151e" stroke="#253244" stroke-width="1"/>
   <text x="596" y="124" fill="#67b7ff" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="700">NATURAL-LANGUAGE SHIM ROUTING</text>

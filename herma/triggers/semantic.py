@@ -104,7 +104,6 @@ CONCEPT_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "payee",
             "impersonation",
             "accuse",
-            "synthetic",
         ),
     ),
     (
@@ -163,7 +162,6 @@ CONCEPT_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "adapter",
             "parametric",
             "glimmer",
-            "llama",
             "cutoff",
             "weights",
             "finetune",

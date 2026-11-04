@@ -21,7 +21,6 @@ from herma.store import ProvisionStore
 
 KEYS = {
     "meta": "META_API_KEY",
-    "ollama": "OLLAMA_API_KEY",
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
@@ -32,9 +31,7 @@ def provider_config(provider: str, **patch: Any) -> ProviderConfig:
     return ProviderConfig(
         **{
             "provider": provider,
-            "model": {"meta": "muse-spark-1.3", "ollama": "muse-spark-open"}.get(
-                provider, "synthetic/model"
-            ),
+            "model": {"meta": "muse-spark-1.3"}.get(provider, "example/model"),
             "max_output": 16384,
             "meta_budget_usd": 2,
             "openai_budget_usd": 2,
@@ -43,7 +40,7 @@ def provider_config(provider: str, **patch: Any) -> ProviderConfig:
             "anthropic_rates": (1, 3),
             "openrouter_budget_usd": 2,
             "openrouter_rates": (1, 3),
-            "openrouter_provider": "synthetic-host",
+            "openrouter_provider": "example-host",
             **patch,
         }
     )
@@ -54,7 +51,7 @@ def test_missing_selected_key_skips_before_reserving_but_offline_preparation_wor
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str
 ) -> None:
     for variable in KEYS.values():
-        monkeypatch.setenv(variable, "synthetic-other-provider-key")
+        monkeypatch.setenv(variable, "example-other-provider-key")
     monkeypatch.delenv(KEYS[provider])
     config = provider_config(provider)
     body = config.build_request([], tools_for([contract()]))
@@ -101,9 +98,9 @@ def test_missing_key_does_not_consume_the_exact_allowance_needed_for_permitted_f
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(str(request.url))
-        assert request.url.host == "ollama.com"
+        assert request.url.host == "api.openai.com"
         return httpx.Response(
-            200, json=tool_reply({"value": {"message": "SYNTHETIC", "synthetic": True}})
+            200, json=tool_reply({"value": {"message": "EXAMPLE", "example": True}}, "openai")
         )
 
     async def call(config: ProviderConfig, body: dict[str, Any]) -> dict[str, Any]:
@@ -111,13 +108,16 @@ def test_missing_key_does_not_consume_the_exact_allowance_needed_for_permitted_f
 
     probe_store = ProvisionStore(tmp_path / "probe.db")
     seed(probe_store, "key:alice")
-    probe = asyncio.run(ConversationEngine(probe_store, call=call).turn("key:alice", turn()))
+    # The permitted fallback is the plan's OpenAI choice, so probe the exact OpenAI allowance.
+    probe = asyncio.run(
+        ConversationEngine(probe_store, call=call).turn("key:alice", turn(provider="openai"))
+    )
     limit = probe["reserved_tokens"]
     requests.clear()
     monkeypatch.setenv("HERMA_CONVERSATION_CALLER_TOKENS_PER_HOUR", str(limit))
     engine = ConversationEngine(store, call=call)
     result = asyncio.run(engine.turn("key:alice", planned_turn()))
-    assert requests == ["https://ollama.com/api/chat"]
+    assert requests == ["https://api.openai.com/v1/responses"]
     assert result["proposal"]["status"] == "ready"
     assert result["reserved_tokens"] == limit
     assert result["attempts"][0]["reserved_tokens"] == 0
@@ -129,7 +129,7 @@ def test_missing_key_does_not_consume_the_exact_allowance_needed_for_permitted_f
             for row in conn.execute(
                 "SELECT provider FROM work_provider_budget WHERE provider!='coordination'"
             )
-        ] == ["ollama"]
+        ] == ["openai"]
 
 
 @pytest.mark.parametrize("status", [201, 202, 204, 206])
@@ -148,9 +148,9 @@ def test_nonfinal_success_preserves_unknown_outcome_and_requires_uncertain_grant
                 content=b"" if status == 204 else b'{"status":"queued","id":"private-job"}',
                 headers={"Location": "https://example.com/private-job", "Retry-After": "60"},
             )
-        assert request.url.host == "ollama.com"
+        assert request.url.host == "api.openai.com"
         return httpx.Response(
-            200, json=tool_reply({"value": {"message": "SYNTHETIC", "synthetic": True}})
+            200, json=tool_reply({"value": {"message": "EXAMPLE", "example": True}}, "openai")
         )
 
     async def call(config: ProviderConfig, body: dict[str, Any]) -> dict[str, Any]:
@@ -158,7 +158,7 @@ def test_nonfinal_success_preserves_unknown_outcome_and_requires_uncertain_grant
 
     engine = ConversationEngine(store, call=call)
     result = asyncio.run(engine.turn("key:alice", planned_turn()))
-    assert requests == (["api.meta.ai", "ollama.com"] if uncertain else ["api.meta.ai"])
+    assert requests == (["api.meta.ai", "api.openai.com"] if uncertain else ["api.meta.ai"])
     attempt = result["attempts"][0]
     assert attempt["upstream_http_status"] == status
     assert attempt["outcome"] == "unknown" and attempt["reservation_status"] == "reserved"
@@ -191,7 +191,7 @@ def test_nonfinal_failover_plan_cannot_grant_itself_operator_uncertainty_permiss
 def test_openai_nonterminal_body_keeps_health_uncertain(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str
 ) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-provider-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "example-provider-key")
     store = ProvisionStore(tmp_path / "state.db")
     seed(store, "key:alice")
     requests = []
@@ -231,8 +231,8 @@ def test_openai_nonterminal_body_keeps_health_uncertain(
         ("openai", {"service_tier": None}),
         ("anthropic", {"service_tier": "auto"}),
         ("openrouter", {"service_tier": "default"}),
-        ("openai", {"prompt": {"id": "pmpt_synthetic", "version": "1"}}),
-        ("openrouter", {"prompt_id": "pmpt_synthetic"}),
+        ("openai", {"prompt": {"id": "pmpt_example", "version": "1"}}),
+        ("openrouter", {"prompt_id": "pmpt_example"}),
         ("anthropic", {"speed": "fast"}),
         ("anthropic", {"inference_geo": "us"}),
     ],

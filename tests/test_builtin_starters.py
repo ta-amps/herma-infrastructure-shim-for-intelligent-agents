@@ -22,7 +22,7 @@ WORKER = r"""
 const { canonicalJson, sha256Hex } = await import(process.env.WORKER_URL.replace(/worker\.js$/, "herma_engine.js"));
 const db = new SqliteD1();
 const env = { STORAGE_MODE: "cloud", HERMA_DB: db, BOOTSTRAP_SECRET: "boot-starters" };
-const base = "https://herma.ta-amps.workers.dev";
+const base = "https://herma.teleionlabs.com";
 await worker.fetch(new Request(base + "/healthz"), env);
 const key = await (await worker.fetch(new Request(base + "/v1/admin/keys", { method: "POST",
   headers: { "content-type": "application/json", "x-bootstrap-secret": "boot-starters" },
@@ -43,7 +43,7 @@ const prompt = "Update src/tessera/_tasks.py lease fencing before put_record";
 const fired = async () => (await (await worker.fetch(new Request(base + "/v1/dry-run", { method: "POST",
   headers: { "content-type": "application/json", "x-herma-key": key.key, "x-herma-harness": "opencode" },
   body: JSON.stringify({ wire_format: "chat_completions",
-    payload: { model: "muse-spark-open", messages: [{ role: "user", content: prompt }] } }) }), env)).json())
+    payload: { model: "muse-spark-1.3", messages: [{ role: "user", content: prompt }] } }) }), env)).json())
   .receipt.provisions_fired.map((p) => p.split("@")[0]);
 const out = { seeded: await fired() };
 await storeAs(legacy);
@@ -61,9 +61,9 @@ const {
 } = await import(process.env.WORKER_URL.replace(/worker\.js$/, "herma_engine.js"));
 const db = new SqliteD1();
 const env = { STORAGE_MODE: "cloud", HERMA_DB: db, BOOTSTRAP_SECRET: "boot-parity" };
-const base = "https://herma.ta-amps.workers.dev";
+const base = "https://herma.teleionlabs.com";
 await worker.fetch(new Request(base + "/healthz"), env);
-const homeHtml = await (await worker.fetch(new Request(base + "/"), env)).text();
+const homeHtml = await (await worker.fetch(new Request(base + "/shim"), env)).text();
 
 const preview = async (prompt) => {
   const resp = await worker.fetch(new Request(base + "/api/preview", {
@@ -83,9 +83,15 @@ const queries = [
   "Show the canonical noun/verb schema",
   "herma direct schema",
   "/herma-schema",
+  "What is Teleion Fabric?",
+  "How should my agent claim a Task?",
+  "Help a nonprofit make a bilingual food pantry flyer",
+  "How do feeds show what's new?",
+  "How does model routing pick between Muse Spark 1.3 and Muse Wonder 1.0?",
+  "When should we use fine-tuning vs context shimming?",
   "agent harness feeds",
   "Compare HarnessTax across Harness Square, OpenCode, Pi, and Muse Code",
-  "When should we use prompt shimming vs LoRA as parametric memory on Muse Spark Open or Muse Glimmer?",
+  "When should we use prompt shimming vs LoRA as parametric memory on Muse Glimmer?",
 ];
 const previews = {};
 for (const q of queries) {
@@ -125,7 +131,7 @@ console.log(JSON.stringify({
   entry_ids: DEFAULT_CONTEXT_ENTRIES.map((e) => e.entry_id).sort(),
   lensBuiltin,
   lensSynced,
-  hasMetaTable: homeHtml.includes("Which Meta Models Do What") && homeHtml.includes("Muse Glimmer 30B QLoRA"),
+  hasMetaTable: homeHtml.includes("Which Meta Models Do What") && homeHtml.includes("Muse Glimmer 30B, fine-tuned by ta-amps"),
   contribStatus: contribResp.status,
   contribCode: (await contribResp.json()).code,
   previews,
@@ -176,10 +182,11 @@ def test_all_builtin_starters_and_natural_language_queries_match_across_python_a
     app = create_app()
     client = TestClient(app)
 
-    home_html = client.get("/").text
+    home_html = client.get("/shim").text
     assert "Which Meta Models Do What" in home_html
-    assert "Muse Glimmer 30B QLoRA" in home_html
-    assert "context-shimming AI middleware for configurable coding harnesses" in home_html
+    assert "Muse Glimmer 30B, fine-tuned by ta-amps" in home_html
+    assert "Muse Wonder 1.0" in home_html and "Muse Spark 1.3" in home_html
+    assert "Teleion Fabric" in home_html and "model shim" in home_html.lower()
 
     worker_out = _run_worker_node_script(WORKER_PARITY)
     assert worker_out["lensBuiltin"] is True
@@ -212,9 +219,33 @@ def test_all_builtin_starters_and_natural_language_queries_match_across_python_a
         assert "PROV-DIRECT-NOUN-VERB-SCHEMA" in py_ids, q
         assert py_data["responded_directly"] is True and wk_data["responded_directly"] is True, q
         for text in (py_data["direct_response_text"], wk_data["direct_response_text"]):
-            assert "Canonical Herma + Tessera Noun/Verb Contract" in text
-            assert "Tasks (`verbs` on the wire)" in text
-            assert "Task Objects (`nouns` on the wire" in text
+            assert "Teleion Fabric Contract -- Tasks and Task Objects" in text
+            assert "Task Objects are every reusable tool" in text
+            assert "Tasks are independently schedulable units of work" in text
+
+    realistic_expectations = {
+        "What is Teleion Fabric?": ("PROV-TELEION-FABRIC-OVERVIEW", True),
+        "How should my agent claim a Task?": ("PROV-TESSERA-FENCING", False),
+        "Help a nonprofit make a bilingual food pantry flyer": ("PROV-ERANOS-PUBLIC-KITS", False),
+        "How do feeds show what's new?": ("PROV-HARNESS-FEEDS-GUIDE", False),
+        "How does model routing pick between Muse Spark 1.3 and Muse Wonder 1.0?": (
+            "PROV-META-MUSE-ROUTING",
+            False,
+        ),
+        "When should we use fine-tuning vs context shimming?": ("PROV-LORA-MEMORY-ROUTING", False),
+    }
+    for rq, (expected_prov, expected_direct) in realistic_expectations.items():
+        py_r = client.post(
+            "/api/preview", json={"prompt": rq, "wire_format": "chat_completions"}
+        ).json()
+        wk_r = worker_out["previews"][rq]
+        assert [m["prov_id"] for m in py_r["matches"]] == wk_r["matched"], rq
+        assert expected_prov in wk_r["matched"], rq
+        assert (
+            py_r["responded_directly"] is expected_direct
+            and wk_r["responded_directly"] is expected_direct
+        ), rq
+        assert len(wk_r["shimmed_refs"]) >= 1 or wk_r["responded_directly"] is True, rq
 
     for feed_q in (
         "agent harness feeds",
@@ -231,7 +262,7 @@ def test_all_builtin_starters_and_natural_language_queries_match_across_python_a
         assert py_feed["shimmed_context_refs"] == wk_feed["shimmed_refs"]
         assert "HarnessTax" in wk_feed["system_text"]
 
-    lora_q = "When should we use prompt shimming vs LoRA as parametric memory on Muse Spark Open or Muse Glimmer?"
+    lora_q = "When should we use prompt shimming vs LoRA as parametric memory on Muse Glimmer?"
     py_lora = client.post(
         "/api/preview", json={"prompt": lora_q, "wire_format": "chat_completions"}
     ).json()
@@ -241,7 +272,8 @@ def test_all_builtin_starters_and_natural_language_queries_match_across_python_a
     assert py_lora["responded_directly"] is False and wk_lora["responded_directly"] is False
     assert "detail:herma.lora_vs_shim" in py_lora["shimmed_context_refs"]
     assert py_lora["shimmed_context_refs"] == wk_lora["shimmed_refs"]
-    assert "52.0% -> 64.7%" in wk_lora["system_text"]
+    assert "Muse Glimmer 30B 4-bit QLoRA" in wk_lora["system_text"]
+    assert "Muse Wonder 1.0" in wk_lora["system_text"]
 
     # Artifact sanity checks (reproducible training/eval/Dockerfile present & valid JSON)
     spec = json.loads(
@@ -250,6 +282,8 @@ def test_all_builtin_starters_and_natural_language_queries_match_across_python_a
     summary = json.loads((ROOT / "eval" / "shim_lift_summary.json").read_text(encoding="utf-8"))
     assert spec["status"] == "reproducible_spec"
     assert spec["data_governance"]["allow_contributor_tier_outputs"] is False
-    assert summary["tool_call_and_schema_benchmarks"][0]["herma_shim_zero_weight_pct"] == 64.7
+    benchmark = summary["tool_call_and_schema_benchmarks"][0]
+    assert benchmark["model"].startswith("Muse-Glimmer")
+    assert benchmark["promoted_qlora_pct"] == 99.3
     assert (ROOT / "eval" / "herma-shim-lift.svg").is_file()
     assert (ROOT / "Dockerfile").is_file()

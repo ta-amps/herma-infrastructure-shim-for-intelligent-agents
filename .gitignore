@@ -19,3 +19,6 @@ dist/
 build/
 *.egg-info/
 private/
+
+# generated from the shared banned-word list at build time (MUST-FOLLOW rule 16); never commit
+deploy/cloudflare/banned_words.generated.js

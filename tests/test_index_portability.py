@@ -17,7 +17,7 @@ def test_generated_indexes_use_repository_metadata_not_checkout_name(tmp_path: P
         script.parent.mkdir(parents=True)
         shutil.copyfile(source, script)
         (root / "architecture.json").write_text(json.dumps({"name": "herma"}))
-        (root / "README.md").write_text("# Herma\n\nSYNTHETIC portable documentation.\n")
+        (root / "README.md").write_text("# Herma\n\nEXAMPLE portable documentation.\n")
         (root / "keywords.txt").write_text("portable\n")
         subprocess.run([sys.executable, str(script)], cwd=root, check=True, capture_output=True)
         subprocess.run(

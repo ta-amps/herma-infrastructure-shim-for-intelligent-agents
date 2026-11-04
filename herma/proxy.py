@@ -39,8 +39,8 @@ from herma.store import ProvisionStore, passes_governance_lens, provision_passes
 from herma.triggers.engine import evaluate_provisions
 
 DEFAULT_UPSTREAMS: dict[str, str] = {
-    "chat_completions": "https://ollama.com/v1/chat/completions",
-    "responses": "https://api.llama.com/v1/responses",
+    "chat_completions": "https://api.meta.ai/v1/chat/completions",
+    "responses": "https://api.meta.ai/v1/responses",
     "messages": "https://api.anthropic.com/v1/messages",
 }
 
@@ -164,7 +164,7 @@ def _resolve_upstream_url(wire_format: WireFormat, headers: Mapping[str, str]) -
             )
         allow_raw = os.environ.get(
             "HERMA_ALLOWED_UPSTREAM_HOSTS",
-            "ollama.com,api.meta.ai,api.llama.com,api.openai.com,api.anthropic.com,127.0.0.1,localhost",
+            "api.meta.ai,api.openai.com,api.anthropic.com,127.0.0.1,localhost",
         )
         allowed_hosts = {h.strip().lower() for h in allow_raw.split(",") if h.strip()}
         if parsed.hostname.lower() not in allowed_hosts:
@@ -342,7 +342,7 @@ class HermaMiddleware:
         prompt: str,
         profile_ids: list[CallerProfileId] | list[str] | None = None,
         wire_format: Literal["chat_completions", "responses", "messages"] = "chat_completions",
-        model: str = "muse-spark-open",
+        model: str = "muse-spark-1.3",
         workspace_paths: list[str] | None = None,
         cohort: str = "",
         builtin_only: bool = False,

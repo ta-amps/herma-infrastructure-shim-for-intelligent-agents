@@ -1,6 +1,6 @@
 // Deterministic shared availability inside the existing operator allowance coordinator.
-const PROVIDERS = ["meta", "ollama", "openai", "anthropic", "openrouter"];
-const HOST_PROVIDERS = new Map([["api.meta.ai", "meta"], ["ollama.com", "ollama"], ["api.openai.com", "openai"], ["api.anthropic.com", "anthropic"], ["openrouter.ai", "openrouter"]]);
+const PROVIDERS = ["meta", "openai", "anthropic", "openrouter"];
+const HOST_PROVIDERS = new Map([["api.meta.ai", "meta"], ["api.openai.com", "openai"], ["api.anthropic.com", "anthropic"], ["openrouter.ai", "openrouter"]]);
 export const providerForHost = host => HOST_PROVIDERS.get(String(host || "").toLowerCase()) || null;
 // Limits that belong to the paying account rather than one model.
 export const ACCOUNT_LIMITS = new Set(["credit_or_quota_exhausted", "payment_required"]);

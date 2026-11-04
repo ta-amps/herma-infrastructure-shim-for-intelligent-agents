@@ -1,7 +1,10 @@
-import { agentStartAsset, withAgentStart } from "./agent_start.js";
+import { agentStartAsset } from "./agent_start.js";
+import { canonicalRedirect, isPageNavigation } from "./canonical_host.js";
+import { readHomeTotals } from "./home_totals.js";
+import { renderGetStartedHtml, renderHomeHtml, renderTrustHtml } from "./site_pages.js";
 import { agentFetch } from "./agent_access.js";
 import { handleBilateralBridge } from "./bilateral_bridge.js";
-import { handlePriorityWorkGateway } from "./priority_work_gateway.js";
+import { handlePriorityWorkGateway, searchPublicTaskObjectsForPreview } from "./priority_work_gateway.js";
 import { ConversationError, conversationSchemas, strictJson, validateTurn } from "./conversation.js";
 // Cloudflare Cloud Worker for Herma: 24/7 caller-isolated context-shimming AI middleware backed by
 // Cloudflare D1 (`ta-amps-herma`) + direct Service Binding to `tessera` Cloud (`env.TESSERA`),
@@ -58,7 +61,7 @@ import {
 } from "./herma_engine.js";
 
 const DEFAULT_ORIGIN = "https://herma-api.fly.dev";
-const DEFAULT_PUBLIC_URL = "https://herma.ta-amps.workers.dev";
+const DEFAULT_PUBLIC_URL = "https://shim.teleionlabs.com";
 
 const HOP_BY_HOP = [
   "connection",
@@ -998,10 +1001,10 @@ async function evaluatePublicPreview(db, env, body) {
       "wire_format must be 'chat_completions', 'responses', or 'messages'."
     );
   }
-  const model = String(body.model || "muse-spark-open").slice(0, 120);
+  const model = String(body.model || "muse-spark-1.3").slice(0, 120);
   const prompt = String(body.prompt || "");
-  if (prompt.length > 16000) {
-    throw new HermaErr(422, "validation_error", "Invalid Preview Request", "prompt must be <= 16000 chars.");
+  if ([...prompt].length > 16000) {
+    throw new HermaErr(422, "validation_error", "Invalid Preview Request", "prompt must be <= 16000 codepoints.");
   }
   const workspacePaths = Array.isArray(body.workspace_paths)
     ? body.workspace_paths.slice(0, 32).map((p) => String(p || ""))
@@ -1051,28 +1054,76 @@ async function evaluatePublicPreview(db, env, body) {
     contextMap,
     { projectTag: "preview", entitiesTracked: entities.length }
   );
+  const publicTaskObjects = await searchPublicTaskObjectsForPreview(db, envelope.trigger_context.text);
+  const publicTaskObjectRefs = publicTaskObjects.map((o) => `object:${o.object_key}`);
+  if (!receipt.responded_directly && publicTaskObjects.length > 0 && augmented_payload && typeof augmented_payload === "object") {
+    const objectLines = publicTaskObjects.map(
+      (o) => `- ${o.object_key} (${o.category}, ${o.visibility}): ${o.summary}`
+    );
+    const objectBlock = `[Teleion Fabric Public Task Objects]\n${objectLines.join("\n")}`;
+    if (wireFormat === "responses") {
+      augmented_payload.instructions = augmented_payload.instructions
+        ? `${augmented_payload.instructions}\n\n${objectBlock}`
+        : objectBlock;
+    } else if (wireFormat === "messages") {
+      augmented_payload.system = augmented_payload.system
+        ? `${augmented_payload.system}\n\n${objectBlock}`
+        : objectBlock;
+    } else if (Array.isArray(augmented_payload.messages)) {
+      const sysMsg = augmented_payload.messages.find((m) => m && m.role === "system");
+      if (sysMsg && typeof sysMsg.content === "string") {
+        sysMsg.content = `${sysMsg.content}\n\n${objectBlock}`;
+      } else {
+        augmented_payload.messages.unshift({ role: "system", content: objectBlock });
+      }
+    }
+  }
+  const effectiveMatches =
+    matched.length > 0
+      ? matched.map((m) => m.match)
+      : publicTaskObjects.length > 0
+        ? [
+            {
+              prov_id: "PUBLIC-TASK-OBJECT-SEARCH",
+              title: "Public Task Object Match",
+              action: "shim_context",
+              tier_fired: "task_object_search",
+              score: 1,
+              reason: `matched ${publicTaskObjects.length} public Task Object(s)`,
+            },
+          ]
+        : [];
+  const effectiveRefs =
+    receipt.shimmed_context_refs.length > 0 || matched.length > 0
+      ? receipt.shimmed_context_refs
+      : publicTaskObjectRefs;
   return {
     persisted: false,
     scope_evaluated: SYSTEM_BUILTIN_SCOPE,
     wire_format: wireFormat,
-    matches: matched.map((m) => m.match),
+    matches: effectiveMatches,
     entities,
     augmented_payload,
     responded_directly: receipt.responded_directly,
     direct_response_text: receipt.direct_response_text,
-    shimmed_context_refs: receipt.shimmed_context_refs,
+    shimmed_context_refs: effectiveRefs,
+    public_task_objects: publicTaskObjects,
+    public_task_object_refs: publicTaskObjectRefs,
   };
 }
 
 async function tesseraFetch(env, baseUrl, path, bearer) {
-  const cleanBase = String(baseUrl || env.TESSERA_URL || "https://tessera.ta-amps.workers.dev").replace(/\/+$/, "");
+  const cleanBase = String(baseUrl || env.TESSERA_URL || "https://tessera.teleionlabs.com").replace(/\/+$/, "");
   const headers = {
     authorization: `Bearer ${bearer}`,
     accept: "application/json",
     "x-surface-id": "herma",
   };
-  if (env.TESSERA && cleanBase.includes("tessera.ta-amps.workers.dev")) {
-    return await env.TESSERA.fetch(`https://tessera.ta-amps.workers.dev${path}`, { method: "GET", headers });
+  if (
+    env.TESSERA &&
+    (cleanBase.includes("tessera.teleionlabs.com") || cleanBase.includes("tessera.ta-amps.workers.dev"))
+  ) {
+    return await env.TESSERA.fetch(`https://tessera.teleionlabs.com${path}`, { method: "GET", headers });
   }
   return await fetch(`${cleanBase}${path}`, { method: "GET", headers });
 }
@@ -1349,10 +1400,36 @@ async function handleStatelessMcp(request, db, env) {
   }
   if (rpcMethod === "tools/call") {
     const toolName = String(params.name || "");
-    const args = params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments) ? params.arguments : {};
+    if (
+      params.arguments !== undefined &&
+      (!params.arguments || typeof params.arguments !== "object" || Array.isArray(params.arguments))
+    ) {
+      return jsonResp({
+        jsonrpc: "2.0",
+        id: reqId,
+        error: { code: -32602, message: "Invalid 'arguments': expected a JSON object" },
+      });
+    }
+    const args = params.arguments || {};
     await ensureSeeded(db);
 
     if (toolName === "list_builtin_provisions") {
+      for (const k of Object.keys(args)) {
+        if (k !== "enabled_only") {
+          return jsonResp({
+            jsonrpc: "2.0",
+            id: reqId,
+            error: { code: -32602, message: `Unknown argument '${k}' for list_builtin_provisions` },
+          });
+        }
+      }
+      if (args.enabled_only !== undefined && typeof args.enabled_only !== "boolean") {
+        return jsonResp({
+          jsonrpc: "2.0",
+          id: reqId,
+          error: { code: -32602, message: "Invalid 'enabled_only': expected a boolean" },
+        });
+      }
       const enabledOnly = Boolean(args.enabled_only);
       const items = await listProvisionsForCaller(db, SYSTEM_BUILTIN_SCOPE, {
         includeBuiltin: true,
@@ -1369,18 +1446,59 @@ async function handleStatelessMcp(request, db, env) {
         },
       });
     }
-    if (toolName === "preview_shim") {
-      const prompt = String(args.prompt || "");
-      if (!prompt.trim()) {
+    if (toolName === "preview_shim" || toolName === "preview_context_additions") {
+      const allowedKeys = new Set(["prompt", "wire_format", "workspace_paths"]);
+      for (const k of Object.keys(args)) {
+        if (!allowedKeys.has(k)) {
+          return jsonResp({
+            jsonrpc: "2.0",
+            id: reqId,
+            error: { code: -32602, message: `Unknown argument '${k}' for preview_shim` },
+          });
+        }
+      }
+      if (typeof args.prompt !== "string" || !args.prompt.trim()) {
         return jsonResp({
           jsonrpc: "2.0",
           id: reqId,
-          error: { code: -32602, message: "Missing non-empty 'prompt' argument" },
+          error: { code: -32602, message: "Missing non-empty string 'prompt' argument" },
         });
+      }
+      const prompt = args.prompt;
+      if ([...prompt].length > 16000) {
+        return jsonResp({
+          jsonrpc: "2.0",
+          id: reqId,
+          error: {
+            code: -32602,
+            message: "Preview prompt exceeds 16000 codepoints; use /v1/dry-run for larger payloads.",
+          },
+        });
+      }
+      const wf = args.wire_format === undefined ? "chat_completions" : args.wire_format;
+      if (typeof wf !== "string" || !["chat_completions", "responses", "messages"].includes(wf)) {
+        return jsonResp({
+          jsonrpc: "2.0",
+          id: reqId,
+          error: { code: -32602, message: "Invalid 'wire_format': expected chat_completions, responses, or messages" },
+        });
+      }
+      if (args.workspace_paths !== undefined) {
+        if (
+          !Array.isArray(args.workspace_paths) ||
+          args.workspace_paths.length > 32 ||
+          args.workspace_paths.some((p) => typeof p !== "string")
+        ) {
+          return jsonResp({
+            jsonrpc: "2.0",
+            id: reqId,
+            error: { code: -32602, message: "Invalid 'workspace_paths': expected an array of up to 32 strings" },
+          });
+        }
       }
       const previewOut = await evaluatePublicPreview(db, env, {
         prompt,
-        wire_format: args.wire_format || "chat_completions",
+        wire_format: wf,
         workspace_paths: Array.isArray(args.workspace_paths) ? args.workspace_paths : [],
       });
       return jsonResp({
@@ -1394,8 +1512,38 @@ async function handleStatelessMcp(request, db, env) {
       });
     }
     if (toolName === "extract_entities") {
-      const text = String(args.text || "");
-      const wp = Array.isArray(args.workspace_paths) ? args.workspace_paths.map((p) => String(p)) : [];
+      const allowedKeys = new Set(["text", "workspace_paths"]);
+      for (const k of Object.keys(args)) {
+        if (!allowedKeys.has(k)) {
+          return jsonResp({
+            jsonrpc: "2.0",
+            id: reqId,
+            error: { code: -32602, message: `Unknown argument '${k}' for extract_entities` },
+          });
+        }
+      }
+      if (typeof args.text !== "string") {
+        return jsonResp({
+          jsonrpc: "2.0",
+          id: reqId,
+          error: { code: -32602, message: "Missing string 'text' argument" },
+        });
+      }
+      if (args.workspace_paths !== undefined) {
+        if (
+          !Array.isArray(args.workspace_paths) ||
+          args.workspace_paths.length > 32 ||
+          args.workspace_paths.some((p) => typeof p !== "string")
+        ) {
+          return jsonResp({
+            jsonrpc: "2.0",
+            id: reqId,
+            error: { code: -32602, message: "Invalid 'workspace_paths': expected an array of up to 32 strings" },
+          });
+        }
+      }
+      const text = args.text;
+      const wp = Array.isArray(args.workspace_paths) ? args.workspace_paths : [];
       const extracted = extractEntities(text, wp);
       const payload = { entities: extracted, count: extracted.length };
       return jsonResp({
@@ -1447,6 +1595,9 @@ async function proxyOrigin(request, env) {
 
 const application = {
   async fetch(request, env, ctx) {
+    // Other hosts (the workers.dev address) send people and agents to the one canonical host (301, or 308 for anything but GET and HEAD).
+    const moved = canonicalRedirect(request, env);
+    if (moved) return moved;
     if ((env.STORAGE_MODE || "cloud") === "origin") {
       return proxyOrigin(request, env);
     }
@@ -1488,7 +1639,7 @@ const application = {
         if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
         return jsonResp(buildAgentCard(publicUrl));
       }
-      if (path === "/api/health" || path === "/v1/health" || path === "/healthz") {
+      if (path === "/health" || path === "/api/health" || path === "/v1/health" || path === "/healthz") {
         if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
         const [active, ctxEntries] = await Promise.all([
           listProvisionsForCaller(db, SYSTEM_BUILTIN_SCOPE, { includeBuiltin: true, enabledOnly: true }),
@@ -1505,7 +1656,61 @@ const application = {
           configurable_harnesses_only: true,
         });
       }
-      if (path === "/" || path === "/console") {
+      if (path === "/") {
+        if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
+        if (isPageNavigation(request)) {
+          return withSecurity(
+            new Response(null, {
+              status: 302,
+              headers: {
+                location: "https://teleionlabs.com/fabric/",
+                vary: "accept",
+              },
+            })
+          );
+        }
+        const acceptHdr = (request.headers.get("accept") || "").toLowerCase();
+        if (
+          url.searchParams.get("format") === "json" ||
+          (acceptHdr.includes("application/json") && !acceptHdr.includes("text/html"))
+        ) {
+          return jsonResp(
+            {
+              ok: true,
+              surface: "herma",
+              product: "Teleion Fabric",
+              canonical_url: "https://shim.teleionlabs.com",
+              fabric_url: "https://teleionlabs.com/fabric/",
+              queue_url: "https://fabric.teleionlabs.com",
+              connect_json: "https://shim.teleionlabs.com/connect.json",
+              llms_txt: "https://shim.teleionlabs.com/llms.txt",
+              chat_endpoint: "https://shim.teleionlabs.com/q/chat",
+              dashboard_url: "https://shim.teleionlabs.com/dashboard",
+              get_started_url: "https://shim.teleionlabs.com/get-started",
+              authentication_required: false,
+              free_until: "2026-12-31T23:59:59-05:00",
+            },
+            200,
+            { vary: "accept" }
+          );
+        }
+        return withSecurity(
+          new Response(renderHomeHtml(await readHomeTotals(db)), {
+            status: 200,
+            headers: { "content-type": "text/html; charset=utf-8", vary: "accept" },
+          })
+        );
+      }
+      if (path === "/get-started" || path === "/trust") {
+        if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
+        return withSecurity(
+          new Response(path === "/trust" ? renderTrustHtml() : renderGetStartedHtml(), {
+            status: 200,
+            headers: { "content-type": "text/html; charset=utf-8" },
+          })
+        );
+      }
+      if (path === "/shim" || path === "/console") {
         if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
         const [provs, ctxEntries, counts] = await Promise.all([
           listProvisionsForCaller(db, SYSTEM_BUILTIN_SCOPE, { includeBuiltin: true, enabledOnly: false }),
@@ -1534,11 +1739,22 @@ const application = {
       if (
         path === "/q" ||
         path.startsWith("/q/") ||
+        path === "/kits" ||
+        path.startsWith("/kits/") ||
+        path === "/kits.js" ||
+        path === "/experiments" ||
+        path === "/reprioritize" ||
         path === "/starter" ||
         path.startsWith("/starter/") ||
         path === "/help" ||
+        path === "/feedback" ||
+        path.startsWith("/feedback/") ||
         path === "/chat" ||
         path.startsWith("/chat/") ||
+        path === "/alternatives" ||
+        path.startsWith("/alternatives/") ||
+        path === "/human-links" ||
+        path.startsWith("/human-links/") ||
         path === "/status" ||
         path === "/prompts" ||
         path.startsWith("/prompts/") ||
@@ -1634,13 +1850,13 @@ const application = {
         );
       }
 
-      // 3. Authenticated `route` endpoints (`/v1/handshake`, `/v1/dry-run`, wire endpoints, `/v1/receipts`, `/v1/memory`, `/v1/outcomes`, `/v1/insights`)
+      // 3. Authenticated or open free-window `route` endpoints
       if (path === "/v1/conversations/turn" || /^\/v1\/conversations\/[^/]+$/.test(path)) {
         const isTurn = path === "/v1/conversations/turn";
         if (method !== (isTurn ? "POST" : "GET")) return methodNotAllowed([isTurn ? "POST" : "GET"]);
-        enforceNotConsumerAssistant(request);
-        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env) });
-        requireScope(principal, "route", request);
+        enforceNotConsumerAssistant(request, env);
+        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env), env });
+        requireScope(principal, "route", request, env);
         if (env.HERMA_CONVERSATION_ENABLED !== "true" || !env.WORK_CONVERSATIONS) {
           return problem(503, "conversation_disabled", "Conversation unavailable", "The operator has not enabled the bounded conversation service.");
         }
@@ -1657,16 +1873,17 @@ const application = {
             if (!owned.has(turn.provider_plan_ref)) return problem(403, "provider_plan_not_authorized", "Provider plan denied", "Select a provider plan owned by this caller.");
             entries.set(turn.provider_plan_ref, { ...owned.get(turn.provider_plan_ref), _provider_plan_scope: principal.caller_scope });
           }
-          result = await stub.turn(principal.caller_scope, turn, [...entries.values()]);
+          const callerApiKey = (request.headers.get("x-upstream-api-key") || "").trim() || null;
+          result = await stub.turn(principal.caller_scope, turn, [...entries.values()], { caller_api_key: callerApiKey });
         } else result = await stub.snapshot(principal.caller_scope, decodeURIComponent(path.split("/").at(-1)));
         return jsonResp(result.body, result.status, result.status === 429 ? { "Retry-After": "3600" } : {});
       }
 
       if (path === "/v1/handshake") {
         if (method !== "POST") return methodNotAllowed(["POST"]);
-        enforceNotConsumerAssistant(request);
-        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env) });
-        requireScope(principal, "route", request);
+        enforceNotConsumerAssistant(request, env);
+        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env), env });
+        requireScope(principal, "route", request, env);
         let body;
         try {
           body = await request.json();
@@ -1755,9 +1972,9 @@ const application = {
       if (path === "/v1/dry-run") {
         if (method !== "POST") return methodNotAllowed(["POST"]);
         const t0 = performance.now();
-        enforceNotConsumerAssistant(request);
-        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env) });
-        requireScope(principal, "route", request);
+        enforceNotConsumerAssistant(request, env);
+        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env), env });
+        requireScope(principal, "route", request, env);
         const body = await request.json();
         const wireFormat = body.wire_format || "chat_completions";
         const payload = body.payload || {};
@@ -1829,11 +2046,11 @@ const application = {
       if (path in wireMap) {
         if (method !== "POST") return methodNotAllowed(["POST"]);
         const t0 = performance.now();
-        enforceNotConsumerAssistant(request);
-        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env) });
-        requireScope(principal, "route", request);
+        enforceNotConsumerAssistant(request, env);
+        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env), env });
+        requireScope(principal, "route", request, env);
         const payload = await request.json();
-        await reserveRouteRequest(db, principal.caller_scope);
+        await reserveRouteRequest(db, principal.caller_scope, 60, env);
         const wireFormat = wireMap[path];
         const projectTag = parseProjectTag(request);
         const cohort = parseCohortHeader(request);
@@ -1845,7 +2062,7 @@ const application = {
         const storedList = rawStored.filter((sp) =>
           provisionPassesLens(sp, { harnessKind: principal.harness_kind, cohort })
         );
-        const matched = await evaluateProvisions(storedList, envelope.trigger_context, env);
+        const matched = await evaluateProvisions(storedList, envelope.trigger_context, env, {offlineOnly: principal.key_id === "open_free_agent"});
         const allRefs = matched.flatMap((m) => m.stored.provision.context_refs || []);
         const contextMap = await getContextEntriesMapForCaller(db, allRefs, principal.caller_scope, {
           includeBuiltin: true,
@@ -1896,7 +2113,7 @@ const application = {
           });
         }
 
-        const resolvedUpstream = resolveUpstream(request, env, path);
+        const resolvedUpstream = resolveUpstream(request, env, path, { openCaller: principal.key_id === "open_free_agent" });
         const targetUpstreamUrl = resolvedUpstream.url;
         const upKey = resolvedUpstream.key;
         const upHeaders = {"content-type": "application/json"};
@@ -1921,9 +2138,9 @@ const application = {
 
       if (path === "/v1/receipts") {
         if (method !== "GET") return methodNotAllowed(["GET"]);
-        enforceNotConsumerAssistant(request);
-        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env) });
-        requireScope(principal, "route", request);
+        enforceNotConsumerAssistant(request, env);
+        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env), env });
+        requireScope(principal, "route", request, env);
         const limit = Number(url.searchParams.get("limit") || "25");
         const qProj = url.searchParams.get("project_tag");
         const hdrProj = (request.headers.get("x-herma-project") || "").trim();
@@ -1935,9 +2152,9 @@ const application = {
 
       if (path === "/v1/memory") {
         if (method !== "GET") return methodNotAllowed(["GET"]);
-        enforceNotConsumerAssistant(request);
-        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env) });
-        requireScope(principal, "route", request);
+        enforceNotConsumerAssistant(request, env);
+        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env), env });
+        requireScope(principal, "route", request, env);
         const limit = Number(url.searchParams.get("limit") || "50");
         const kind = (url.searchParams.get("kind") || "").trim() || null;
         const qProj = url.searchParams.get("project_tag");
@@ -1958,9 +2175,9 @@ const application = {
 
       if (path === "/v1/outcomes") {
         if (method !== "POST") return methodNotAllowed(["POST"]);
-        enforceNotConsumerAssistant(request);
-        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env) });
-        requireScope(principal, "route", request);
+        enforceNotConsumerAssistant(request, env);
+        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env), env });
+        requireScope(principal, "route", request, env);
         const body = await request.json();
         const headerProj = parseProjectTag(request);
         const outcomes = await recordExplicitOutcome(db, principal.caller_scope, body, headerProj);
@@ -1969,9 +2186,9 @@ const application = {
 
       if (path === "/v1/insights") {
         if (method !== "GET") return methodNotAllowed(["GET"]);
-        enforceNotConsumerAssistant(request);
-        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env) });
-        requireScope(principal, "route", request);
+        enforceNotConsumerAssistant(request, env);
+        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env), env });
+        requireScope(principal, "route", request, env);
         const qProj = url.searchParams.get("project_tag");
         const hdrProj = (request.headers.get("x-herma-project") || "").trim();
         const projectTag = qProj !== null || hdrProj ? parseProjectTag(request, qProj) : null;
@@ -1981,8 +2198,8 @@ const application = {
       // 4. Authenticated `configure` endpoints (`/v1/context`, `/v1/provisions*`, `/v1/sync/tessera`, `/v1/sync/remote`)
       if (path === "/v1/context") {
         if (method !== "GET" && method !== "POST") return methodNotAllowed(["GET", "POST"]);
-        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env) });
-        requireScope(principal, "configure", request);
+        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env), env });
+        requireScope(principal, "configure", request, env);
         if (method === "GET") {
           const kind = (url.searchParams.get("kind") || "").trim() || null;
           const prefix = url.searchParams.get("prefix") || "";
@@ -2039,8 +2256,8 @@ const application = {
 
       if (path === "/v1/provisions") {
         if (method !== "GET") return methodNotAllowed(["GET"]);
-        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env) });
-        requireScope(principal, "configure", request);
+        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env), env });
+        requireScope(principal, "configure", request, env);
         const includeContext = ["1", "true", "yes"].includes(
           (url.searchParams.get("include_context") || "").toLowerCase()
         );
@@ -2062,8 +2279,8 @@ const application = {
       if (provMatch) {
         if (method !== "PUT" && method !== "DELETE") return methodNotAllowed(["PUT", "DELETE"]);
         const provId = decodeURIComponent(provMatch[1]);
-        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env) });
-        requireScope(principal, "configure", request);
+        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env), env });
+        requireScope(principal, "configure", request, env);
         const builtinFlag = ["1", "true", "yes"].includes(
           (url.searchParams.get("builtin") || "").toLowerCase()
         );
@@ -2094,8 +2311,8 @@ const application = {
 
       if (path === "/v1/sync/tessera") {
         if (method !== "POST") return methodNotAllowed(["POST"]);
-        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env) });
-        requireScope(principal, "configure", request);
+        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env), env });
+        requireScope(principal, "configure", request, env);
         const body = await request.json();
         const cohort = parseCohortHeader(request, body?.cohort ?? null);
         const targetScope = principal.is_admin && body?.builtin ? SYSTEM_BUILTIN_SCOPE : principal.caller_scope;
@@ -2111,8 +2328,9 @@ const application = {
 
       if (path === "/v1/sync/remote") {
         if (method !== "POST") return methodNotAllowed(["POST"]);
-        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env) });
-        requireScope(principal, "configure", request);
+        const principal = await authenticateHarness(db, request, { isAdmin: isAdminRequest(request, env), env });
+        if (principal.key_id === "open_free_agent") throw new HermaErr(403, "key_required", "Key Required", "Fetching a remote address on the server needs a key.");
+        requireScope(principal, "configure", request, env);
         const body = await request.json();
         const cohort = parseCohortHeader(request, body?.cohort ?? null);
         const targetScope = principal.is_admin && body?.builtin ? SYSTEM_BUILTIN_SCOPE : principal.caller_scope;
@@ -2219,6 +2437,8 @@ const onboardingApplication = {
 export default {
   ...onboardingApplication,
   async fetch(request, env, ctx) {
-    return agentStartAsset(request) || withAgentStart(request, await onboardingApplication.fetch(request, env, ctx));
+    // Herma's own pages carry the one thin agent banner (page_shell.js), so the older "Put your agent to work" block is
+    // not injected into the home page any more; the /agent-start.* files stay available.
+    return agentStartAsset(request) || onboardingApplication.fetch(request, env, ctx);
   },
 };

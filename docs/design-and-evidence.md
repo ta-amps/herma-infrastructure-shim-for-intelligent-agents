@@ -62,7 +62,7 @@ authority, and shimming cannot create either permission. See the central
 
 ## Observations, not a reliability benchmark
 
-The following observations were recorded on 2026-10-28. Local regression commands
+The following observations were recorded on 2026-10-28. The second hosted provider they used was retired on 2026-11-01; Herma now routes to Muse models through the Meta API at standard tier. Local regression commands
 are `make check` and `npm run check`; provider checks require an authorized live
 credential and consume the operator's configured allowance. They are not run in CI.
 The [public observation summary](evidence/conversation-observations.json) contains
@@ -70,19 +70,19 @@ reported usage and receipt hashes without credentials or private transcripts.
 
 | Attempt | Observed outcome | What it establishes |
 | --- | --- | --- |
-| OpenCode 2.1.2 with Ollama Muse Spark Open, generic CAS value | Native calls stored a string rather than the requested object | A generic JSON field does not express the task's object contract |
+| OpenCode 2.1.2 with a hosted open-weight model (provider since retired), generic CAS value | Native calls stored a string rather than the requested object | A generic JSON field does not express the task's object contract |
 | Add candidate instructions to the prompt only | No actual native tool calls in the bounded attempt | Text resembling calls is not execution |
-| Select a typed validating connector, OpenCode/Ollama | Native put/get and independent object readback passed | One fixture passed with that schema and transport |
+| Select a typed validating connector, OpenCode with the same hosted model | Native put/get and independent object readback passed | One fixture passed with that schema and transport |
 | Same typed fixture, Muse Code 1.4.14/Meta Spark 1.3 | Native put/get and independent readback passed | Native Responses and ordinary approval/sandbox paths worked for that fixture |
-| Hosted typed connector, OpenCode 2.1.2/Ollama Muse Spark Open | Nine native MCP calls completed anonymous claim, heartbeat, typed CAS, readback, submit and audit; independent HTTP checks passed | One complete hosted anonymous work loop, with worker reasoning and no server LLM reviewer |
+| Hosted typed connector, OpenCode 2.1.2 with the same hosted model | Nine native MCP calls completed anonymous claim, heartbeat, typed CAS, readback, submit and audit; independent HTTP checks passed | One complete hosted anonymous work loop, with worker reasoning and no server LLM reviewer |
 | Initial Meta Spark tool probe with 512 output tokens | Length finish, no usable tool call | Reasoning consumed almost all the output allowance |
 | Meta Wonder typed tool probe | Valid typed call | A different model worked for one case, not every harness |
-| Initial live Ollama conversation | Invalid proposal; explicit follow-up recovered | Retain the failure and use precise missing-field feedback |
-| Fresh deployed Herma Meta and Ollama turns | Both returned the exact typed object; identical requests replayed | Installed server secrets, validation and idempotent response replay worked |
+| Initial live conversation on the retired provider | Invalid proposal; explicit follow-up recovered | Retain the failure and use precise missing-field feedback |
+| Fresh deployed Herma turns on Meta and the retired provider | Both returned the exact typed object; identical requests replayed | Installed server secrets, validation and idempotent response replay worked |
 
-The last Meta turn reported 1,042 input and 482 output tokens. Ollama reported
-881 input and 1,200 output tokens. The Meta uncached tariff estimate is $0.003351,
-not an invoice. Unknown account balance and Ollama cost remain unknown. A native
+The last Meta turn reported 1,042 input and 482 output tokens. The retired provider
+reported 881 input and 1,200 output tokens. The Meta uncached tariff estimate is $0.003351,
+not an invoice. Unknown account balance and that provider's cost remain unknown. A native
 Muse run's main usage summary previously omitted two approval-child calls; use
 the provider gateway's complete observations when accounting for that run.
 
@@ -108,7 +108,7 @@ Read [conversation configuration](conversations.md) before raising a budget.
 The generic upstream proxy and the typed conversation endpoint are separate
 interfaces. The proxy now allows an explicitly selected `api.meta.ai` provider
 with a caller-owned key; alternate origins cannot borrow an operator key.
-Typed conversations use fixed Meta/Ollama destinations and their server secrets.
+Typed conversations use fixed provider destinations, led by the Meta API, and their server secrets.
 Do not interpret public deterministic preview access as free paid inference.
 
 The default recovery sequence is classify the failure, supply missing fields,
@@ -147,7 +147,7 @@ reproduced a string `"false"` activating a rule and one mocked embedding call in
 offline mode before the fixes; both are rejected or suppressed afterward.
 These fixtures establish the tested boundaries, not live model quality or a
 universal routing-success rate. Run `make check` to reproduce the repository
-gates; the tests use synthetic responses without provider credentials or spend.
+gates; the tests use recorded example responses without provider credentials or spend.
 
 ## Worker placement policy
 

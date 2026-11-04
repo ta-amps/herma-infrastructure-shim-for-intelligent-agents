@@ -22,7 +22,7 @@ from herma.store import ProvisionStore
 
 PLAN_CHOICES: list[dict[str, Any]] = [
     {"provider": "meta", "model": "muse-spark-1.3"},
-    {"provider": "ollama", "model": "muse-spark-open"},
+    {"provider": "openai", "model": "example-responses-model"},
 ]
 
 
@@ -31,7 +31,7 @@ def plan_entry(scope: str = "key:alice", *, uncertain: bool = False) -> ContextE
         entry_id="plan.providers",
         kind="noun",
         title="Provider plan",
-        summary="SYNTHETIC private provider plan",
+        summary="EXAMPLE private provider plan",
         schema_or_body={
             "provider_plan": {
                 "caller_scope": scope,
@@ -55,8 +55,12 @@ def prepared(
     store.upsert_context_entry(entry, caller_scope="key:alice", is_admin=False)
     monkeypatch.setenv("HERMA_CONVERSATION_MAX_OUTPUT", "16384")
     monkeypatch.setenv("HERMA_META_BUDGET_USD", "5")
-    monkeypatch.setenv("META_API_KEY", "synthetic-provider-key")
-    monkeypatch.setenv("OLLAMA_API_KEY", "synthetic-provider-key")
+    monkeypatch.setenv("META_API_KEY", "example-provider-key")
+    monkeypatch.setenv("HERMA_CONVERSATION_OPENAI_MODEL", "example-responses-model")
+    monkeypatch.setenv("HERMA_CONVERSATION_OPENAI_INPUT_USD_PER_MILLION", "1")
+    monkeypatch.setenv("HERMA_CONVERSATION_OPENAI_OUTPUT_USD_PER_MILLION", "3")
+    monkeypatch.setenv("HERMA_OPENAI_BUDGET_USD", "5")
+    monkeypatch.setenv("OPENAI_API_KEY", "example-provider-key")
     # Alice's own operator grant names exactly the plan's choices; Bob holds no grant.
     grant(monkeypatch, "key:alice", choices=PLAN_CHOICES, uncertain=uncertain)
     return store
@@ -89,15 +93,15 @@ def test_rotation_persists_attempt_before_advancing_and_keeps_health_private(
         assert record[0]["outcome"] == "rejected"
         assert record[0]["usage"]["output_tokens"] is None
         assert record[0]["reservation_status"] == "reserved"
-        return tool_reply({"value": {"message": "SYNTHETIC", "synthetic": True}})
+        return tool_reply({"value": {"message": "EXAMPLE", "example": True}}, "openai")
 
     engine = ConversationEngine(store, call=call)
     result = asyncio.run(engine.turn("key:alice", planned_turn()))
-    assert called == ["meta", "ollama"]
+    assert called == ["meta", "openai"]
     assert result["proposal"]["status"] == "ready"
     assert result["reserved_usd"] > 0
     assert asyncio.run(engine.turn("key:alice", planned_turn())) == result
-    assert called == ["meta", "ollama"]
+    assert called == ["meta", "openai"]
     assert engine.state.snapshot("key:bob", "conversation-one")["attempts"] == []
     assert engine.state.cooldown("key:bob", "meta", "muse-spark-1.3") == 0
     assert all(
@@ -118,11 +122,11 @@ def test_unknown_outcome_only_advances_under_both_explicit_grants(
         called.append(config.provider)
         if config.provider == "meta":
             raise ProviderFailure("provider_unavailable")
-        return tool_reply({"value": {"message": "SYNTHETIC", "synthetic": True}})
+        return tool_reply({"value": {"message": "EXAMPLE", "example": True}}, "openai")
 
     engine = ConversationEngine(store, call=call)
     result = asyncio.run(engine.turn("key:alice", planned_turn()))
-    assert called == (["meta", "ollama"] if uncertain else ["meta"])
+    assert called == (["meta", "openai"] if uncertain else ["meta"])
     assert result["attempts"][0]["outcome"] == "unknown"
     assert result["attempts"][0]["reserved_usd"] > 0
     if not uncertain:
@@ -171,18 +175,18 @@ def test_config_missing_can_advance_without_claiming_a_model_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = prepared(tmp_path, monkeypatch)
-    # Only Ollama has an explicit allowance; an empty Meta value is unset, not a fallback.
+    # Only OpenAI has an explicit allowance; an empty Meta value is unset, not a fallback.
     monkeypatch.delenv("HERMA_CONVERSATION_MAX_OUTPUT")
     monkeypatch.setenv("HERMA_CONVERSATION_META_MAX_OUTPUT", " ")
-    monkeypatch.setenv("HERMA_CONVERSATION_OLLAMA_MAX_OUTPUT", "16384")
+    monkeypatch.setenv("HERMA_CONVERSATION_OPENAI_MAX_OUTPUT", "16384")
     called = []
 
     async def call(config: ProviderConfig, _body: dict[str, Any]) -> dict[str, Any]:
         called.append(config.provider)
-        return tool_reply({"value": {"message": "SYNTHETIC", "synthetic": True}})
+        return tool_reply({"value": {"message": "EXAMPLE", "example": True}}, "openai")
 
     result = asyncio.run(ConversationEngine(store, call=call).turn("key:alice", planned_turn()))
-    assert called == ["ollama"]
+    assert called == ["openai"]
     assert result["attempts"][0]["outcome"] == "not_sent"
     assert result["attempts"][0]["reservation_status"] == "not_reserved"
 
@@ -199,7 +203,7 @@ def test_failed_coordination_never_rotates_into_a_paid_call(
 
     def failed_reservation(**_kwargs: Any) -> None:
         raise HermaError(
-            503, "storage_or_coordination_unavailable", "Unavailable", "SYNTHETIC storage failure"
+            503, "storage_or_coordination_unavailable", "Unavailable", "EXAMPLE storage failure"
         )
 
     monkeypatch.setattr(engine.state, "reserve_attempt", failed_reservation)
@@ -214,10 +218,10 @@ def test_failed_coordination_never_rotates_into_a_paid_call(
 def test_anthropic_native_protocol_and_credential_are_distinct(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-anthropic-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "example-anthropic-key")
     config = ProviderConfig(
         "anthropic",
-        "synthetic-claude-model",
+        "example-claude-model",
         max_output=128000,
         anthropic_budget_usd=5,
         anthropic_rates=(3, 15),
@@ -230,7 +234,7 @@ def test_anthropic_native_protocol_and_credential_are_distinct(
             {
                 "type": "tool_use",
                 "name": contract().tool_name,
-                "input": {"value": {"message": "SYNTHETIC", "synthetic": True}},
+                "input": {"value": {"message": "EXAMPLE", "example": True}},
             }
         ],
         "usage": {"input_tokens": 100, "output_tokens": 20},
@@ -238,20 +242,20 @@ def test_anthropic_native_protocol_and_credential_are_distinct(
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert str(request.url) == "https://api.anthropic.com/v1/messages"
-        assert request.headers["x-api-key"] == "synthetic-anthropic-key"
+        assert request.headers["x-api-key"] == "example-anthropic-key"
         assert request.headers["anthropic-version"] == "2026-10-21"
         assert "authorization" not in request.headers
         body = json.loads(request.content)
-        assert body["max_tokens"] == 128000 and body["system"] == "SYNTHETIC system"
-        assert body["messages"] == [{"role": "user", "content": "SYNTHETIC input"}]
+        assert body["max_tokens"] == 128000 and body["system"] == "EXAMPLE system"
+        assert body["messages"] == [{"role": "user", "content": "EXAMPLE input"}]
         assert body["tools"][0]["input_schema"] == contract().input_schema
         assert body["thinking"] == {"type": "adaptive"}
         return httpx.Response(200, json=reply)
 
     body = config.build_request(
         [
-            {"role": "system", "content": "SYNTHETIC system"},
-            {"role": "user", "content": "SYNTHETIC input"},
+            {"role": "system", "content": "EXAMPLE system"},
+            {"role": "user", "content": "EXAMPLE input"},
         ],
         tools_for([contract()]),
     )
@@ -263,12 +267,12 @@ def test_anthropic_native_protocol_and_credential_are_distinct(
 def test_exact_token_allowance_has_no_hidden_coordination_charge(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("OLLAMA_API_KEY", "synthetic-provider-key")
+    monkeypatch.setenv("META_API_KEY", "example-provider-key")
 
     async def call(_config: ProviderConfig, _body: dict[str, Any]) -> dict[str, Any]:
-        return tool_reply({"value": {"message": "SYNTHETIC", "synthetic": True}})
+        return tool_reply({"value": {"message": "EXAMPLE", "example": True}})
 
-    config = ProviderConfig("ollama", "muse-spark-open", max_output=16384)
+    config = ProviderConfig("meta", "muse-spark-1.3", max_output=16384, meta_budget_usd=5)
     probe_store = ProvisionStore(tmp_path / "probe.db")
     seed(probe_store, "key:alice")
     probe = asyncio.run(
@@ -293,31 +297,31 @@ def test_exact_token_allowance_has_no_hidden_coordination_charge(
 def test_openrouter_fixed_route_preserves_native_settings_and_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "synthetic-router-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "example-router-key")
     config = ProviderConfig(
         "openrouter",
-        "synthetic/model",
+        "example/model",
         max_output=128000,
         openrouter_budget_usd=5,
         openrouter_rates=(1, 3),
-        openrouter_provider="synthetic-host",
+        openrouter_provider="example-host",
         generation={"temperature": 0.4},
     )
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert str(request.url) == "https://openrouter.ai/api/v1/chat/completions"
-        assert request.headers["authorization"] == "Bearer synthetic-router-key"
+        assert request.headers["authorization"] == "Bearer example-router-key"
         body = json.loads(request.content)
         assert body["max_tokens"] == 128000 and body["temperature"] == 0.4
         assert body["provider"] == {
-            "only": ["synthetic-host"],
-            "order": ["synthetic-host"],
+            "only": ["example-host"],
+            "order": ["example-host"],
             "allow_fallbacks": False,
             "require_parameters": True,
             "data_collection": "deny",
         }
         return httpx.Response(
-            200, json=tool_reply({"value": {"message": "SYNTHETIC", "synthetic": True}}, "meta")
+            200, json=tool_reply({"value": {"message": "EXAMPLE", "example": True}}, "meta")
         )
 
     reply = asyncio.run(
@@ -330,10 +334,10 @@ def test_openrouter_fixed_route_preserves_native_settings_and_key(
     assert parse_proposal(reply, "openrouter", [contract()])[0].status == "ready"
     for model in (
         "openrouter/auto",
-        "@preset/synthetic-review",
-        "synthetic/model@preset/synthetic-review",
-        "synthetic/model:online",
-        "synthetic/model:free:online",
+        "@preset/example-review",
+        "example/model@preset/example-review",
+        "example/model:online",
+        "example/model:free:online",
     ):
         with pytest.raises(ValueError, match="OpenRouter requires"):
             replace(config, model=model).validate()

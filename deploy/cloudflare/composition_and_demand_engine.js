@@ -149,7 +149,7 @@ const STOP_SIGNAL_WORDS = new Set([
 const INITIALIZED_COMPOSITION_DBS = new WeakSet();
 
 export async function ensureCompositionAndDemandSchema(db) {
-  if (db && typeof db === "object" && INITIALIZED_COMPOSITION_DBS.has(db)) return;
+  if (db && typeof db === "object" && (db.__hermaSchemaV69Ready || INITIALIZED_COMPOSITION_DBS.has(db))) return;
   await db
     .prepare(
       `CREATE TABLE IF NOT EXISTS herma_object_edges (

@@ -14,16 +14,16 @@ from herma.harness_gate import HarnessPrincipal
 
 def prepared() -> dict[str, Any]:
     return prepare_jev_request(
-        principal=HarnessPrincipal("alice", "SYNTHETIC", "opencode", frozenset({"route"})),
+        principal=HarnessPrincipal("alice", "EXAMPLE", "opencode", frozenset({"route"})),
         caller_scope="key:alice",
         model="jev-latest",
-        state={"synthetic": True},
+        state={"example": True},
         questions={
-            "ready": {"type": "noul", "instructions": "The supplied state contains synthetic=true."}
+            "ready": {"type": "noul", "instructions": "The supplied state contains example=true."}
         },
-        verb_ref="verb:synthetic-review",
-        request_id="synthetic-request",
-        input_refs=["noun:synthetic-input@1"],
+        verb_ref="verb:example-review",
+        request_id="example-request",
+        input_refs=["noun:example-input@1"],
     )
 
 
@@ -61,7 +61,7 @@ def test_jev_rejects_invalid_native_answers(probability: Any) -> None:
 def test_jev_scope_cannot_be_changed() -> None:
     with pytest.raises(HermaError):
         prepare_jev_request(
-            principal=HarnessPrincipal("alice", "SYNTHETIC", "opencode", frozenset({"route"})),
+            principal=HarnessPrincipal("alice", "EXAMPLE", "opencode", frozenset({"route"})),
             caller_scope="key:bob",
             model="jev-latest",
             state={},
