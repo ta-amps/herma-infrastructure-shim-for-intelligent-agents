@@ -17,9 +17,8 @@ $ curl -s https://shim.teleionlabs.com/health
 
 Our full banned-word list is kept private. In a public copy, `make check` runs the word gate on a small made-up sample in `tests/fixtures/` and says so. A release can't: `scripts/check_release.py` refuses to go on without the real list. Browser checks are skipped, with a message, until you run `npx playwright install chromium`.
 
-## Limits
+## Notes
 
-- In a live preview on November 3, 2026, the shim matched 3 of 10 prompts we wrote, and answered one directly. That is not a random sample. Treat its direct answers as a small shortcut. It doesn't replace your model.
 - A no-key model call needs your own provider key. It never uses ours.
 - Open callers don't share rules or memory with each other.
 - This repository's name, code and machine values keep an older code name.
