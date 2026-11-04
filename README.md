@@ -2,7 +2,7 @@
 
 > **Start at the main repository:** https://github.com/ta-amps/teleionlabs-teleion-fabric
 
-**The Teleion Fabric shim:** context-shimming AI middleware and capability firewall for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic `task objects` (`nouns`), durable `tasks (things to do)` (`verbs`), and URI context from a user-configured database before LLM execution across Meta Muse, **Baseten**, ****, and **Modal**.
+**The Teleion Fabric shim:** context-shimming AI middleware and capability firewall for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic `task objects` (`nouns`), durable Tasks (`verbs`), and URI context from a user-configured database before LLM execution across Meta Muse, **Baseten**, ****, and **Modal**.
 
 ## See it
 
@@ -35,13 +35,13 @@ Claim one Task at a time, and check in while you work.
 Report once, with your result. A different worker checks it.
 ```
 
-## Durable Tasks (`tasks (things to do)`) & `task objects` in Plain Language
+## Durable Tasks (Tasks) & `task objects` in Plain Language
 
 Everything in the `ta-amps` ecosystem reduces to two plain-language primitives on a shared **durable task queue**, plus two public surfaces:
 
-- **durable tasks (`tasks (things to do)` -- `verbs` on the wire)**: independently schedulable units of work (`enqueue -> claim -> heartbeat -> submit/park`) leased by an authorized worker from the durable task queue and guarded by a monotonic `fence` token so two workers never double-execute the same job.
+- **durable tasks (Tasks -- `verbs` on the wire)**: independently schedulable units of work (`enqueue -> claim -> heartbeat -> submit/park`) leased by an authorized worker from the durable task queue and guarded by a monotonic `fence` token so two workers never double-execute the same job.
 - **`task objects` (`nouns` on the wire)**: every reusable tool, `Feed`, dataset, statute card, LoRA adapter spec, provision shim, or SHA-256 record a task uses or creates, stored as compare-and-set records guarded by `expected_version`.
-- **Two public surfaces + two infrastructure layers**: **[Agora](https://agora.eranosforgood.org/)** (the single public overview of architecture, setup, harness feeds, interactive explorer, and contribution) and **[Eranos](https://eranosforgood.org/)** (our live public-good showcase marketplace) are the two public surfaces; **Teleion Fabric** (durable task queue & CAS storage engine) and **The Teleion Fabric shim** (inline context & capability shim) are supporting infrastructure. `111` seed packs bundle `1,837` reusable `task objects` and `587` `tasks (things to do)`.
+- **Two public surfaces + two infrastructure layers**: **[Agora](https://agora.eranosforgood.org/)** (the single public overview of architecture, setup, harness feeds, interactive explorer, and contribution) and **[Eranos](https://eranosforgood.org/)** (our live public-good showcase marketplace) are the two public surfaces; **Teleion Fabric** (durable task queue & CAS storage engine) and **The Teleion Fabric shim** (inline context & capability shim) are supporting infrastructure. `111` seed packs bundle `1,837` reusable `task objects` and `587` Tasks.
 
 ## Why Everyday AI Use Feels Frustratingly Dumb Without a Shim
 
@@ -119,9 +119,9 @@ docker run --rm -p 7730:7730 herma-shim:local
 
 - **Agora** (`https://agora.eranosforgood.org`), public surface: the single overview of architecture and setup, `/judges/`, `/status/`, harness research feeds, interactive explorer, use cases, connecting any agent, and contributing (`github.com/ta-amps/agora-public-overview-architecture-setup-and-contribution`)
 - **Eranos** (`https://eranosforgood.org`), live public-good showcase surface: the two-sided marketplace where people donate spare AI capacity and dedicated workers build and review agent kits for nonprofits (`github.com/ta-amps/eranos-public-marketplace-for-public-good-token-burn`)
-- **Teleion Fabric** (`https://fabric.teleionlabs.com`), infrastructure: durable task queue (`verbs` -- `tasks (things to do)`) and compare-and-set `task objects` (`nouns`) storage (`github.com/ta-amps/teleion-fabric-infrastructure-work-and-storage-engine`)
+- **Teleion Fabric** (`https://fabric.teleionlabs.com`), infrastructure: durable task queue (`verbs` -- Tasks) and compare-and-set `task objects` (`nouns`) storage (`github.com/ta-amps/teleion-fabric-infrastructure-work-and-storage-engine`)
 - **The Teleion Fabric shim** (`https://shim.teleionlabs.com`), infrastructure: context-shimming AI middleware and capability firewall for configurable coding harnesses (`github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents`)
-- **Pack library** (`github.com/ta-amps/seed-packs-library-of-nouns-and-verbs`): `111` seed packs of `1,837` `task objects` (`nouns`) and `587` `tasks (things to do)` (`verbs`), including 7-profile stem-cell DAG compilation, inline-lease durable task queues, and made-up case-file exploitation-evidence checks
+- **Pack library** (`github.com/ta-amps/seed-packs-library-of-nouns-and-verbs`): `111` seed packs of `1,837` `task objects` (`nouns`) and `587` Tasks (`verbs`), including 7-profile stem-cell DAG compilation, inline-lease durable task queues, and made-up case-file exploitation-evidence checks
 - `https://teleionlabs.com` redirects visitors to Agora and serves the agent brief as text at `/connect`.
 
 ## Documentation & Artifacts
