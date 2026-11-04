@@ -1,3 +1,4 @@
+import { findResponse } from "./unified_find.js";
 import { withPublicNames } from "./public_names.js";
 import { claimReusesItsLease, isServerInfraAuthorized } from "./priority_work_gateway.js";
 import { agentStartAsset } from "./agent_start.js";
@@ -1415,6 +1416,18 @@ async function handleStatelessMcp(request, db, env) {
     const args = params.arguments || {};
     await ensureSeeded(db);
 
+    if (toolName === "find") {
+      const findQ = typeof args.q === "string" ? args.q : "";
+      if (!findQ.trim() || Object.keys(args).some((k) => k !== "q" && k !== "limit")) {
+        return jsonResp({ jsonrpc: "2.0", id: reqId, error: { code: -32602, message: "find takes q (words) and an optional limit" } });
+      }
+      const findUrl = new URL("https://shim.teleionlabs.com/q/find");
+      findUrl.searchParams.set("q", findQ);
+      if (Number.isInteger(args.limit)) findUrl.searchParams.set("limit", String(args.limit));
+      const [findBody] = await findResponse(findUrl, db);
+      return jsonResp({ jsonrpc: "2.0", id: reqId, result: { content: [{ type: "text", text: canonicalJson(findBody) }], isError: false } });
+    }
+
     if (toolName === "list_builtin_provisions") {
       for (const k of Object.keys(args)) {
         if (k !== "enabled_only") {
@@ -2452,7 +2465,7 @@ export default {
 // reuses its lease (see claimReusesItsLease), so a lease taken just before the failure isn't stranded. Other claims would take new
 // leases, and a submit's evaluations would count twice, so no other write is asked again. If it's still busy the caller gets a 503
 // that says to try again, in place of a 500 and D1's own words.
-const READ_ONLY_ROUTES = /^\/(?:c|w)\/|^\/dashboard\/?$|^\/q\/(?:object|search|tasks|task|pulse|network|repos|dashboard)(?:\/|$)/;
+const READ_ONLY_ROUTES = /^\/(?:c|w)\/|^\/dashboard\/?$|^\/q\/(?:object|search|find|tasks|task|pulse|network|repos|dashboard)(?:\/|$)/;
 const BUSY_RETRY_WAITS_MS = [200, 600];
 const BUSY_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="only light"><title>One moment | Teleion Fabric</title></head><body style="margin:0;background:#f5f1e8;color:#1b2230;font:18px/1.5 system-ui,sans-serif;color-scheme:only light"><main style="max-width:36rem;margin:15vh auto;padding:0 20px"><h1 style="font-size:1.5rem">Busy for a moment</h1><p>Our database is handling a lot right now. Please try again in a few seconds.</p><p><a href="https://teleionlabs.com/status">See the status page</a></p></main></body></html>`;
 const isBusyDatabase = async (response) =>

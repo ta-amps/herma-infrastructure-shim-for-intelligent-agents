@@ -921,7 +921,7 @@ function buildDeterministicGuidance(hermaIntake, publicUrl, diagnostics = null) 
             `Reuse '${o.object_key}' (${o.category}${o.schema_keys.length ? `, keys: ${o.schema_keys.join(", ")}` : ""}) via GET ${o.pinned_url} instead of rewriting its contract from scratch.`
         )
       : [
-          `Query GET ${base}/q/search?q=<domain_keywords>&include_payload=1 before writing new schemas or adapters.`,
+          `Query GET ${base}/q/find?q=<domain_keywords> before writing new schemas or adapters.`,
         ];
 
   const diagNotes = [];
@@ -1684,7 +1684,7 @@ export async function buildStarterCatalogData(db, infraAllowed, publicUrl) {
       {
         step: 2,
         title: "Search & Reuse Task Objects Before Writing Code",
-        detail: `Query GET ${base}/q/search?q=<topic>&include_payload=1 and fetch pinned Task Objects via GET ${base}/q/object/<object_key>?sha256=<prefix> to compose existing schemas, adapters, and tests.`,
+        detail: `Query GET ${base}/q/find?q=<topic> and fetch pinned Task Objects via GET ${base}/q/object/<object_key>?sha256=<prefix> to compose existing schemas, adapters, and tests.`,
       },
       {
         step: 3,
