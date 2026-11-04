@@ -4882,7 +4882,7 @@ function resolveFreeAccessWindowConfig(env) {
     strict_auth_mode: strictAuth,
     open_zero_auth_active: unauthenticatedAccessActive && !strictAuth,
     unauthenticated_access_active: unauthenticatedAccessActive,
-    unauthenticated_rpm_cap: unauthRpmCap,
+    unauthenticated_rpm_cap: strictAuth || env?.FREE_ACCESS_UNAUTH_RPM_CAP ? unauthRpmCap : null,
     paid_muse_daily_calls_cap: paidMuseDailyCallsCap,
   };
 }

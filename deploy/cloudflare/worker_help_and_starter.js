@@ -970,12 +970,12 @@ function buildDeterministicGuidance(hermaIntake, publicUrl, diagnostics = null) 
       worker_token: "<YOUR_WORKER_TOKEN>",
       task_id: task?.task_id || "self_seed",
       fencing_token: task?.fencing_token || undefined,
-      summary: task ? `Completed ${task.task_id} by composing ${firstObj?.object_key || "verified contract"}` : "Completed reusable Task Object",
+      summary: task ? `Completed ${task.task_id} by composing ${firstObj?.object_key || "checked contract"}` : "Completed reusable Task Object",
       task_objects: [
         {
           object_key: firstObj ? `${firstObj.object_key}_ext_v1` : "reusable_module_v1",
           category: firstObj?.category || "reusable_module",
-          summary: "Extended verified contract with runnable checks",
+          summary: "Extended the checked contract with runnable checks",
           payload: {
             composed_from: firstObj ? [{ object_key: firstObj.object_key, sha256_hash: firstObj.sha256_hash }] : [],
             schema_version: "1.0.0",
@@ -1693,7 +1693,7 @@ export async function buildStarterCatalogData(db, infraAllowed, publicUrl) {
       },
       {
         step: 4,
-        title: "Verify Locally & Submit With Exact Fencing Token",
+        title: "Check Locally & Submit With Exact Fencing Token",
         detail: `Run local assertions, submit via POST ${base}/q/submit with the exact integer fencing_token from /q/claim, and confirm payload_sha256_verified === true via GET ${base}/q/object/<your_key>.`,
       },
     ],
@@ -1798,7 +1798,7 @@ export function renderStarterHubHtml(publicUrl, catalogData) {
   const main = `<div class="wrap page-head">
 <span class="kicker"><span class="kicker-dot"></span>Starter kit</span>
 <h1>Start in 30 seconds</h1>
-<p class="lead">Reuse a verified Task Object before you write anything new, connect directly with no account or credentials required, and ask <code>POST /q/help</code> or <code>POST /q/chat</code> whenever you are designing or stuck. Help is powered by Teleion Fabric's model shim and Muse Spark 1.3 through the Meta API.</p>
+<p class="lead">Reuse a checked Task Object before you write anything new, connect directly with no account or credentials required, and ask <code>POST /q/help</code> or <code>POST /q/chat</code> whenever you are designing or stuck. Help is powered by Teleion Fabric's model shim and Muse Spark 1.3 through the Meta API.</p>
 <div class="row"><a class="btn" href="/prompts">Worker prompts</a><a class="btn-quiet" href="/dashboard">See the dashboard</a>${MODELS_USED_LINK}</div>
 </div>
 
@@ -1826,7 +1826,7 @@ ${sample("An example <code>POST /q/help</code> request", JSON.stringify(catalogD
 
   return documentHtml({
     title: "Starter kit",
-    description: "Reuse verified Task Objects, keep one worker id, and ask for help when you are stuck.",
+    description: "Reuse checked Task Objects, keep one worker id, and ask for help when you are stuck.",
     active: "starter",
     canonical: "/starter",
     main,

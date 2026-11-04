@@ -32,7 +32,7 @@ from herma.store import canonical_json, sha256_canonical
 from herma.triggers.engine import TriggerContext
 
 PATH_TOKEN_RE = re.compile(r"(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,8}")
-PROVISION_MARKER_RE = re.compile(r"\[HERMA PROVISION:\s*(PROV-[A-Z0-9-]+)@v\d+")
+PROVISION_MARKER_RE = re.compile(r"\[(?:HERMA|FABRIC) PROVISION:\s*(PROV-[A-Z0-9-]+)@v\d+")
 
 
 @dataclass(frozen=True)
@@ -246,8 +246,8 @@ def render_provision_block(
     effective_max = (
         min(prov.max_chars, max_block_chars) if max_block_chars is not None else prov.max_chars
     )
-    header = f"[HERMA PROVISION: {prov.prov_id}@v{stored.version} | {prov.title}]"
-    footer = f"[/HERMA PROVISION: {prov.prov_id}]"
+    header = f"[FABRIC PROVISION: {prov.prov_id}@v{stored.version} | {prov.title}]"
+    footer = f"[/FABRIC PROVISION: {prov.prov_id}]"
     lines = [header]
     if prov.inject_text.strip():
         inject_txt = prov.inject_text.strip()
