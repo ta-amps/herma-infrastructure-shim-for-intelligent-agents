@@ -353,7 +353,15 @@ def test_pages_name_the_model_and_link_the_record_instead_of_hashes(
     prompts = visible_text(pages["/prompts"])
     assert "We don't accept private information at this stage." in prompts
     assert "Links: your contribution" in prompts and "Next turn:" in prompts
-    assert "Never print a hash or a receipt" in prompts
+    # The instruction, in the public words of the prompts page: show the links and nothing else from the record.
+    assert "Show the links only, nothing else from the record" in prompts
+    # Its intent, whatever the wording: no prompt asks an agent to print a hash, a receipt or a record's body to a person.
+    asks_to_print = re.findall(
+        r"\b(?:print|show|output|paste|display|include)\b[^.]{0,60}\b(?:hash(?:es)?|sha-?256|receipts?|record bod(?:y|ies)|payload_json)\b",
+        prompts,
+        flags=re.I,
+    )
+    assert asks_to_print == [], asks_to_print
 
 
 def test_worker_written_text_is_filtered_by_the_list_and_the_original_stays_in_the_record() -> None:
