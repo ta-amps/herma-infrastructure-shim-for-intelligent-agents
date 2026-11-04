@@ -5,8 +5,10 @@ import { publicNames } from "./public_names.js";
 import CATALOG from "./find_catalog.generated.json";
 
 const INDEX_TTL_MS = 10 * 60 * 1000;
-const STALE_RETRY_MS = 30 * 1000;
-const STALE_WAIT_MS = 1500;
+const RELOAD_GAP_MS = 60 * 1000;
+const ROWS_TTL_S = 300;
+const MAX_OBJECT_ROWS = 8000;
+const MAX_REPO_ROWS = 12000;
 const KITS_TTL_S = 900;
 const KITS_FETCH_MS = 2500;
 const ABOUT_CHARS = 140;
@@ -298,36 +300,74 @@ async function kitsLive() {
 }
 
 let held = null;
-export function resetFindIndex() {
+/** For tests. */
+export async function resetFindIndex() {
   held = null;
+  await caches.default.delete(new Request("https://find-index.invalid/rows-v1")).catch(() => {});
+}
+// The rows change slowly and every cold isolate needs them, so one copy per data center saves the database a full read each time.
+async function publicRows(db) {
+  const cache = typeof caches !== "undefined" ? caches.default : null;
+  const key = new Request("https://find-index.invalid/rows-v1");
+  try {
+    const got = await cache?.match(key);
+    if (got) return await got.json();
+  } catch {
+    // The database still answers.
+  }
+  const [objects, repos] = await Promise.all([
+    db.prepare(`SELECT object_key, category, SUBSTR(summary, 1, 500) AS summary, reuse_count FROM herma_task_objects WHERE ${PUBLIC_VIS} AND is_tombstoned = 0 ORDER BY id DESC LIMIT ?`).bind(MAX_OBJECT_ROWS).all().then((r) => r?.results || []),
+    db.prepare("SELECT repo, name, feed, license, language, stars, relevant FROM feed_repo_rows LIMIT ?").bind(MAX_REPO_ROWS).all().then((r) => r?.results || []).catch(() => []),
+  ]);
+  const rows = { objects, repos };
+  await cache?.put(key, new Response(JSON.stringify(rows), { headers: { "content-type": "application/json", "cache-control": `max-age=${ROWS_TTL_S}` } })).catch(() => {});
+  return rows;
 }
 async function loadIndex(db) {
-  const [objects, repos, kits] = await Promise.all([
-    db.prepare(`SELECT object_key, category, SUBSTR(summary, 1, 500) AS summary, reuse_count FROM herma_task_objects WHERE ${PUBLIC_VIS} AND is_tombstoned = 0`).all().then((r) => r?.results || []),
-    db.prepare("SELECT repo, name, feed, license, language, stars, relevant FROM feed_repo_rows").all().then((r) => r?.results || []).catch(() => []),
-    kitsLive(),
-  ]);
+  const [{ objects, repos }, kits] = await Promise.all([publicRows(db), kitsLive()]);
   const servable = repos.filter((r) => tidyText(r.repo, 400) === r.repo && publicNames(r.repo) === r.repo);
   return buildIndex({ objects, repos: servable, kits: kits || CATALOG.kits, packs: CATALOG.packs, feedWords: CATALOG.feedWords, terms: CATALOG.terms });
 }
-// A promise can't be shared between requests on Workers, so each request that finds the index missing or old loads its own.
-async function currentIndex(db) {
-  const now = Date.now();
-  if (held && now - held.at < INDEX_TTL_MS) return held.index;
-  if (!held) {
-    const index = await loadIndex(db);
+function refreshLater(db, waitUntil) {
+  // Old rows answer while new ones load. A promise can't be shared between requests on Workers, so nobody waits on this one.
+  if (!waitUntil || (held.reloadedAt && Date.now() - held.reloadedAt < RELOAD_GAP_MS)) return;
+  held.reloadedAt = Date.now();
+  waitUntil(loadIndex(db).then((index) => {
     held = { index, at: Date.now() };
-    return index;
+  }).catch(() => {}));
+}
+async function currentIndex(db, waitUntil) {
+  if (held) {
+    if (Date.now() - held.at >= INDEX_TTL_MS) {
+      if (waitUntil) refreshLater(db, waitUntil);
+      else if (Date.now() - (held.reloadedAt || 0) >= RELOAD_GAP_MS) {
+        // No way to finish later on this path, so it waits, once a minute at most, and old rows still answer if this fails.
+        held.reloadedAt = Date.now();
+        const old = held;
+        const fresh = await loadIndex(db).catch(() => null);
+        if (fresh) held = { index: fresh, at: Date.now() };
+        return fresh || old.index;
+      }
+    }
+    return held.index;
   }
-  // Old rows still answer if new ones are slow or fail; the next try waits a little.
-  const old = held;
-  old.at = now - INDEX_TTL_MS + STALE_RETRY_MS;
-  const fresh = await Promise.race([loadIndex(db).catch(() => null), new Promise((resolve) => setTimeout(() => resolve(null), STALE_WAIT_MS))]);
-  if (fresh) {
-    held = { index: fresh, at: Date.now() };
-    return fresh;
+  const index = await loadIndex(db);
+  held = { index, at: Date.now() };
+  return index;
+}
+
+/** Rows can leave public view after the index was built, so object hits are read again now. If that can't be done, they aren't shown. */
+async function stillPublic(db, hits) {
+  const keys = hits.filter((d) => d.kind === "obj").map((d) => d.id);
+  if (!keys.length) return hits;
+  let live = new Set();
+  try {
+    const out = await db.prepare(`SELECT object_key FROM herma_task_objects WHERE ${PUBLIC_VIS} AND is_tombstoned = 0 AND object_key IN (${keys.map(() => "?").join(",")})`).bind(...keys).all();
+    live = new Set((out?.results || []).map((r) => r.object_key));
+  } catch {
+    // Fail closed: the kinds that need no check still answer.
   }
-  return old.index;
+  return hits.filter((d) => d.kind !== "obj" || live.has(d.id));
 }
 
 async function lookupId(db, low) {
@@ -338,34 +378,41 @@ async function lookupId(db, low) {
   return obj ? { kind: "obj", id: obj.object_key, title: obj.object_key, about: obj.summary, url: `${SITE}/q/object/${encodeURIComponent(obj.object_key)}` } : null;
 }
 
-/** Hits for a Task's title, for the claim reply: only a clear words match, only things worth reading. Never throws, and never waits long. */
-export async function reuseHintsForTask(db, title, { limit = 3, waitMs = 1500 } = {}) {
+/** Hits for a Task's title, for the claim reply: only a clear words match, only things worth reading. A claim never builds the index and never waits for
+ * one: with none here yet it starts one for the next claim and goes on. Never throws. */
+export async function reuseHintsForTask(db, title, { limit = 3, waitUntil } = {}) {
   try {
-    const timeout = new Promise((resolve) => setTimeout(() => resolve(null), waitMs));
-    const index = await Promise.race([currentIndex(db), timeout]);
-    if (!index) return [];
-    const out = searchIndex(index, title, limit * 2);
+    if (!held) {
+      waitUntil?.(loadIndex(db).then((index) => {
+        held = { index, at: Date.now() };
+      }).catch(() => {}));
+      return [];
+    }
+    if (Date.now() - held.at >= INDEX_TTL_MS) refreshLater(db, waitUntil);
+    const out = searchIndex(held.index, title, limit * 2);
     if (!out.found || out.match !== "words") return [];
-    return out.hits.filter((d) => d.kind !== "repo").slice(0, limit).map(hitForReply);
+    return (await stillPublic(db, out.hits.filter((d) => d.kind !== "repo"))).slice(0, limit).map(hitForReply);
   } catch {
     return [];
   }
 }
 
 /** [body, status] for GET /q/find. Throws only if the rows can't be read. */
-export async function findResponse(url, db) {
+export async function findResponse(url, db, { waitUntil } = {}) {
   const q = url.searchParams.get("q") || url.searchParams.get("query") || "";
   if (!q.trim()) return [{ ok: false, code: "needs_q", detail: "Add q=<words>: a repository, an owner, a Task Object, a kit, a seed pack, or a need in plain words." }, 400];
   const asked = Number(url.searchParams.get("limit"));
   const limit = Number.isInteger(asked) && asked > 0 ? Math.min(asked, MAX_LIMIT) : DEFAULT_LIMIT;
-  const index = await currentIndex(db);
+  const index = await currentIndex(db, waitUntil);
   let out = searchIndex(index, q, limit);
   // Tasks aren't in the index, and a new object may not be yet: a query shaped like an ID asks the rows directly.
   if (out.match !== "exact" && ID_LOOKUP.test(q.trim())) {
     const direct = await lookupId(db, q.trim().toLowerCase());
     if (direct) out = { found: true, match: "exact", hits: [direct] };
   }
-  const body = { ok: true, q: q.slice(0, 200), found: out.found, match: out.match, hits: out.hits.map(hitForReply) };
+  const hits = await stillPublic(db, out.hits);
+  if (!hits.length) out = { found: false, match: "none", hits: [] };
+  const body = { ok: true, q: q.slice(0, 200), found: out.found, match: out.match, hits: hits.map(hitForReply) };
   if (out.rewrote) body.rewrote = out.rewrote;
   if (!out.found) body.note = "Nothing here fits. Try again with 2 to 4 distinctive words, or a name.";
   return [body, 200];

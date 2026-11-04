@@ -236,8 +236,11 @@ async function listRows(db, p) {
   if (p.since) add("created >= ?", p.since);
   if (p.until) add("created <= ?", p.until);
   if (p.maxStars !== null) add("stars <= ?", p.maxStars);
-  // D1 refuses a LIKE pattern over 50 bytes with a 500, so a long word is matched on its first part.
-  for (const word of p.words) add("repo LIKE ? ESCAPE '\\'", `%${word.slice(0, 20).replace(/[%_\\]/g, "\\$&")}%`);
+  // D1 refuses a LIKE pattern over 50 bytes with a 500, so a long word is matched as plain text.
+  for (const word of p.words) {
+    if (word.length > 20) add("INSTR(LOWER(repo), LOWER(?)) > 0", word);
+    else add("repo LIKE ? ESCAPE '\\'", `%${word.replace(/[%_\\]/g, "\\$&")}%`);
+  }
   const order = p.sort === "new" ? "created DESC, repo" : "stars DESC, created DESC, repo";
   const sql = `SELECT repo, license, language, created, stars, MIN(feed) AS feed, MAX(seen_at) AS seen_at FROM feed_repo_rows WHERE ${where.join(" AND ")} GROUP BY repo ORDER BY ${order} LIMIT ? OFFSET ?`;
   return queryRows(db, sql, [...binds, p.limit + 1, p.offset]);

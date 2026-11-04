@@ -9308,7 +9308,8 @@ async function noteClaimOnMap(db, request, claimOut, agentId, modelHint) {
   }
 }
 
-export async function handlePriorityWorkGateway(request, env, db, publicUrl, { withSecurity }) {
+export async function handlePriorityWorkGateway(request, env, db, publicUrl, { withSecurity, ctx }) {
+  const finishLater = ctx?.waitUntil ? (work) => ctx.waitUntil(work) : undefined;
   const reqStartMs = Date.now();
   await ensurePriorityGatewaySchema(db, { env, publicUrl });
   useTeamAgents(await loadTeamAgents(db)); // the operator's list of team-run agents, for the labels the pages below use (read at most once a minute)
@@ -10515,7 +10516,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     if (method !== "GET" && method !== "HEAD") {
       return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
-    const [findBody, findStatus] = await findResponse(url, db);
+    const [findBody, findStatus] = await findResponse(url, db, { waitUntil: finishLater });
     const findQuery = String(url.searchParams.get("q") || url.searchParams.get("query") || "");
     traceCtx.detail = { q: textHasCredential(findQuery) ? "[REDACTED]" : findQuery.slice(0, QUEUE_GATEWAY_GRID.facet_max_len), matches: findBody.hits?.length || 0, match: findBody.match };
     if (findStatus === 200 && url.searchParams.get("record_demand") !== "0") {
@@ -10743,7 +10744,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         userAgent,
       });
       claimOut.worker_toolkit_guidance = workerToolkitGuidance;
-      claimOut.reuse_candidates = claimOut.task ? await reuseHintsForTask(db, claimOut.task.title) : [];
+      claimOut.reuse_candidates = claimOut.task ? await reuseHintsForTask(db, claimOut.task.title, { waitUntil: finishLater }) : [];
       traceCtx.detail.reuse_hints = claimOut.reuse_candidates.map((h) => h.id);
       const pulse = await buildPulseSnapshot(db, env, infraAllowed);
       const briefClaims = env?.OPEN_WORK_LIMITS === "on" && !infraAllowed && url.searchParams.get("verbose") !== "1";

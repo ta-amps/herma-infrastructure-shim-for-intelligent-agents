@@ -85,7 +85,7 @@ describe("GET /q/find on a real database", () => {
     await call("/q/pulse");
   });
   beforeEach(async () => {
-    resetFindIndex();
+    await resetFindIndex();
     await env.HERMA_DB.prepare("DELETE FROM herma_task_objects WHERE object_key LIKE 'find_test_%'").run();
     const cols = "object_key, category, summary, visibility, is_tombstoned, reuse_count, producer_agent, payload_json, simhash64_hex, sha256_hash, created_at";
     const row = (k, c, s, v, t = 0) => env.HERMA_DB.prepare(`INSERT INTO herma_task_objects (${cols}) VALUES (?, ?, ?, ?, ?, 0, 'find-test', '{}', '0', ?, '2026-11-04T00:00:00Z')`).bind(k, c, s, v, t, k).run();
@@ -115,11 +115,24 @@ describe("GET /q/find on a real database", () => {
     expect(hit.c).toBe(0);
   });
   it("gives a claim a short hint only on a clear match, and never throws", async () => {
+    // No index yet: a claim neither builds one nor waits.
+    let started = 0;
+    expect(await reuseHintsForTask(env.HERMA_DB, "Rubric for glacier ropes", { waitUntil: () => { started += 1; } })).toEqual([]);
+    expect(started).toBe(1);
+    await call("/q/find?q=glacier+ropes");
     const hints = await reuseHintsForTask(env.HERMA_DB, "Rubric for glacier ropes");
     expect(hints.map((h) => h.id)).toContain("find_test_public_v1");
     expect(await reuseHintsForTask(env.HERMA_DB, "sourdough schedule")).toEqual([]);
-    resetFindIndex();
+    await resetFindIndex();
     expect(await reuseHintsForTask(null, "anything")).toEqual([]);
+  });
+  it("drops a row that left public view after the index was built, and hides objects if that can't be checked", async () => {
+    await call("/q/find?q=glacier+ropes");
+    await env.HERMA_DB.prepare("UPDATE herma_task_objects SET is_tombstoned = 1 WHERE object_key = 'find_test_public_v1'").run();
+    const b = await (await call("/q/find?q=glacier+ropes")).json();
+    expect(b.hits.map((h) => h.id)).not.toContain("find_test_public_v1");
+    expect(b.found).toBe(false);
+    expect(await reuseHintsForTask(env.HERMA_DB, "Rubric for glacier ropes")).toEqual([]);
   });
   it("MCP lists and answers find", async () => {
     const mcp = (body) => exports.default.fetch(new Request("https://shim.teleionlabs.com/mcp", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, ...body }) })).then((r) => r.json());
@@ -128,8 +141,9 @@ describe("GET /q/find on a real database", () => {
     const got = await mcp({ method: "tools/call", params: { name: "find", arguments: { q: "glacier ropes" } } });
     expect(got.result.content[0].text).toContain("find_test_public_v1");
   });
-  it("/q/repos does not 500 on a long word", async () => {
+  it("/q/repos does not 500 on a long word, and matches the whole word", async () => {
     const r = await call(`/q/repos?q=${"a".repeat(80)}`);
     expect(r.status).toBe(200);
+    expect((await r.json()).rows).toEqual([]);
   });
 });
