@@ -353,7 +353,7 @@ def test_pages_name_the_model_and_link_the_record_instead_of_hashes(
     prompts = visible_text(pages["/prompts"])
     assert "We don't accept private information at this stage." in prompts
     assert "Links: your contribution" in prompts and "Next turn:" in prompts
-    assert "Never print a hash or a receipt" in prompts
+    assert "Show the links only, nothing else from the record" in prompts
 
 
 def test_worker_written_text_is_filtered_by_the_list_and_the_original_stays_in_the_record() -> None:

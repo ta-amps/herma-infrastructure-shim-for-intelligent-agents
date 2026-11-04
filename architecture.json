@@ -2,7 +2,7 @@
   "$schema": "https://github.com/ta-amps/ta-amps-hackathon/blob/main/hackathon/agents/schemas/architecture.schema.json",
   "schema_version": 1,
   "name": "herma",
-  "summary": "Herma: context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic Task Object, Task, and URI context from a caller-isolated database before LLM execution. Rules, deterministic entity memory, and atomic Task Object and Task entries load from SQLite/D1, governed Tessera stores and blobs, or remote handshake servers; personal assistants use the same scoped credentials as coding harnesses; contributor-tier models are refused.",
+  "summary": "the Teleion Fabric shim: context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic Task Object, Task, and URI context from a caller-isolated database before LLM execution. Rules, deterministic entity memory, and atomic Task Object and Task entries load from SQLite/D1, governed Teleion Fabric stores and blobs, or remote handshake servers; personal assistants use the same scoped credentials as coding harnesses; contributor-tier models are refused.",
   "status": {
     "as_of": "2026-10-30",
     "stage": "prototype",
@@ -114,7 +114,7 @@
       "path": "herma/store.py",
       "kind": "library",
       "domain": "neutral",
-      "role": "SQLite WAL store with composite caller_scope PKs, atomic SQL CAS, system_builtin protection, Layer-1 governed Tessera CAS/blob/noun-verb sync, entity memory, and rule outcomes",
+      "role": "SQLite WAL store with composite caller_scope PKs, atomic SQL CAS, system_builtin protection, Layer-1 governed Teleion Fabric CAS/blob/noun-verb sync, entity memory, and rule outcomes",
       "depends_on": [
         "errors",
         "schemas",
@@ -275,7 +275,7 @@
       ],
       "kind": "edge",
       "domain": "neutral",
-      "role": "24/7 native Cloudflare Worker + D1 (ta-amps-herma) + Tessera Cloud Service Binding with caller_scope isolation, atomic SQL CAS, deterministic entity memory, candidate insights, /api/preview, discovery routes, and stateless /mcp",
+      "role": "24/7 native Cloudflare Worker + D1 (ta-amps-herma) + Teleion Fabric Cloud Service Binding with caller_scope isolation, atomic SQL CAS, deterministic entity memory, candidate insights, /api/preview, discovery routes, and stateless /mcp",
       "depends_on": [
         "api"
       ],
@@ -351,7 +351,7 @@
     },
     {
       "id": "H07",
-      "statement": "Single-statement atomic SQL compare-and-set versions prevent silent provision and context_entries overwrites, Tessera blob URIs verify SHA-256 digests, and remote handshakes clamp max_chars",
+      "statement": "Single-statement atomic SQL compare-and-set versions prevent silent provision and context_entries overwrites, Teleion Fabric blob URIs verify SHA-256 digests, and remote handshakes clamp max_chars",
       "enforced_by": "store",
       "checked_by": [
         "tests/test_harness_gate_and_store.py::test_cas_conflict_and_tessera_blob_sync",
@@ -369,7 +369,7 @@
     },
     {
       "id": "H09",
-      "statement": "Matched context_refs shim bounded atomic noun, verb, and detail entries from caller-scoped context_entries or governed Tessera stores and record shimmed_context_refs in the receipt",
+      "statement": "Matched context_refs shim bounded atomic noun, verb, and detail entries from caller-scoped context_entries or governed Teleion Fabric stores and record shimmed_context_refs in the receipt",
       "enforced_by": "injector",
       "checked_by": [
         "tests/test_herma.py::test_store_context_entries_and_tessera_noun_verb_resolution",
@@ -395,7 +395,7 @@
     },
     {
       "id": "H12",
-      "statement": "Layer-1 Tessera governance refuses status:quarantined records, requires status:verified across surfaces, enforces visibility_scope/cohort/harness tags, and verifies 64-hex SHA-256 digests on tessera://blobs URIs",
+      "statement": "Layer-1 Teleion Fabric governance refuses status:quarantined records, requires status:verified across surfaces, enforces visibility_scope/cohort/harness tags, and verifies 64-hex SHA-256 digests on tessera://blobs URIs",
       "enforced_by": "store",
       "checked_by": [
         "tests/test_herma.py::test_governance_lens_blob_sha256_integrity_and_contributor_offline_refusal"
@@ -443,7 +443,7 @@
     },
     {
       "id": "H18",
-      "statement": "Served pages, discovery text, starter seed data and runtime sources never name a retired pack, and fabric imports trust only the current producer surfaces: Tessera, Herma, Eranos and Agora",
+      "statement": "Served pages, discovery text, starter seed data and runtime sources never name a retired pack, and fabric imports trust only the current producer surfaces: Teleion Fabric, the Teleion Fabric shim, Eranos and Agora",
       "enforced_by": "edge",
       "checked_by": [
         "tests/test_retired_names.py::test_served_text_names_no_retired_pack",
@@ -453,7 +453,7 @@
     },
     {
       "id": "H19",
-      "statement": "Starters synced from Tessera into system_builtin fire for routed callers only when they carry fabric_governance that passes the Layer-1 lens, and Python and the Worker decide every stored row the same way",
+      "statement": "Starters synced from Teleion Fabric into system_builtin fire for routed callers only when they carry fabric_governance that passes the Layer-1 lens, and Python and the Worker decide every stored row the same way",
       "enforced_by": "edge",
       "checked_by": [
         "tests/test_builtin_starters.py::test_synced_starters_fire_for_routed_callers_only_with_their_governance",
@@ -475,7 +475,7 @@
     },
     {
       "id": "H21",
-      "statement": "Herma routes only catalog models that carry a standard-mode price ceiling, its default upstream and allowlist lead with the Meta API in both runtimes, and no catalog entry is a contributor-tier id",
+      "statement": "the Teleion Fabric shim routes only catalog models that carry a standard-mode price ceiling, its default upstream and allowlist lead with the Meta API in both runtimes, and no catalog entry is a contributor-tier id",
       "enforced_by": "proxy",
       "checked_by": [
         "tests/test_model_policy.py::test_catalog_lists_meta_models_first_and_keeps_agent_programs_out",
@@ -485,7 +485,7 @@
     },
     {
       "id": "H22",
-      "statement": "Every public Herma page is light only (color-scheme only light in its meta tag and on :root, no dark-scheme media query, no opaque dark panel under either colour scheme), carries the one thin agent banner, the header and the standard footer (the shared ta-amps.footer/1 spec: the brand and one row of links, then one short line) from a single shell (herma/page_shell.json) that the Python and Worker renderers produce byte for byte alike, and shows worker-written text only after the display-time filter (tidyText), which is built on the server from the shared banned-word list and never sent to a browser, and never alters a stored record",
+      "statement": "Every public the Teleion Fabric shim page is light only (color-scheme only light in its meta tag and on :root, no dark-scheme media query, no opaque dark panel under either colour scheme), carries the one thin agent banner, the header and the standard footer (the shared ta-amps.footer/1 spec: the brand and one row of links, then one short line) from a single shell (herma/page_shell.json) that the Python and Worker renderers produce byte for byte alike, and shows worker-written text only after the display-time filter (tidyText), which is built on the server from the shared banned-word list and never sent to a browser, and never alters a stored record",
       "enforced_by": "api",
       "checked_by": [
         "tests/test_page_design.py::test_python_and_worker_shells_are_byte_identical",
@@ -527,7 +527,7 @@
     },
     {
       "id": "H25",
-      "statement": "Herma keeps no visitor address and no full browser string: persisted traces and automatic request logs are off, the trace log and the bridge records keep a coarse client family, and nothing is derived from an address",
+      "statement": "the Teleion Fabric shim keeps no visitor address and no full browser string: persisted traces and automatic request logs are off, the trace log and the bridge records keep a coarse client family, and nothing is derived from an address",
       "enforced_by": "edge",
       "checked_by": [
         "test/privacy_logs.test.js",
@@ -536,7 +536,7 @@
     },
     {
       "id": "H26",
-      "statement": "The network map keeps per claim only the Cloudflare data center and continent (never an IP address, city, coordinate, network or user agent; none at all for a worker that left the map) for 30 days and then only a count per day and continent; it names a claim's data center only when 2 or more workers of its kind made claims there in the 15 minutes up to it, one decision per claim for the feed, the replay and the place list; it shows only claims of public Tasks, public by visibility and not the private tier (any other claim counts in the totals only); it accepts Tessera's data centers and rows only as far as Tessera's own counts and per-row marks show them; a worker's show_on_map changes only with that worker's token or in the call that creates the worker; and it answers GET /q/network cached for 15 seconds to the five contract origins, with a generous cap per address",
+      "statement": "The network map keeps per claim only the Cloudflare data center and continent (never an IP address, city, coordinate, network or user agent; none at all for a worker that left the map) for 30 days and then only a count per day and continent; it names a claim's data center only when 2 or more workers of its kind made claims there in the 15 minutes up to it, one decision per claim for the feed, the replay and the place list; it shows only claims of public Tasks, public by visibility and not the private tier (any other claim counts in the totals only); it accepts Teleion Fabric's data centers and rows only as far as Teleion Fabric's own counts and per-row marks show them; a worker's show_on_map changes only with that worker's token or in the call that creates the worker; and it answers GET /q/network cached for 15 seconds to the five contract origins, with a generous cap per address",
       "enforced_by": "edge",
       "checked_by": [
         "test/network_activity.test.js",
@@ -546,7 +546,7 @@
     },
     {
       "id": "H27",
-      "statement": "Herma has one canonical host for people, herma.teleionlabs.com: on any other host that reaches the Worker, a page navigation (a GET or HEAD for one of its pages that asks for HTML and not for JSON) is answered with a 301, and any other method sent to a page with a 308, keeping the path and the query; what machines read and write (/q/*, /llms*.txt, /.well-known/*, /healthz, /prompts/raw/*, the /kits/* downloads, the agent files and scripts, a page's ?format=json form, and any request that does not ask for HTML) is answered in place on the old address, so an agent's curl POST to /q/claim keeps working; and every page that exists names rel=canonical",
+      "statement": "the Teleion Fabric shim has one canonical host for people, herma.teleionlabs.com: on any other host that reaches the Worker, a page navigation (a GET or HEAD for one of its pages that asks for HTML and not for JSON) is answered with a 301, and any other method sent to a page with a 308, keeping the path and the query; what machines read and write (/q/*, /llms*.txt, /.well-known/*, /healthz, /prompts/raw/*, the /kits/* downloads, the agent files and scripts, a page's ?format=json form, and any request that does not ask for HTML) is answered in place on the old address, so an agent's curl POST to /q/claim keeps working; and every page that exists names rel=canonical",
       "enforced_by": "edge",
       "checked_by": [
         "test/canonical_host.test.js",
@@ -591,7 +591,7 @@
     },
     {
       "id": "H32",
-      "statement": "Herma gives out the canonical Eranos address, https://eranosforgood.org, everywhere; the old workers.dev address stays only in the list of origins a browser may read GET /q/network from",
+      "statement": "the Teleion Fabric shim gives out the canonical Eranos address, https://eranosforgood.org, everywhere; the old workers.dev address stays only in the list of origins a browser may read GET /q/network from",
       "enforced_by": "api",
       "checked_by": [
         "tests/test_canonical_addresses.py"
@@ -670,7 +670,7 @@
   "claims": [
     {
       "id": "HC1",
-      "claim": "Herma evaluates keyword, semantic, and micromodel triggers to shim versioned provisions and URIs across chat_completions, responses, and messages while preserving caller-scoped access for coding harnesses and personal assistants",
+      "claim": "the Teleion Fabric shim evaluates keyword, semantic, and micromodel triggers to shim versioned provisions and URIs across chat_completions, responses, and messages while preserving caller-scoped access for coding harnesses and personal assistants",
       "status": "built",
       "evidence": [
         "tests/test_triggers.py::test_tier1_keyword_regex_path_and_tool_triggers",
@@ -680,7 +680,7 @@
     },
     {
       "id": "HC2",
-      "claim": "Herma loads and syncs versioned provisions and atomic noun/verb context entries from governed Tessera CAS/blob/noun stores and remote handshake servers with SHA-256 digest checks",
+      "claim": "the Teleion Fabric shim loads and syncs versioned provisions and atomic noun/verb context entries from governed Teleion Fabric CAS/blob/noun stores and remote handshake servers with SHA-256 digest checks",
       "status": "built",
       "evidence": [
         "tests/test_harness_gate_and_store.py::test_cas_conflict_and_tessera_blob_sync",
@@ -691,7 +691,7 @@
     },
     {
       "id": "HC3",
-      "claim": "Herma shims caller-isolated atomic noun, verb, and detail context or responds directly across all 3 LLM wire protocols with zero upstream token spend and zero cross-caller poisoning",
+      "claim": "the Teleion Fabric shim shims caller-isolated atomic noun, verb, and detail context or responds directly across all 3 LLM wire protocols with zero upstream token spend and zero cross-caller poisoning",
       "status": "built",
       "evidence": [
         "tests/test_herma.py::test_api_context_database_and_noun_verb_shimming",
@@ -702,7 +702,7 @@
     },
     {
       "id": "HC4",
-      "claim": "Herma tracks deterministic working entities without embeddings, attributes retry errors across turns, and synthesizes reviewable Provision-valid candidate rules on /v1/insights without mutating active provisions",
+      "claim": "the Teleion Fabric shim tracks deterministic working entities without embeddings, attributes retry errors across turns, and synthesizes reviewable Provision-valid candidate rules on /v1/insights without mutating active provisions",
       "status": "built",
       "evidence": [
         "tests/test_herma.py::test_deterministic_entity_memory_retry_outcomes_and_candidate_insights_parity"
@@ -710,7 +710,7 @@
     },
     {
       "id": "HC5",
-      "claim": "Herma serves a zero-write interactive preview, SVG boundary-pillar chrome, discovery endpoints, and stateless JSON-RPC 2.0 /mcp in parity across FastAPI and Cloudflare Worker",
+      "claim": "the Teleion Fabric shim serves a zero-write interactive preview, SVG boundary-pillar chrome, discovery endpoints, and stateless JSON-RPC 2.0 /mcp in parity across FastAPI and Cloudflare Worker",
       "status": "built",
       "evidence": [
         "tests/test_herma.py::test_public_preview_svg_brand_chrome_discovery_and_stateless_mcp_parity"
