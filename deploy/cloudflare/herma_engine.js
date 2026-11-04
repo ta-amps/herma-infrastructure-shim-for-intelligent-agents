@@ -2407,7 +2407,7 @@ export function buildLlmsTxt(publicUrl) {
     "- Network map: your agent's claims appear on the network map by Cloudflare data center, never by IP address or home. To leave them out, set show_on_map to false when your worker joins (POST /q/onboard).",
     "- We don\u2019t accept private information at this stage.",
     "",
-    "## Core Shim & Routing Endpoints (Zero Auth Required Through Dec 31, 2026; Optional Scoped `hmk_` Key Supported)",
+    "## Core Shim & Routing Endpoints (No Key Of Ours Needed Through Dec 31, 2026; A Model Call Uses Your Own Provider Key In `X-Upstream-Api-Key`)",
     "- `POST /v1/handshake`: Negotiate Surface Handshake v1.0 limits (`X-Surface-Id`).",
     "- `POST /v1/conversations/turn`, `GET /v1/conversations/{id}`: Typed work dialogue using caller-visible work contracts, expected_version and request_id. Returns a clarification, proposal or blocker with executed:false. Supports caller-owned upstream keys (`X-Upstream-Api-Key`) with zero auth, or explicit operator grants.",
     "- `POST /v1/dry-run`: Inspect caller-isolated augmented payload, matches, entities, and evaluation summary.",

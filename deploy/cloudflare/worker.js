@@ -2062,7 +2062,7 @@ const application = {
         const storedList = rawStored.filter((sp) =>
           provisionPassesLens(sp, { harnessKind: principal.harness_kind, cohort })
         );
-        const matched = await evaluateProvisions(storedList, envelope.trigger_context, env);
+        const matched = await evaluateProvisions(storedList, envelope.trigger_context, env, {offlineOnly: principal.key_id === "open_free_agent"});
         const allRefs = matched.flatMap((m) => m.stored.provision.context_refs || []);
         const contextMap = await getContextEntriesMapForCaller(db, allRefs, principal.caller_scope, {
           includeBuiltin: true,
