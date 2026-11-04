@@ -5,6 +5,7 @@ import { publicNames } from "./public_names.js";
 import CATALOG from "./find_catalog.generated.json" with { type: "json" };
 
 const INDEX_TTL_MS = 10 * 60 * 1000;
+const COLD_WAIT_MS = 3000;
 const SPARE_HITS = 3;
 const HINT_CHECK_MS = 300;
 const RELOAD_GAP_MS = 60 * 1000;
@@ -17,6 +18,8 @@ const ABOUT_CHARS = 140;
 const MAX_LIMIT = 10;
 const DEFAULT_LIMIT = 5;
 const PUBLIC_VIS = "visibility IN ('public_ngo', 'public_commons')";
+// A different worker found this false: it can't be offered for reuse. Asked for by its exact id, it still reads.
+const REUSABLE = `${PUBLIC_VIS} AND is_tombstoned = 0 AND COALESCE(verification_verdict, '') != 'REFUTED'`;
 const SITE = "https://shim.teleionlabs.com";
 const LIBRARY = "https://github.com/ta-amps/seed-packs-library-of-nouns-and-verbs/tree/main/packs";
 const ERANOS = "https://eranosforgood.org";
@@ -27,7 +30,7 @@ export const TUNE = {
   kindPrior: { pack: 1.6, kit: 1.6, obj: 1, repo: 0.75 }, askedKind: 3, junk: 0.55, reuse: 0.04, stars: 0.03,
 };
 const LOW_VALUE = new Set(["worker_memory", "system_feedback_signal", "worker_issue_report", "peer_review", "aggregate_review_digest", "version_propagation_recheck", "aggregate_review_plan", "eval_and_rank", "evaluation_rubric", "public_general", "discovery_candidate", "feed_run"]);
-const STOP = new Set("a an and are as at be by can could do does for from get give go had has have help how i if in into is it its just let like looking make me my need needs of on or our please should show so some something someone sure that the their them there these this those to tool tools us use using want wants was way we were what when where which who why will with would you your find tell".split(" "));
+const STOP_WORDS = "a an and are as at be by can could do does for from get give go had has have help how i if in into is it its just let like looking make me my need needs of on or our please should show so some something someone sure that the their them there these this those to tool tools us use using want wants was way we were what when where which who why will with would you your find tell";
 // Everyday word -> words the library uses. Plain code, reported in `rewrote` only when it fixed a misspelling. Tuned on the dev questions only.
 const ALSO = Object.assign(Object.create(null), {
   scan: ["ocr"], scann: ["ocr", "scan"], read: ["ocr"], form: ["intake"], remember: ["memory", "recall"], session: ["memory"], helper: ["volunteer", "agent"], automat: ["agent"], recording: ["video"], clip: ["video", "cutdown"], picture: ["video", "frame"], handout: ["flyer"], leaflet: ["flyer"],
@@ -55,6 +58,7 @@ export function tokens(text) {
     .filter((t) => t.length > 1)
     .map(stem);
 }
+const STOP = new Set(STOP_WORDS.split(" ").map(stem));
 const familyOf = (key) => key.replace(/(?:[_-](?:v?\d+|muse.*|codex.*|scale-test.*))+$/i, "").toLowerCase();
 
 function editWithin(a, b, limit) {
@@ -187,7 +191,7 @@ export function searchIndex(index, rawQuery, limit = DEFAULT_LIMIT) {
   const take = (list, match, extra = {}) => ({ found: list.length > 0, match: list.length ? match : "none", hits: list.slice(0, limit), ...extra });
   const askedKind = ASK_KIND.find(([re]) => re.test(q))?.[1] || null;
   const hit = (i) => index.docs[i];
-  if (index.exact.has(low)) return take([hit(index.exact.get(low))], "exact");
+  if (index.exact.has(low) && !hit(index.exact.get(low)).gone) return take([hit(index.exact.get(low))], "exact");
   const bareOwner = low.match(/^(?:(?:github\s+)?(?:repos?|repositor(?:y|ies)|projects?)\s+(?:by|from|of)\s+|(?:by|owner)\s+)([a-z0-9][a-z0-9-]*)$/);
   const ownerName = bareOwner ? bareOwner[1] : /^[a-z0-9][a-z0-9-]*$/.test(low) ? low : null;
   if (!/\s/.test(low) && index.names.has(low)) {
@@ -197,7 +201,7 @@ export function searchIndex(index, rawQuery, limit = DEFAULT_LIMIT) {
     return take(index.owners.get(ownerName).map(hit).sort((a, b) => b.stars - a.stars), "owner");
   }
   if (!/\s/.test(low) && low.length >= 4 && /[_-]/.test(low)) {
-    const pre = index.docs.filter((d) => d.kind === "obj" && d.id.toLowerCase().startsWith(low)).sort((a, b) => b.reuse - a.reuse || a.id.length - b.id.length);
+    const pre = index.docs.filter((d) => d.kind === "obj" && !d.gone && d.id.toLowerCase().startsWith(low)).sort((a, b) => b.reuse - a.reuse || a.id.length - b.id.length);
     if (pre.length) return take(pre, "prefix");
   }
   const askedTitle = askedKind ? low.replace(KIND_WORDS, " ").replace(/^\s*for\s+/, "") : low;
@@ -254,6 +258,7 @@ export function searchIndex(index, rawQuery, limit = DEFAULT_LIMIT) {
   const ranked = [];
   for (const [i, { s, m, n }] of scores) {
     const d = index.docs[i];
+    if (d.gone) continue;
     const coverage = m / totalIdf;
     let v = s * d.prior * (0.25 + 0.75 * coverage);
     if (askedKind && d.kind === askedKind) v *= TUNE.askedKind;
@@ -302,9 +307,11 @@ async function kitsLive() {
 }
 
 let held = null;
+let coldLoadAt = 0;
 /** For tests. */
 export async function resetFindIndex() {
   held = null;
+  coldLoadAt = 0;
   await caches.default.delete(new Request("https://find-index.invalid/rows-v1")).catch(() => {});
 }
 // The rows change slowly and every cold isolate needs them, so one copy per data center saves the database a full read each time.
@@ -318,7 +325,7 @@ async function publicRows(db) {
     // The database still answers.
   }
   const [objects, repos] = await Promise.all([
-    db.prepare(`SELECT object_key, category, SUBSTR(summary, 1, 500) AS summary, reuse_count FROM herma_task_objects WHERE ${PUBLIC_VIS} AND is_tombstoned = 0 ORDER BY id DESC LIMIT ?`).bind(MAX_OBJECT_ROWS).all().then((r) => r?.results || []),
+    db.prepare(`SELECT object_key, category, SUBSTR(summary, 1, 500) AS summary, reuse_count FROM herma_task_objects WHERE ${REUSABLE} ORDER BY id DESC LIMIT ?`).bind(MAX_OBJECT_ROWS).all().then((r) => r?.results || []),
     db.prepare("SELECT repo, name, feed, license, language, stars, relevant FROM feed_repo_rows LIMIT ?").bind(MAX_REPO_ROWS).all().then((r) => r?.results || []).catch(() => []),
   ]);
   const rows = { objects, repos };
@@ -353,9 +360,19 @@ async function currentIndex(db, waitUntil) {
     }
     return held.index;
   }
-  const index = await loadIndex(db);
-  held = { index, at: Date.now() };
-  return index;
+  // One cold load at a time in this isolate. A promise can't be shared between requests, so a later request looks again for a moment before starting its own.
+  for (const end = Date.now() + COLD_WAIT_MS; coldLoadAt && Date.now() - coldLoadAt < COLD_WAIT_MS && Date.now() < end && !held; ) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (held) return held.index;
+  coldLoadAt = Date.now();
+  try {
+    const index = await loadIndex(db);
+    held = { index, at: Date.now() };
+    return index;
+  } finally {
+    coldLoadAt = 0;
+  }
 }
 
 /** Rows can leave public view after the index was built, so object hits are read again now. If that can't be done, they aren't shown. */
@@ -363,12 +380,16 @@ async function stillPublic(db, hits) {
   const keys = hits.filter((d) => d.kind === "obj").map((d) => d.id);
   if (!keys.length) return hits;
   let live = new Set();
+  let failed = false;
   try {
-    const out = await db.prepare(`SELECT object_key FROM herma_task_objects WHERE ${PUBLIC_VIS} AND is_tombstoned = 0 AND object_key IN (${keys.map(() => "?").join(",")})`).bind(...keys).all();
+    const out = await db.prepare(`SELECT object_key FROM herma_task_objects WHERE ${REUSABLE} AND object_key IN (${keys.map(() => "?").join(",")})`).bind(...keys).all();
     live = new Set((out?.results || []).map((r) => r.object_key));
   } catch {
     // Fail closed: the kinds that need no check still answer.
+    failed = true;
   }
+  // Marked gone in this index, so a newer version in the same family can answer until the next load.
+  for (const d of hits) if (d.kind === "obj" && !live.has(d.id) && !failed) d.gone = true;
   return hits.filter((d) => d.kind !== "obj" || live.has(d.id));
 }
 
@@ -385,9 +406,14 @@ async function lookupId(db, low) {
 export async function reuseHintsForTask(db, title, { limit = 3, waitUntil } = {}) {
   try {
     if (!held) {
-      waitUntil?.(loadIndex(db).then((index) => {
-        held = { index, at: Date.now() };
-      }).catch(() => {}));
+      if (!coldLoadAt && waitUntil) {
+        coldLoadAt = Date.now();
+        waitUntil(loadIndex(db).then((index) => {
+          held = { index, at: Date.now() };
+        }).catch(() => {}).finally(() => {
+          coldLoadAt = 0;
+        }));
+      }
       return [];
     }
     if (Date.now() - held.at >= INDEX_TTL_MS) refreshLater(db, waitUntil);
@@ -416,11 +442,18 @@ export async function findResponse(url, db, { waitUntil } = {}) {
   // A few spare hits, so a row that just left public view doesn't shorten the answer.
   let out = searchIndex(index, q, limit + SPARE_HITS);
   // Tasks aren't in the index, and a new object may not be yet: a query shaped like an ID asks the rows directly.
-  if (out.match !== "exact" && ID_LOOKUP.test(q.trim())) {
+  const indexedExact = out.match === "exact";
+  if (!indexedExact && ID_LOOKUP.test(q.trim())) {
     const direct = await lookupId(db, q.trim().toLowerCase());
-    if (direct) out = { found: true, match: "exact", hits: [direct] };
+    if (direct) out = { found: true, match: "exact", hits: [direct], read: true };
   }
-  const hits = (await stillPublic(db, out.hits)).slice(0, limit);
+  // `read`: those rows were just read, under the rule for a read by id.
+  let hits = out.read ? out.hits : await stillPublic(db, out.hits);
+  if (hits.length < out.hits.length && out.match !== "exact") {
+    out = searchIndex(index, q, limit + SPARE_HITS);
+    hits = await stillPublic(db, out.hits);
+  }
+  hits = hits.slice(0, limit);
   if (!hits.length) out = { found: false, match: "none", hits: [] };
   const body = { ok: true, q: q.slice(0, 200), found: out.found, match: out.match, hits: hits.map(hitForReply) };
   if (out.rewrote) body.rewrote = out.rewrote;

@@ -69,6 +69,9 @@ describe("searchIndex", () => {
     expect(r.filter((x) => x.startsWith("obj:shelter_intake")).length).toBe(1);
     expect(r[0]).toMatch(/^obj:shelter_intake/);
   });
+  it("drops common words before weighing the rest", () => {
+    expect(searchIndex(index, "looking for shelter intake").found).toBe(true);
+  });
   it("treats a word that names a built-in like any other word", () => {
     expect(searchIndex(index, "constructor xyzzy").found).toBe(false);
     expect(searchIndex(index, "__proto__").found).toBe(false);
@@ -107,6 +110,24 @@ describe("GET /q/find on a real database", () => {
     expect(ids).not.toContain("find_test_private_v1");
     expect(ids).not.toContain("find_test_gone_v1");
     expect(JSON.stringify(b).length).toBeLessThan(1500);
+  });
+  it("a newer version answers when the first in its family left public view, and a refuted row is not offered", async () => {
+    const cols = "object_key, category, summary, visibility, is_tombstoned, reuse_count, producer_agent, payload_json, simhash64_hex, sha256_hash, created_at, verification_verdict";
+    const row = (k, v) => env.HERMA_DB.prepare(`INSERT INTO herma_task_objects (${cols}) VALUES (?, 'spec', 'Plans for walrus tanks and other public things', 'public_commons', 0, 0, 'find-test', '{}', '0', ?, '2026-11-04T00:00:00Z', ?)`).bind(k, k, v).run();
+    await env.HERMA_DB.prepare("DELETE FROM herma_task_objects WHERE object_key LIKE 'find_family_%'").run();
+    await row("find_family_a_v1", "UNREVIEWED");
+    await row("find_family_a_v2", "UNREVIEWED");
+    await row("find_family_b_v1", "REFUTED");
+    const first = (await (await call("/q/find?q=walrus+tanks")).json()).hits.map((h) => h.id);
+    expect(first.some((i) => i.startsWith("find_family_a_"))).toBe(true);
+    expect(first).not.toContain("find_family_b_v1");
+    await env.HERMA_DB.prepare("UPDATE herma_task_objects SET is_tombstoned = 1 WHERE object_key = ?").bind(first[0]).run();
+    const after = await (await call("/q/find?q=walrus+tanks")).json();
+    expect(after.found).toBe(true);
+    expect(after.hits[0].id).toMatch(/^find_family_a_/);
+    expect(after.hits[0].id).not.toBe(first[0]);
+    // By its exact id it still reads.
+    expect((await (await call("/q/find?q=find_family_b_v1")).json()).hits[0].id).toBe("find_family_b_v1");
   });
   it("asks for q, and refuses other methods", async () => {
     expect((await call("/q/find")).status).toBe(400);
