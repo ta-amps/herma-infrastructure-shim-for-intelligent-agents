@@ -13,6 +13,7 @@ const FAKE_GOOGLE = `${"AI"}za${LETTERS}`;
 const FAKE_HF = `${"h"}f_${LETTERS}`;
 const FAKE_STRIPE = `${"s"}k_${"live"}_${LETTERS}`;
 const FAKE_GITLAB = `${"gl"}pat-${LETTERS}`;
+const OWN_KEYS = [`${"hk"}_wrk_${LETTERS}`, `${"hk"}_ep_${LETTERS}`, `${"hk"}_inf_${LETTERS}`, `${"hm"}k_${LETTERS}`, `${"w"}t_${"abcdef0123456789abcdef01"}`, `${"ts"}k_${LETTERS}`, `${"ta"}n_${LETTERS}`];
 
 const db = () => env.HERMA_DB;
 const ROWS = [
@@ -330,6 +331,21 @@ describe("review findings, November 4", () => {
     expect([badStatus, badOwner.code]).toEqual([400, "bad_name"]);
     expect(JSON.stringify(badOwner)).not.toContain("abcdefghij");
     expect(f).not.toHaveBeenCalled();
+  });
+
+  it("1. our own key shapes are not sent to GitHub either, and are not kept as a query", async () => {
+    const f = vi.fn();
+    for (const key of OWN_KEYS) {
+      const [body] = await call(`name=${key}`, f);
+      expect([key, body.miss]).toEqual([key, "not_sent"]);
+      await raw(key);
+    }
+    expect(f).not.toHaveBeenCalled();
+    const demand = JSON.stringify((await db().prepare("SELECT signal_key, raw_sample_query FROM herma_demand_signals").all()).results);
+    expect(demand).not.toContain(LETTERS);
+    const real = github(200, { total_count: 0, items: [] });
+    expect((await call("name=tsk_rust_scheduler", real))[0].miss).toBe("not_in_github_search");
+    expect(real).toHaveBeenCalledTimes(1);
   });
 
   it("1. real project names that only resemble a credential are read and looked up", async () => {
