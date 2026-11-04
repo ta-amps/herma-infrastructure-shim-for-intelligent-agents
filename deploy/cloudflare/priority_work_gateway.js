@@ -2668,8 +2668,9 @@ async function reassembleTaskObjectPayload(db, objRow) {
 }
 
 const SEARCH_NEARBY_LIMIT = 5;
-// An ID has a separator and an underscore, dot, colon or digit: a hyphenated phrase such as agent-memory is something people type.
-const SEARCH_ID_SHAPE = /^(?=.{3,128}$)(?=.*[_.:0-9])[A-Za-z0-9]+(?:[-_.:][A-Za-z0-9]+)+$/;
+// An ID has a separator and an underscore, a colon or two digits in a row: agent-memory, agent.memory and agent-memory2 are things
+// people type, so a name like these can't buy first place. They still come back as ordinary results.
+const SEARCH_ID_SHAPE = /^(?=.{3,128}$)(?=.*(?:[_:]|[0-9]{2}))[A-Za-z0-9]+(?:[-_.:][A-Za-z0-9]+)+$/;
 
 // The gateway's setup stops early on a database already at its schema version, so these two reach a live database here: once per
 // isolate, only when an exact lookup is about to use them. If this fails, the lookup still works, by a scan.
