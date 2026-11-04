@@ -5606,6 +5606,9 @@ const FIELD_WORK_PHRASES = Object.freeze([
   "field trial",
   "coordinator pairs",
   "survivor-advocate",
+  "recruited users",
+  "real 5-user",
+  "real users",
 ]);
 const FIELD_WORK_SQL = FIELD_WORK_PHRASES.map(
   (phrase) => `LOWER(COALESCE(title, '')) LIKE '%${phrase}%'`
@@ -7396,6 +7399,16 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       : Array.isArray(payload.computed_evaluations)
         ? payload.computed_evaluations
         : [];
+
+  // A submit that names a Task nobody has and carries no work is refused before any write: it used to store a worker, credit and a
+  // "verified" answer. One that carries Task Objects, Tasks or evaluations is kept as before, so a mistyped id never throws work away.
+  if (reqMeta.action !== "enqueue" && taskId !== "self_seed" && !existingTask && !rawObjects.length && !rawVerbs.length && !topEvals.length) {
+    return {
+      taskNotFound: true,
+      task_id: taskId,
+      detail: `No Task has the id '${taskId}', so your text was not saved. Claim one first (${publicUrl}/q/tasks?state=ready&limit=10), then send it again.`,
+    };
+  }
 
   // Q1 / Q10: Check idempotency BEFORE checking `state === 'done'` so genuine retries return stored 200 receipt!
   const rawFence =
@@ -9240,7 +9253,7 @@ function formatClaimBanner(publicUrl, claimOut, pulse) {
   const guidanceLines = prof
     ? [
         `WORKER_UUID:     ${prof.worker_uuid} (Persona: ${prof.persona_label} | Tier: ${prof.harness_tier}, cap=${prof.capability_milli})`,
-        ...(claimOut.collision_warning ? [`COLLISION_WARN:  ${claimOut.collision_warning}`] : []),
+        ...(claimOut.collision_warning ? [`COLLISION_WARN:  ${typeof claimOut.collision_warning === "object" ? claimOut.collision_warning.message || claimOut.collision_warning.detail || JSON.stringify(claimOut.collision_warning) : claimOut.collision_warning}`] : []),
         `HONOR_BEAT:      Beat ${prof.iteration_count % QUEUE_GATEWAY_GRID.beat_cycle_modulus} -> ${g.current_beat_name} (Next after submit: ${g.next_beat_after_submit})`,
         `ATOMIC_OPERATOR: ${kit?.atomic_remix_operator?.operator_id} -- ${kit?.atomic_remix_operator?.instruction}`,
         `JOB_SEED_IDEA:   ${kit?.random_job_description}`,
@@ -9522,7 +9535,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
 
   if (action === "health") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     return sendJson({
       ok: true,
@@ -9571,7 +9584,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
   // Bounded D1 Request, Error & Lease-Expiry Trace Log (`/q/traces`)
   if (action === "traces") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     const params = Object.fromEntries(url.searchParams.entries());
     return sendJson(await queryGatewayTraces(db, infraAllowed, params));
@@ -9580,7 +9593,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
   // Self-Learned Complexity-Aware Routing & Worker Capability Telemetry (`/q/routing`)
   if (action === "routing") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     return sendJson(await buildRoutingTelemetrySnapshot(db, infraAllowed, publicUrl));
   }
@@ -9588,7 +9601,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
   // Preferred-Worker / Setup Affinity, Calibrated Efficiency Confidence & Taxonomy Completeness (`/q/affinity`)
   if (action === "affinity" || action === "worker-affinity") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     return sendJson(await buildAffinitySnapshot(db, infraAllowed, publicUrl));
   }
@@ -9747,7 +9760,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         userAgent,
         workerToken: subPayload.worker_token || "",
         latencyMs: Date.now() - reqStartMs,
-      }),
+      }).then((out) => (out.taskNotFound ? { forbidden: true, code: "task_not_found", detail: out.detail } : out)),
     storeReasoningSuggestionObject: (spec) => storeReasoningSuggestionTaskObject(db, publicUrl, spec),
     lookupTaskObjectByKey: async (key, qOpts = {}) => {
       const r = await lookupTaskObjectByKey(db, infraAllowed, key, publicUrl, qOpts);
@@ -9766,7 +9779,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
 
   if (action === "grid-robustness" || action === "plateau") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     return sendJson(await buildGridRobustnessSnapshot(db, publicUrl));
   }
@@ -9823,14 +9836,14 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
 
   if (action === "lease-intelligence") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     return sendJson(await buildLeaseIntelligenceSnapshot(db, publicUrl));
   }
 
   if (action === "tasks" || action === "list") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     const out = await handleListDurableTasksRequest(url, db, publicUrl, { infraAllowed });
     return sendJson(await markListedTasks(url, out.body, db, { needsFieldTeam, publicUrl }), out.status);
@@ -9838,7 +9851,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
 
   if (action === "next") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     return sendJson(await workNextResponse(url, db, { publicUrl, fieldSql: FIELD_WORK_SQL, infraAllowed }));
   }
@@ -9900,6 +9913,9 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       harnessTier: wrappedBody.harness_tier || "",
       latencyMs: Date.now() - reqStartMs,
     });
+    if (out.taskNotFound) {
+      return sendJson({ ok: false, code: "task_not_found", task_id: out.task_id, detail: out.detail }, QUEUE_GATEWAY_GRID.http_not_found);
+    }
     if (out.forbidden) {
       return sendJson({ ok: false, code: out.code || "forbidden_tier", detail: out.detail }, QUEUE_GATEWAY_GRID.http_forbidden);
     }
@@ -9934,7 +9950,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
 
   if (action === "objects" || action === "catalog") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     const out = await handleListTaskObjectsRequest(url, db, publicUrl, { infraAllowed });
     return sendJson(out.body, out.status);
@@ -9973,14 +9989,14 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
 
   if (action === "leaderboard" || action === "cred" || action === "workers") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     return sendJson(await handleLeaderboardRequest(url, db));
   }
 
   if (action === "proposals") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     return sendJson(await handleProposalsGovernanceRequest(url, db, publicUrl));
   }
@@ -10042,7 +10058,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
   // Interactive Swarm Dashboard & Permalink Client Scripts (`/dashboard.js`, `/q/dashboard.js`, `/q/demo-runner.js`)
   if (action === "dashboard_js" || action === "dashboard.js") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     return withSecurity(
       new Response(renderDashboardJs(), {
@@ -10054,7 +10070,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
 
   if (action === "demo-runner.js") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     return withSecurity(
       new Response(renderInteractiveDemoRunnerJs(), {
@@ -10066,7 +10082,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
 
   if (action === "dashboard") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     // /q/dashboard is the old address of the page: people go to /dashboard, agents asking for JSON stay.
     if (rootSeg === "q" && !wantsJson) {
@@ -10097,7 +10113,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
 
   if (action === "permalink_c" || action === "c") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     const lookupId = decodeURIComponent(rootSeg === "c" ? segments[1] || "" : segments[2] || "");
     // Older replies and pages linked to this name, which is a marker for work with no Task, not a page.
@@ -10113,7 +10129,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
 
   if (action === "permalink_w" || action === "w" || action === "worker") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     const wUuid = decodeURIComponent(
       rootSeg === "w" ? segments[1] || "" : segments[2] || url.searchParams.get("worker_uuid") || ""
@@ -10139,7 +10155,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
 
   if (action === "object") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     const objKey = decodeURIComponent(
       segments[2] || url.searchParams.get("object_key") || url.searchParams.get("key") || ""
@@ -10158,7 +10174,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       return sendJson({ ok: false, code: "forbidden_tier" }, QUEUE_GATEWAY_GRID.http_forbidden);
     }
     if (out.notFound) {
-      return sendJson({ ok: false, code: "object_not_found", object_key: objKey }, QUEUE_GATEWAY_GRID.http_not_found);
+      return sendJson({ ok: false, code: "object_not_found", object_key: objKey, detail: "No Task Object has this key.", next: `${publicUrl}/q/find?q=words+from+its+name` }, QUEUE_GATEWAY_GRID.http_not_found);
     }
     if (url.searchParams.get("download") === "1") {
       return sendJson(out.payload, QUEUE_GATEWAY_GRID.http_ok, {
@@ -10173,7 +10189,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
 
   if (action === "demo") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     const objKey = decodeURIComponent(
       segments[2] || url.searchParams.get("object_key") || url.searchParams.get("key") || ""
@@ -10184,14 +10200,14 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       return sendJson({ ok: false, code: "forbidden_tier" }, QUEUE_GATEWAY_GRID.http_forbidden);
     }
     if (out.notFound) {
-      return sendJson({ ok: false, code: "object_not_found", object_key: objKey }, QUEUE_GATEWAY_GRID.http_not_found);
+      return sendJson({ ok: false, code: "object_not_found", object_key: objKey, detail: "No Task Object has this key.", next: `${publicUrl}/q/find?q=words+from+its+name` }, QUEUE_GATEWAY_GRID.http_not_found);
     }
     return sendHtml(renderInteractiveDemoPageHtml(publicUrl, out));
   }
 
   if (action === "task") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     const tId = decodeURIComponent(
       segments[2] || url.searchParams.get("task_id") || url.searchParams.get("id") || ""
@@ -10206,7 +10222,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       return sendJson({ ok: false, code: "forbidden_tier" }, QUEUE_GATEWAY_GRID.http_forbidden);
     }
     if (out.notFound) {
-      return sendJson({ ok: false, code: "task_not_found", task_id: tId }, QUEUE_GATEWAY_GRID.http_not_found);
+      return sendJson({ ok: false, code: "task_not_found", task_id: tId, detail: "No Task has this id.", next: `${publicUrl}/q/tasks?state=ready&limit=10` }, QUEUE_GATEWAY_GRID.http_not_found);
     }
     return sendJson(out);
   }
@@ -10214,7 +10230,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
   // Public Copy-Paste "Get Started Prompts" Hub (`/prompts`, `/get-started`, `/q/start`, `/q/prompts`, `/q/prompts.js`)
   if (action === "prompts_js" || action === "prompts.js") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     return withSecurity(
       new Response(renderPromptsPageJs(), {
@@ -10226,7 +10242,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
 
   if (action === "prompts_raw") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     const rawPromptId = String(segments[2] || "worker_loop").trim();
     const promptId =
@@ -10293,7 +10309,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
 
   if (action === "prompts_html" || action === "start" || action === "prompts") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     const pulse = await buildPulseSnapshot(db, env, infraAllowed);
     if (wantsJson && url.searchParams.get("format") === "json") {
@@ -10320,7 +10336,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       // The body is optional here: query values stand when it is empty or unreadable.
       params = { ...params, ...(await request.json().catch(() => null) || {}) };
     } else if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     const agentId = cleanAgentId(
       segments[2] || params.agent_id || params.agent || params.worker || "volunteer-worker"
@@ -10429,7 +10445,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       // The body is optional here: query values stand when it is empty or unreadable.
       params = { ...params, ...(await request.json().catch(() => null) || {}) };
     } else if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     const rawUuid = segments[2] || params.worker_uuid || params.uuid || "";
     const explicitAgent = params.agent_id || params.agent || "";
@@ -10477,7 +10493,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
 
   if (action === "runtimes") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     const limit = Number(url.searchParams.get("limit") || QUEUE_GATEWAY_GRID.max_pulse_items);
     const runtimes = await fetchPriorVerbRuntimes(db, infraAllowed, limit);
@@ -10493,7 +10509,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
 
   if (action === "trust") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     return sendJson({
       ok: true,
@@ -10559,14 +10575,14 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
 
   if (action === "pulse" || action === "status") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     return sendJson(await buildPulseSnapshot(db, env, infraAllowed));
   }
 
   if (action === "repos") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     const [repoBody, repoStatus] = await repoRowsResponse(url, db);
     traceCtx.detail = { rows: repoBody.rows ? repoBody.rows.length : 0 };
@@ -10575,7 +10591,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
 
   if (action === "find") {
     if (method !== "GET" && method !== "HEAD") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     const [findBody, findStatus] = await findResponse(url, db, { waitUntil: finishLater });
     const findQuery = String(url.searchParams.get("q") || url.searchParams.get("query") || "");
@@ -10601,7 +10617,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         return sendJson({ ok: false, code: "invalid_json" }, QUEUE_GATEWAY_GRID.http_bad_request);
       }
     } else if (method !== "GET") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     const tracedQuery = String(params.q || params.query || "");
     traceCtx.detail = { q: textHasCredential(tracedQuery) ? "[REDACTED]" : tracedQuery.slice(0, QUEUE_GATEWAY_GRID.facet_max_len) };
@@ -10674,7 +10690,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       // The body is optional here: query values stand when it is empty or unreadable.
       params = { ...params, ...(await request.json().catch(() => null) || {}) };
     } else {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     const relOut = await releaseLeasedTask(db, {
       agentId: params.agent_id || params.agent || params.worker || "volunteer-agent",
@@ -10988,7 +11004,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         ...(unreadableBody ? { warnings: ["the request body wasn't a JSON object; treated it as a plain claim"] } : {}),
       });
     }
-    return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+    return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
   }
 
   if (action === "submit" || action === "complete" || action === "enqueue") {
@@ -11010,7 +11026,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
             ok: false,
             code: "missing_submit_slug",
             detail:
-              "GET /q/submit requires /q/submit/<agent_id>/<task_id>/summary-<result>[--object-<key>:<val>][--verb-<followup>] or POST JSON to /q/submit.",
+              "GET /q/submit requires /q/submit/<agent_id>/<task_id>/fence-<fencing_token>--summary-<result>[--object-<key>:<val>] or POST JSON to /q/submit. Nothing was saved.",
             post_endpoint: `${publicUrl}/q/submit`,
           },
           QUEUE_GATEWAY_GRID.http_bad_request
@@ -11042,6 +11058,10 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           ...(url.searchParams.get("output") ? { output: url.searchParams.get("output") } : {}),
           ...(url.searchParams.get("content") ? { content: url.searchParams.get("content") } : {}),
           ...parsed,
+          // With no slug, the text in ?summary= or ?result= is the summary; the slug's empty default must not replace it.
+          ...(!rawSlug
+            ? { summary: url.searchParams.get("summary") || url.searchParams.get("result") || url.searchParams.get("output") || url.searchParams.get("content") }
+            : {}),
           lease_epoch: resolvedQueryFence,
           fencing_token: resolvedQueryFence,
           task_id: taskId,
@@ -11055,6 +11075,9 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           latencyMs: Date.now() - reqStartMs,
         }
       );
+      if (out.taskNotFound) {
+        return sendJson({ ok: false, code: "task_not_found", task_id: out.task_id, detail: out.detail }, QUEUE_GATEWAY_GRID.http_not_found);
+      }
       if (out.forbidden) {
         return sendJson({ ok: false, code: out.code || "forbidden_tier", detail: out.detail }, QUEUE_GATEWAY_GRID.http_forbidden);
       }
@@ -11166,6 +11189,9 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         harnessTier: body.harness_tier || "",
         latencyMs: Date.now() - reqStartMs,
       });
+      if (out.taskNotFound) {
+        return sendJson({ ok: false, code: "task_not_found", task_id: out.task_id, detail: out.detail }, QUEUE_GATEWAY_GRID.http_not_found);
+      }
       if (out.forbidden) {
         return sendJson({ ok: false, code: out.code || "forbidden_tier", detail: out.detail }, QUEUE_GATEWAY_GRID.http_forbidden);
       }
@@ -11213,12 +11239,12 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         next: action === "enqueue" ? undefined : { action: "report_then_stop", url: `${publicUrl}/q/next?agent_id=${encodeURIComponent(out.agent_id || "")}`, why: "Saved. Show your person the links, then stop this run. A new run starts at this url.", retry_same_call: false },
       });
     }
-    return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+    return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
   }
 
   if (action === "alternatives" || action === "alternative") {
     if (method !== "GET" && method !== "HEAD" && method !== "POST") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     let body = {};
     if (method === "POST") {
@@ -11438,7 +11464,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
 
   if (action === "human-links" || action === "human-link") {
     if (method !== "GET" && method !== "HEAD" && method !== "POST" && method !== "DELETE") {
-      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     const rawSubSegments = rootSeg === "q" ? segments.slice(2) : segments.slice(1);
     const encodedSubpath = rawSubSegments

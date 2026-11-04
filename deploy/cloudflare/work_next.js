@@ -165,17 +165,17 @@ export async function workNextResponse(url, db, { publicUrl, fieldSql, infraAllo
       )
       .bind(tier, ...(agentId ? [agentId] : []), WORK_NEXT.pool)
       .all();
-    picked = out?.results || [];
-    if (picked.length) {
-      tierUsed = tier;
-      break;
-    }
+    // Nonprofit work first; a short list fills up from the next tier, so one call shows enough to choose from.
+    if (out?.results?.length && !tierUsed) tierUsed = tier;
+    picked.push(...(out?.results || []).map((r) => ({ ...r, order: tiers.indexOf(tier) })));
+    if (picked.length >= limit) break;
   }
   const pool = [...picked];
   for (let i = pool.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
+  pool.sort((a, b) => a.order - b.order); // a stable sort: random within a tier
   const claimAs = agentId ? enc(agentId) : "<YOUR-ID>";
   const tasks = pool.slice(0, limit).map((r) => ({
     task_id: r.task_id,

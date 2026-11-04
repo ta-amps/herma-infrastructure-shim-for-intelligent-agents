@@ -10,6 +10,7 @@ import { renderGetStartedHtml, renderHomeHtml, renderTrustHtml } from "./site_pa
 import { agentFetch } from "./agent_access.js";
 import { handleBilateralBridge } from "./bilateral_bridge.js";
 import { handlePriorityWorkGateway, searchPublicTaskObjectsForPreview } from "./priority_work_gateway.js";
+import { discoveryFile, elsewhere, guardAnswerBody, guardGetWrite, SITEMAP_XML } from "./agent_connect.js";
 import { ConversationError, conversationSchemas, strictJson, validateTurn } from "./conversation.js";
 // Cloudflare Cloud Worker for Herma: 24/7 caller-isolated context-shimming AI middleware backed by
 // Cloudflare D1 (`ta-amps-herma`) + direct Service Binding to `tessera` Cloud (`env.TESSERA`),
@@ -1626,6 +1627,13 @@ const application = {
       (env.PUBLIC_URL || `${url.protocol}//${url.host}`).replace(/\/+$/, "") || DEFAULT_PUBLIC_URL;
     const db = env.HERMA_DB;
 
+    // Opening a work address by accident (a link preview, a crawler, a claim with no name) does no work.
+    const guarded = guardGetWrite(request, url, publicUrl);
+    if (guarded) {
+      const { type, body } = guardAnswerBody(guarded);
+      return withSecurity(new Response(method === "HEAD" ? null : body, { status: 200, headers: { "content-type": type } }));
+    }
+
     try {
       // 1. Public discovery, brand assets, read-only HTML & preview, and stateless MCP
       if (path === "/api/conversation-schema") {
@@ -1655,6 +1663,22 @@ const application = {
       if (path === "/.well-known/agent-card.json") {
         if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
         return jsonResp(buildAgentCard(publicUrl));
+      }
+      if (discoveryFile(path)) {
+        if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
+        return jsonResp(discoveryFile(path));
+      }
+      if (path === "/sitemap.xml") {
+        if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
+        return textResp(SITEMAP_XML, "application/xml; charset=utf-8");
+      }
+      if (elsewhere(path)) {
+        if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
+        return withSecurity(new Response(null, { status: 307, headers: { location: elsewhere(path) } }));
+      }
+      if (path === "/index.txt") {
+        if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
+        return textResp(buildLlmsTxt(publicUrl), "text/plain; charset=utf-8");
       }
       if (path === "/health" || path === "/api/health" || path === "/v1/health" || path === "/healthz") {
         if (method !== "GET" && method !== "HEAD") return methodNotAllowed(["GET", "HEAD"]);
@@ -1687,6 +1711,9 @@ const application = {
           );
         }
         const acceptHdr = (request.headers.get("accept") || "").toLowerCase();
+        if (/^\s*text\/(plain|markdown)/.test(acceptHdr)) {
+          return textResp(buildLlmsTxt(publicUrl), "text/plain; charset=utf-8");
+        }
         if (
           url.searchParams.get("format") === "json" ||
           (acceptHdr.includes("application/json") && !acceptHdr.includes("text/html"))
@@ -1797,6 +1824,9 @@ const application = {
         return jsonResp(await evaluatePublicPreview(db, env, body));
       }
       if (path === "/mcp") {
+        if (method === "GET" || method === "HEAD") {
+          return problem(405, "method_not_allowed", "Method Not Allowed", `MCP needs a POST with a JSON-RPC body. If your tool can only open URLs, the same work is at ${publicUrl}/q/find?q=words and ${publicUrl}/q/tasks?state=ready; instructions are at ${publicUrl}/llms.txt.`, { allow: "POST" });
+        }
         if (method !== "POST") return methodNotAllowed(["POST"]);
         return await handleStatelessMcp(request, db, env);
       }
@@ -2432,7 +2462,7 @@ const application = {
         return jsonResp({ synced: synced.map((s) => s.provision.prov_id), count: synced.length });
       }
 
-      return problem(404, "not_found", "Not Found", `No route matches ${method} ${path}.`);
+      return problem(404, "not_found", "Not Found", `No route matches ${method} ${path}. Start at ${publicUrl}/llms.txt`);
     } catch (err) {
       if (err instanceof ConversationError) return problem(err.status, err.code, "Conversation request rejected", "Check the configured contract and conversation version.");
       if (err instanceof HermaErr) {

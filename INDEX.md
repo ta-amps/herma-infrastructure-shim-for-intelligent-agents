@@ -32,12 +32,13 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) |  |
 
-## deploy/ (49)
+## deploy/ (50)
 
 | File | What it is |
 |---|---|
 | [deploy/bootstrap-hosting.sh](deploy/bootstrap-hosting.sh) | One-time hosting setup for one service on Fly.io behind a Cloudflare Worker: the Fly app and its |
 | [deploy/cloudflare/agent_access.js](deploy/cloudflare/agent_access.js) |  |
+| [deploy/cloudflare/agent_connect.js](deploy/cloudflare/agent_connect.js) | Ways for an agent with few abilities to connect, and the guards that keep an accidental open of a URL from do… |
 | [deploy/cloudflare/agent_start.js](deploy/cloudflare/agent_start.js) | Versioned onboarding instructions. |
 | [deploy/cloudflare/bilateral_bridge.js](deploy/cloudflare/bilateral_bridge.js) | Bilateral Agent Transport Shim (/bridge/) for Herma Cloud Worker. |
 | [deploy/cloudflare/canonical_host.js](deploy/cloudflare/canonical_host.js) | One canonical host for people (design contract of Nov 2, 2026): on any other host that reaches this Worker, a… |
@@ -190,10 +191,11 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
 | [scripts/repo_rows_refresh.py](scripts/repo_rows_refresh.py) | Build the rows behind GET /q/repos: feed exports plus a fresh scan of GitHub's public search, as SQL for D1. |
 
-## test/ (38)
+## test/ (39)
 
 | File | What it is |
 |---|---|
+| [test/agent_connect.test.js](test/agent_connect.test.js) |  |
 | [test/banned_words_filter.test.js](test/banned_words_filter.test.js) |  |
 | [test/bilateral_bridge.test.js](test/bilateral_bridge.test.js) |  |
 | [test/bilateral_chat_and_feedback.test.mjs](test/bilateral_chat_and_feedback.test.mjs) |  |

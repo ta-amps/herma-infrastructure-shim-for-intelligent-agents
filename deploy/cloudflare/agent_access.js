@@ -15,35 +15,8 @@ export async function agentFetch(request, env, handler, ctx) {
   const requestId = /^[A-Za-z0-9_.:-]{1,100}$/.test(rawId) ? rawId : crypto.randomUUID();
   let response;
   const path = new URL(request.url).pathname;
-  if (
-    request.method === "OPTIONS" &&
-    (path === "/mcp" ||
-      path === "/bridge" ||
-      path.startsWith("/bridge/") ||
-      path === "/q" ||
-      path.startsWith("/q/") ||
-      path === "/chat" ||
-      path.startsWith("/chat/") ||
-      path === "/alternatives" ||
-      path.startsWith("/alternatives/") ||
-      path === "/human-links" ||
-      path.startsWith("/human-links/") ||
-      path === "/feedback" ||
-      path.startsWith("/feedback/") ||
-      path === "/help" ||
-      path === "/prompts" ||
-      path.startsWith("/prompts/") ||
-      path === "/get-started" ||
-      path === "/dashboard" ||
-      path.startsWith("/dashboard/") ||
-      path.startsWith("/c/") ||
-      path.startsWith("/w/") ||
-      path === "/status" ||
-      path === "/healthz" ||
-      path === "/connect.json" ||
-      path.startsWith("/api/") ||
-      path.startsWith("/v1/"))
-  ) {
+  // A browser agent's preflight is answered on every path, pages and text files too.
+  if (request.method === "OPTIONS") {
     response = new Response(null, {status:204});
   } else {
     if (request.body && ["POST", "PUT", "PATCH"].includes(request.method)) {

@@ -723,11 +723,39 @@ Allow: /llms.txt
 Allow: /llms-full.txt
 Allow: /.well-known/agent-card.json
 Disallow: /v1/
+
+# Search and training crawlers: the addresses below do work when an agent opens them, so they are not for indexing.
+User-agent: Googlebot
+User-agent: Bingbot
+User-agent: DuckDuckBot
+User-agent: Applebot
+User-agent: YandexBot
+User-agent: Baiduspider
+User-agent: GPTBot
+User-agent: OAI-SearchBot
+User-agent: ClaudeBot
+User-agent: CCBot
+User-agent: PerplexityBot
+User-agent: Bytespider
+User-agent: Amazonbot
+User-agent: meta-externalagent
+Disallow: /v1/
+Disallow: /q/claim
+Disallow: /q/submit
+Disallow: /q/complete
+Disallow: /q/enqueue
+Disallow: /q/release
+Disallow: /q/heartbeat
+Disallow: /q/onboard
+Disallow: /q/register
+
+Sitemap: https://shim.teleionlabs.com/sitemap.xml
 `;
 
 export const MCP_TOOLS_SPEC = [
   {
     name: "find",
+    annotations: { readOnlyHint: true },
     description: "One short search over repositories, Task Objects, kits and seed packs, by name, owner or a need in plain words. Says found:false rather than guess. No model call.",
     inputSchema: {
       type: "object",
@@ -741,6 +769,7 @@ export const MCP_TOOLS_SPEC = [
   },
   {
     name: "list_builtin_provisions",
+    annotations: { readOnlyHint: true },
     description: "List starter system_builtin context-shimming and direct-response provisions without exposing private caller state.",
     inputSchema: {
       type: "object",
@@ -755,6 +784,7 @@ export const MCP_TOOLS_SPEC = [
   },
   {
     name: "preview_shim",
+    annotations: { readOnlyHint: true },
     description: "Evaluate system_builtin 3-tier triggers, context shims, and deterministic entity extraction in memory with persisted=false.",
     inputSchema: {
       type: "object",
@@ -781,6 +811,7 @@ export const MCP_TOOLS_SPEC = [
   },
   {
     name: "extract_entities",
+    annotations: { readOnlyHint: true },
     description: "Deterministically extract file_path, code_symbol, tessera_uri, statute_card_id, and error_signature entities with zero LLM calls.",
     inputSchema: {
       type: "object",
@@ -2402,6 +2433,7 @@ export function buildLlmsTxt(publicUrl) {
     `- Canonical Shim URL: ${base}`,
     "- Canonical Fabric Queue & Storage URL: https://fabric.teleionlabs.com",
     `- Full Reference: ${base}/llms-full.txt`,
+    "- Ways to connect, from most capable to least (MCP, POST, browser fetch, open-URLs-only, no tools at all): https://teleionlabs.com/docs/#ways",
     `- Agent Card: ${base}/.well-known/agent-card.json`,
     `- Stateless MCP JSON-RPC: POST ${base}/mcp`,
     `- Read-Only Preview: POST ${base}/api/preview`,

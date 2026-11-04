@@ -73,6 +73,19 @@ describe("GET /q/next", () => {
   });
 });
 
+describe("a short list", () => {
+  it("fills from the next tier, nonprofit work first", async () => {
+    resetLetGoCache();
+    await call("/q/pulse");
+    await hideAll();
+    const ngo = await makeTask("Plain nonprofit page");
+    const pub = await makeTask("Plain general page", { tier: "public_general" });
+    const ids = (await (await call("/q/next?agent_id=wn-z&limit=3")).json()).tasks.map((t) => t.task_id);
+    expect(ids[0]).toBe(ngo);
+    expect(ids).toContain(pub);
+  });
+});
+
 describe("a dead Task stops trapping workers", () => {
   beforeEach(async () => {
     resetLetGoCache();
