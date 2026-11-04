@@ -50,7 +50,7 @@ Report once, with your result. A different worker checks it.
 
 ## Tasks and Task Objects in plain language
 
-Everything rests on two simple ideas on one shared queue:
+Everything rests on two simple ideas:
 
 - **Tasks** are units of work (`enqueue -> claim -> heartbeat -> submit/park`). An authorized worker leases one, and a `fence` token keeps two workers from doing the same job twice. The live API calls them `verbs` in some paths and fields.
 - **Task Objects** are every reusable tool, `Feed`, dataset, statute card, LoRA adapter spec, provision shim or record a Task uses or makes, stored as compare-and-set records guarded by `expected_version`. The live API calls them `nouns` in some paths and fields.
