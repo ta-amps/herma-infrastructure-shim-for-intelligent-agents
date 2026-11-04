@@ -5617,7 +5617,7 @@ async function claimNextAuthorizedTask(
   const visWithField = canDoFieldWork ? visBase : `${visBase} AND NOT (${FIELD_WORK_SQL})`;
   // A no-key worker that just let a Task go isn't handed it again by a plain claim for half an hour. Shared generic
   // names are left out, or their bots would hide Tasks from each other; a claim by id still works.
-  const sharedName = /^(?:volunteer-agent|worker|agent|anonymous|test)$/i.test(String(agentId || ""));
+  const sharedName = GENERIC_EPHEMERAL_AGENTS.has(String(agentId || "").toLowerCase());
   const letGoCutoff = new Date(Date.now() - 1800000).toISOString();
   const notJustLetGo =
     explicitTaskId || infraAllowed || sharedName || env?.OPEN_WORK_LIMITS !== "on"

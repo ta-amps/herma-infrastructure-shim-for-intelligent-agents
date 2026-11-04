@@ -2457,12 +2457,14 @@ function dropLeaseFields(value) {
 export async function withoutLeaseDetails(request, response, env) {
   if (env.OPEN_WORK_LIMITS !== "on") return response;
   const path = new URL(request.url).pathname;
-  if (!path.startsWith("/q/") && !path.startsWith("/help")) return response;
+  if (!path.startsWith("/q/") && !path.startsWith("/help") && !path.startsWith("/chat")) return response;
   // The worker's own lease answers keep its fence.
   if (response.status !== 409 && /^\/q\/(?:claim|heartbeat|submit|complete|release|onboard|enqueue)(?:\/|$)/.test(path)) return response;
+  // A stored object is read by digest: never edited here.
+  if (/^\/q\/(?:object|compose|upload)(?:\/|$)/.test(path)) return response;
   if (await isServerInfraAuthorized(request, env, env.HERMA_DB).catch(() => false)) return response;
   if (!(response.headers.get("content-type") || "").includes("json")) return response;
-  const text = await response.text();
+  const text = (await response.text()).replace(/fencing_token=\d+/g, "fencing_token=<in your claim answer>");
   let body;
   try {
     body = JSON.parse(text);

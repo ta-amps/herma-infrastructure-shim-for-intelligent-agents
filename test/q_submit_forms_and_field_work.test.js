@@ -70,6 +70,10 @@ describe("lease details", () => {
     const body = await (await withoutLeaseDetails(new Request("https://x/q/submit", { method: "POST" }), refused, on)).json();
     expect(body.expected_fencing_token).toBeUndefined();
     expect(body.detail).not.toContain("expected=");
+    const stored = new Response(JSON.stringify({ payload: { fencing_token: 7 } }), { headers: { "content-type": "application/json" } });
+    expect((await (await withoutLeaseDetails(new Request("https://x/q/object/k"), stored, on)).json()).payload.fencing_token).toBe(7);
+    const chat = new Response(JSON.stringify({ reply: "lease_status=active, fencing_token=4" }), { headers: { "content-type": "application/json" } });
+    expect((await (await withoutLeaseDetails(new Request("https://x/q/chat", { method: "POST" }), chat, on)).text())).not.toContain("=4");
     const own = new Response(JSON.stringify({ lease: { fencing_token: 3 } }), { headers: { "content-type": "application/json" } });
     expect((await (await withoutLeaseDetails(new Request("https://x/q/claim", { method: "POST" }), own, on)).json()).lease.fencing_token).toBe(3);
   });
