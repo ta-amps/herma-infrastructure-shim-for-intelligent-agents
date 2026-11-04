@@ -2448,11 +2448,11 @@ export default {
 
 // Who holds a lease and its fence go only to the worker that claimed it, so a stranger can't act as that worker.
 // A refusal says what's wrong without naming the holder or the right number.
-const LEASE_FIELDS = ["leased_by", "leased_worker_uuid", "fencing_token", "lease_epoch", "fence_seq", "expected_fencing_token", "expected_lease_epoch"];
+const LEASE_FIELDS = ["leased_by", "leased_worker_uuid", "fencing_token", "lease_epoch", "fence_seq", "expected_fencing_token", "expected_lease_epoch", "active_fencing_token"];
 function dropLeaseFields(value) {
   if (Array.isArray(value)) return value.map(dropLeaseFields);
   if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value).filter(([k]) => !LEASE_FIELDS.includes(k)).map(([k, v]) => [k, dropLeaseFields(v)]));
+  return Object.fromEntries(Object.entries(value).filter(([k]) => !LEASE_FIELDS.includes(k)).map(([k, v]) => [k, k === "payload" ? v : dropLeaseFields(v)]));
 }
 export async function withoutLeaseDetails(request, response, env) {
   if (env.OPEN_WORK_LIMITS !== "on") return response;
@@ -2464,13 +2464,16 @@ export async function withoutLeaseDetails(request, response, env) {
   if (/^\/q\/(?:object|compose|upload)(?:\/|$)/.test(path)) return response;
   if (await isServerInfraAuthorized(request, env, env.HERMA_DB).catch(() => false)) return response;
   if (!(response.headers.get("content-type") || "").includes("json")) return response;
-  const text = (await response.text()).replace(/fencing_token=\d+/g, "fencing_token=<in your claim answer>");
+  const text0 = await response.text();
+  const text = text0.replace(/fencing_token=\d+/g, "fencing_token=<in your claim answer>");
   let body;
   try {
     body = JSON.parse(text);
   } catch {
     return new Response(text, response);
   }
+  // A claim made through chat is the worker's own lease: it keeps its fence.
+  if (body && body.claimed_task === true) return new Response(text0, { status: response.status, statusText: response.statusText, headers: response.headers });
   const clean = dropLeaseFields(body);
   if (typeof clean.detail === "string") {
     clean.detail = clean.detail.replace(/ \(expected=\d+\)/, "").replace(/is leased by '[^']*', not '[^']*'/, "is held by another worker");
