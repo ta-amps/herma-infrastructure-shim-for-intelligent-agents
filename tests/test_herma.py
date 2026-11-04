@@ -1953,7 +1953,12 @@ console.log(JSON.stringify({
     )
     assert cf["starterIds"] == example_ids
     assert cf["mcpServer"] == "herma"
-    assert set(cf["mcpTools"]) == {"list_builtin_provisions", "preview_shim", "extract_entities"}
+    assert set(cf["mcpTools"]) == {
+        "find",
+        "list_builtin_provisions",
+        "preview_shim",
+        "extract_entities",
+    }
     assert cf["mcpExtracted"] >= 2
     assert cf["rcptCnt"] == 0
 

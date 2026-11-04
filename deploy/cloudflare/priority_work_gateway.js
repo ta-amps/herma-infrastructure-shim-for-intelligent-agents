@@ -19,6 +19,7 @@
 
 import { textHasCredential } from "./credential_shapes.js";
 import { repoLookupHint, repoMatchesForSearch, repoRowsResponse } from "./repo_rows.js";
+import { findResponse, reuseHintsForTask } from "./unified_find.js";
 import { computeTaskFingerprint, scrubSensitiveText } from "./bilateral_bridge.js";
 import { clientFamily } from "./client_family.js";
 import { contributorPrintout } from "./contributor_printout.js";
@@ -9214,7 +9215,7 @@ function formatClaimBanner(publicUrl, claimOut, pulse) {
       ...pulse.waterfall_when_empty_or_blocked,
       `Runtimes (GET):    ${publicUrl}/q/runtimes?limit=5`,
       `Seeds URL (GET):   ${publicUrl}/q/seeds?worker_uuid=${encodeURIComponent(prof?.worker_uuid || "auto")}`,
-      `Search URL (GET):  ${publicUrl}/q/search?q=<topic>`,
+      `Find URL (GET):    ${publicUrl}/q/find?q=<words> (repositories, Task Objects, kits, seed packs)`,
       `Submit URL (GET):  ${publicUrl}/q/submit/${encodeURIComponent(prof?.agent_id || "worker")}/self_seed/uuid-${encodeURIComponent(prof?.worker_uuid || "auto")}--summary-<1-step-result>--object-seed_noun:<structured-fact>--own-verb-<next-narrow-step>`,
       `Submit URL (POST): ${publicUrl}/q/submit`,
     ].join("\n");
@@ -9243,12 +9244,15 @@ function formatClaimBanner(publicUrl, claimOut, pulse) {
     `TITLE: ${t.title}`,
     `PROMPT: ${t.prompt}`,
     ...evalLines,
+    ...(claimOut.reuse_candidates?.length
+      ? ["", "ALREADY HERE, FOUND FOR THIS TASK BY PLAIN WORD MATCH. READ ANY THAT FIT, AND NAME WHAT YOU USE IN builds_on:", ...claimOut.reuse_candidates.map((h) => `- ${h.id}: ${h.about} (${h.url})`), `More: ${publicUrl}/q/find?q=<words>`]
+      : []),
     "",
     "ATOMIC SINGLE-STEP & ANTI-CONVERGENCE CONTRACT:",
     "1. Hesitate to do too many discrete steps at once: execute ONLY ONE narrow atomic branch/operator right now.",
     "2. Tag reusable schemas, rankings, or node specs with your worker_uuid in `task_objects`.",
     ...(process_env_brief(pulse) ? [] : ["3. Enqueue your next narrow continuation (`owner_worker_uuid` / `--own-verb-`) or a `meta_generator` / `verb_mutator` verb."]),
-    `4. Prompts Hub: ${publicUrl}/prompts | Search: ${publicUrl}/q/search?q=<keywords> | Routing: ${publicUrl}/q/routing`,
+    `4. Prompts Hub: ${publicUrl}/prompts | Find anything: ${publicUrl}/q/find?q=<words> | Routing: ${publicUrl}/q/routing`,
     "",
     "HOW TO SUBMIT:",
     `- Option A (POST JSON to ${publicUrl}/q/submit):`,
@@ -9304,7 +9308,8 @@ async function noteClaimOnMap(db, request, claimOut, agentId, modelHint) {
   }
 }
 
-export async function handlePriorityWorkGateway(request, env, db, publicUrl, { withSecurity }) {
+export async function handlePriorityWorkGateway(request, env, db, publicUrl, { withSecurity, ctx }) {
+  const finishLater = ctx?.waitUntil ? (work) => ctx.waitUntil(work) : undefined;
   const reqStartMs = Date.now();
   await ensurePriorityGatewaySchema(db, { env, publicUrl });
   useTeamAgents(await loadTeamAgents(db)); // the operator's list of team-run agents, for the labels the pages below use (read at most once a minute)
@@ -10438,6 +10443,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       dashboard_url: `${publicUrl}/dashboard`,
       prompts_hub_url: `${publicUrl}/prompts`,
       onboard_url: `${publicUrl}/q/onboard`,
+      find_url: `${publicUrl}/q/find`,
       search_url: `${publicUrl}/q/search`,
       repos_url: `${publicUrl}/q/repos`,
       routing_url: `${publicUrl}/q/routing`,
@@ -10505,6 +10511,20 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     const [repoBody, repoStatus] = await repoRowsResponse(url, db);
     traceCtx.detail = { rows: repoBody.rows ? repoBody.rows.length : 0 };
     return sendJson(repoBody, repoStatus);
+  }
+
+  if (action === "find") {
+    if (method !== "GET" && method !== "HEAD") {
+      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+    }
+    const [findBody, findStatus] = await findResponse(url, db, { waitUntil: finishLater });
+    const findQuery = String(url.searchParams.get("q") || url.searchParams.get("query") || "");
+    traceCtx.detail = { q: textHasCredential(findQuery) ? "[REDACTED]" : findQuery.slice(0, QUEUE_GATEWAY_GRID.facet_max_len), matches: findBody.hits?.length || 0, match: findBody.match };
+    if (findStatus === 200 && url.searchParams.get("record_demand") !== "0") {
+      // The real queries are how this gets better. Something shaped like a credential is never written, and a lost line never stops the answer.
+      await recordOrganicDemandSignal(db, { queryText: findQuery, source: "find", matchCount: findBody.hits.length, topObjectKey: findBody.hits.find((h) => h.kind === "task_object")?.id || "" }).catch(() => {});
+    }
+    return sendJson(findBody, findStatus);
   }
 
   if (action === "search") {
@@ -10725,6 +10745,8 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         userAgent,
       });
       claimOut.worker_toolkit_guidance = workerToolkitGuidance;
+      claimOut.reuse_candidates = claimOut.task ? await reuseHintsForTask(db, claimOut.task.title, { waitUntil: finishLater }) : [];
+      traceCtx.detail.reuse_hints = claimOut.reuse_candidates.map((h) => h.id);
       const pulse = await buildPulseSnapshot(db, env, infraAllowed);
       const briefClaims = env?.OPEN_WORK_LIMITS === "on" && !infraAllowed && url.searchParams.get("verbose") !== "1";
       if (briefClaims) pulse.brief_claims = true;
@@ -10733,6 +10755,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           ok: true,
           caller_role: pulse.caller_role,
           lease: claimOut.task,
+          ...(claimOut.reuse_candidates?.length ? { reuse_candidates: claimOut.reuse_candidates } : {}),
           co_leased_batch: claimOut.co_leased_batch,
           reused_active_lease: Boolean(claimOut.reused_active_lease),
           ...(claimOut.co_leased_parallel_slot

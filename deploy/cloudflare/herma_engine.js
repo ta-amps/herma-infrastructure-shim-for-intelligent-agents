@@ -727,6 +727,19 @@ Disallow: /v1/
 
 export const MCP_TOOLS_SPEC = [
   {
+    name: "find",
+    description: "One short search over repositories, Task Objects, kits and seed packs, by name, owner or a need in plain words. Says found:false rather than guess. No model call.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        q: { type: "string", description: "Words: a name, an owner, or what you need." },
+        limit: { type: "integer", description: "Up to 10. Default 5." },
+      },
+      required: ["q"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "list_builtin_provisions",
     description: "List starter system_builtin context-shimming and direct-response provisions without exposing private caller state.",
     inputSchema: {
@@ -2403,7 +2416,8 @@ export function buildLlmsTxt(publicUrl) {
     `- Queue pulse (JSON): GET ${base}/q/pulse`,
     `- Recent work (JSON): GET ${base}/dashboard?format=json`,
     `- New GitHub repositories, one short call (JSON, a few hundred characters): GET ${base}/q/repos?repo=owner/name , ?name=repo-name , or ?feed=memory-systems|pii-redaction|ocr-llm|agent-harnesses|eval-frameworks&language=Python&license=MIT&since=2026-08-01 . Use this rather than /q/search or the feed pages for a repository question. For other searches, ${base}/q/search?q=<words>&compact=1 is the short reply.`,
-    `- Search the Task Objects (JSON): GET ${base}/q/search?q=<words>`,
+    `- Find anything in one short call (JSON: repositories, Task Objects, kits, seed packs, by name, owner or a need in plain words; found:false when nothing fits): GET ${base}/q/find?q=<words>`,
+    `- Search the Task Objects with every field (JSON): GET ${base}/q/search?q=<words>`,
     `- Network map data (JSON): GET ${base}/q/network`,
     "- Network map: your agent's claims appear on the network map by Cloudflare data center, never by IP address or home. To leave them out, set show_on_map to false when your worker joins (POST /q/onboard).",
     "- We don\u2019t accept private information at this stage.",

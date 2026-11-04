@@ -32,7 +32,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) |  |
 
-## deploy/ (45)
+## deploy/ (47)
 
 | File | What it is |
 |---|---|
@@ -54,6 +54,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/demo_page.js](deploy/cloudflare/demo_page.js) | The interactive demo page for a Task Object (/q/demo/<key>) and the script it runs (/q/demo-runner.js): a step |
 | [deploy/cloudflare/entry.js](deploy/cloudflare/entry.js) |  |
 | [deploy/cloudflare/feedback_steps_and_uploads.js](deploy/cloudflare/feedback_steps_and_uploads.js) | Herma v6.9 + v6.10 Catch-All Proactive Worker Feedback, Auto-Diagnosis & Peer-Review Verb Spawner (/q/feedbac… |
+| [deploy/cloudflare/find_catalog.generated.json](deploy/cloudflare/find_catalog.generated.json) | JSON object: _record, packs, kits, feedWords, terms |
 | [deploy/cloudflare/herma_engine.js](deploy/cloudflare/herma_engine.js) | Context-shimming 3-tier trigger engine, multi-caller isolation, governance lens, |
 | [deploy/cloudflare/home_totals.js](deploy/cloudflare/home_totals.js) | The five plain numbers on the home page ("Today"), read from the same tables as the dashboard and with the sa… |
 | [deploy/cloudflare/network_activity.js](deploy/cloudflare/network_activity.js) | The network map's data (design contract claude-design-network-map.v1.json, owner request of Nov 1): where wor… |
@@ -73,6 +74,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/taxonomy_affinity_and_proactive_feedback.js](deploy/cloudflare/taxonomy_affinity_and_proactive_feedback.js) | Herma v6.10 Deterministic Taxonomy Auto-Describer, Preferred-Worker / Setup Affinity, |
 | [deploy/cloudflare/team_agents.js](deploy/cloudflare/team_agents.js) | The agents the team runs itself (ta-amps and its own sessions). |
 | [deploy/cloudflare/thick_path_and_schema_coach.js](deploy/cloudflare/thick_path_and_schema_coach.js) | Herma v6.8 Thick-Path Plateau Grid Telemetry, Proactive Open-World Schema Coach (/q/schema, /q/schema/validat… |
+| [deploy/cloudflare/unified_find.js](deploy/cloudflare/unified_find.js) | GET /q/find?q=...: one call, one short reply, over repositories, Task Objects, kits and seed packs. |
 | [deploy/cloudflare/worker.js](deploy/cloudflare/worker.js) |  |
 | [deploy/cloudflare/worker_entropy_catalog.js](deploy/cloudflare/worker_entropy_catalog.js) | Bilateral Worker Onboarding Personas, Calibration Questions, Single-Step Atomic Remix Operators, |
 | [deploy/cloudflare/worker_help_and_starter.js](deploy/cloudflare/worker_help_and_starter.js) | Bilateral Worker Help (/q/help), Agent-to-Agent Chat (/q/chat, /q/a2a), |
@@ -166,7 +168,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [herma/triggers/micromodel.py](herma/triggers/micromodel.py) | Tier-3 micromodel router trigger: fast tiny/cloud classifier with deterministic offline fallback. |
 | [herma/triggers/semantic.py](herma/triggers/semantic.py) | Tier-2 semantic similarity trigger (~1-5 ms): hybrid concept + subword cosine + optional embeddings. |
 
-## scripts/ (14)
+## scripts/ (15)
 
 | File | What it is |
 |---|---|
@@ -177,6 +179,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/check_architecture.py](scripts/check_architecture.py) | Check that architecture.json still describes this repo truthfully. |
 | [scripts/check_public.py](scripts/check_public.py) | Fail if a file headed for a public repo holds a secret or a private name. |
 | [scripts/check_release.py](scripts/check_release.py) | Fail closed before a deploy of the Herma Worker, from any checkout of this repository. |
+| [scripts/find_catalog.py](scripts/find_catalog.py) | Build deploy/cloudflare/findcatalog.generated.json for GET /q/find. |
 | [scripts/has_browser.mjs](scripts/has_browser.mjs) | Prints "yes" when Playwright's browser is installed, so make check can say plainly when it skips the browser… |
 | [scripts/light_check.mjs](scripts/light_check.mjs) | The light check (owner rule 13: light only, everywhere). |
 | [scripts/memory_d1.mjs](scripts/memory_d1.mjs) | An in-memory stand-in for a D1 database, on Node's built-in SQLite, for the gate and for tests that run the r… |
@@ -185,7 +188,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
 | [scripts/repo_rows_refresh.py](scripts/repo_rows_refresh.py) | Build the rows behind GET /q/repos: feed exports plus a fresh scan of GitHub's public search, as SQL for D1. |
 
-## test/ (34)
+## test/ (35)
 
 | File | What it is |
 |---|---|
@@ -221,6 +224,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/team_agents.test.js](test/team_agents.test.js) |  |
 | [test/thick_path_and_schema_coach.test.js](test/thick_path_and_schema_coach.test.js) |  |
 | [test/triggers.test.js](test/triggers.test.js) |  |
+| [test/unified_find.test.js](test/unified_find.test.js) |  |
 | [test/worker_kits_and_mutation_grid.test.js](test/worker_kits_and_mutation_grid.test.js) |  |
 | [test/worker_reputation_and_proposals.test.js](test/worker_reputation_and_proposals.test.js) |  |
 
