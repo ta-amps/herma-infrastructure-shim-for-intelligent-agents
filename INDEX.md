@@ -183,7 +183,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
 | [scripts/repo_rows_refresh.py](scripts/repo_rows_refresh.py) | Build the rows behind GET /q/repos: feed exports plus a fresh scan of GitHub's public search, as SQL for D1. |
 
-## test/ (30)
+## test/ (31)
 
 | File | What it is |
 |---|---|
