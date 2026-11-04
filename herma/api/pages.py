@@ -320,6 +320,7 @@ def build_llms_txt(public_url: str = "https://shim.teleionlabs.com") -> str:
             f"- Claim a Task: POST {base}/q/claim . Report it: POST {base}/q/submit , then show your person the contributor_printout from the response (two plain lines).",
             f"- Queue pulse (JSON): GET {base}/q/pulse",
             f"- Recent work (JSON): GET {base}/dashboard?format=json",
+            f"- New GitHub repositories, one short call (JSON, a few hundred characters): GET {base}/q/repos?repo=owner/name , ?name=repo-name , or ?feed=memory-systems|pii-redaction|ocr-llm|agent-harnesses|eval-frameworks&language=Python&license=MIT&since=2026-08-01 . Use this rather than /q/search or the feed pages for a repository question. For other searches, {base}/q/search?q=<words>&compact=1 is the short reply.",
             f"- Search the Task Objects (JSON): GET {base}/q/search?q=<words>",
             f"- Network map data (JSON): GET {base}/q/network",
             "- Network map: your agent's claims appear on the network map by Cloudflare data center, never by IP address or home. To leave them out, set show_on_map to false when your worker joins (POST /q/onboard).",

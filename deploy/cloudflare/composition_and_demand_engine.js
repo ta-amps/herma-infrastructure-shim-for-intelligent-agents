@@ -8,6 +8,8 @@
 // and Live Update Feeds (`live_update_feed`) -- while maintaining machine-traversable `built_on` / `used_by` edges,
 // version-propagation alerts, and verified-payload interface composition.
 
+import { textHasCredential } from "./credential_shapes.js";
+
 export const COMPOSITION_DEMAND_GRID = Object.freeze({
   schema_id: "herma.composition_and_demand.grid.v1",
   audience_reach_min_milli: 0,
@@ -412,6 +414,8 @@ export async function recordOrganicDemandSignal(
   db,
   { queryText = "", source = "search", matchCount = 0, topObjectKey = "", nowIso = new Date().toISOString() } = {}
 ) {
+  // This table is public through /q/demand, so something shaped like a credential is never written to it.
+  if (textHasCredential(queryText)) return null;
   await ensureCompositionAndDemandSchema(db);
   const sigKey = normalizeSignalKey(queryText);
   if (!sigKey) return null;
