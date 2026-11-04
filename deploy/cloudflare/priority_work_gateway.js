@@ -5616,7 +5616,7 @@ async function claimNextAuthorizedTask(
     : "visibility IN ('public_ngo', 'public_commons')";
   const visWithField = canDoFieldWork ? visBase : `${visBase} AND NOT (${FIELD_WORK_SQL})`;
   // A worker that just let a Task go isn't handed it again by a plain claim; claiming it by id still works.
-  const notJustLetGo = explicitTaskId ? "" : ` AND COALESCE(last_expired_by, '') <> '${String(agentId || "").replace(/'/g, "''")}'`;
+  const notJustLetGo = explicitTaskId || env?.OPEN_WORK_LIMITS !== "on" ? "" : ` AND COALESCE(last_expired_by, '') <> '${String(agentId || "").replace(/'/g, "''")}'`;
   const visAllowed = `${visWithField}${notJustLetGo}`;
 
   if (explicitTaskId) {
