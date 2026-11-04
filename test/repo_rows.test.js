@@ -6,6 +6,7 @@ import { clearUpstreamBackoff, repoMatchesForSearch, repoRowsResponse } from "..
 const TODAY = new Date().toISOString().slice(0, 10);
 // Made up, and assembled here so the repository's own leak scan stays strict and clean.
 const FAKE_TOKEN = `${"gh"}p_${"abcdefghijklmnopqrstuvwxyz0123456789"}`;
+const FAKE_SK = `${"s"}k-${"abcdefghijklmnopqrstuvwx"}`;
 
 const db = () => env.HERMA_DB;
 const ROWS = [
@@ -312,7 +313,7 @@ describe("review findings, November 4", () => {
 
   it("1. /q/repos refuses a credential-shaped name and calls no one", async () => {
     const f = vi.fn();
-    for (const qs of [`name=${FAKE_TOKEN}`, "repo=github_pat_abcdefghij0123456789/x", "name=0123456789abcdef0123456789abcdef", "name=sk-proj-abc_def-ghi-jkl", `ask=${encodeURIComponent("What licence does the GitHub repository sk-abcdefghijklmnopqrstuvwx/x use?")}`]) {
+    for (const qs of [`name=${FAKE_TOKEN}`, "repo=github_pat_abcdefghij0123456789/x", "name=0123456789abcdef0123456789abcdef", "name=sk-proj-abc_def-ghi-jkl", `ask=${encodeURIComponent(`What licence does the GitHub repository ${FAKE_SK}/x use?`)}`]) {
       const [body, status] = await call(qs, f);
       expect([qs, status, body.code]).toEqual([qs, 400, "looks_like_a_secret"]);
       expect(JSON.stringify(body)).not.toContain("abcdefghij");
