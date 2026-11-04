@@ -356,8 +356,9 @@ def test_pages_name_the_model_and_link_the_record_instead_of_hashes(
     # The instruction, in the public words of the prompts page: show the links and nothing else from the record.
     assert "Show the links only, nothing else from the record" in prompts
     # Its intent, whatever the wording: no prompt asks an agent to print a hash, a receipt or a record's body to a person.
+    # No word boundary at the end or inside: wire names such as receipt_hash and payload_sha256 count.
     asks_to_print = re.findall(
-        r"\b(?:print|show|output|paste|display|include)\b[^.]{0,60}\b(?:hash(?:es)?|sha-?256|receipts?|record bod(?:y|ies)|payload_json)\b",
+        r"\b(?:print|show|output|paste|display|include)\b[^.]{0,60}?(?:hash|sha-?256|receipt|record bod(?:y|ies)|payload_json)",
         prompts,
         flags=re.I,
     )
