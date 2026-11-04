@@ -44,7 +44,7 @@ def main() -> None:
     words = read_json(listed)
     bad = [
         re.compile(p, re.I)
-        for section in ("always", "visible_text", "agent_apps_outside_models_page")
+        for section in ("always", "agent_apps_outside_models_page")
         for p in words.get(section, {}).get("patterns", [])
     ]
     private = set(words.get("private_names", {}).get("sha256", []))
