@@ -1,12 +1,18 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { splitStrongAndNearby } from "../deploy/cloudflare/priority_work_gateway.js";
+import { resetExactLookupIndexCheck, splitStrongAndNearby } from "../deploy/cloudflare/priority_work_gateway.js";
 import { clearUpstreamBackoff, repoMatchesForSearch, repoRowsResponse } from "../deploy/cloudflare/repo_rows.js";
 
 const TODAY = new Date().toISOString().slice(0, 10);
 // Made up, and assembled here so the repository's own leak scan stays strict and clean.
 const FAKE_TOKEN = `${"gh"}p_${"abcdefghijklmnopqrstuvwxyz0123456789"}`;
 const FAKE_SK = `${"s"}k-${"abcdefghijklmnopqrstuvwx"}`;
+const LETTERS = "abcdefghijklmnopqrstuvwx0123456789";
+const FAKE_ANT = `${"s"}k-${"ant"}-${LETTERS}`;
+const FAKE_GOOGLE = `${"AI"}za${LETTERS}`;
+const FAKE_HF = `${"h"}f_${LETTERS}`;
+const FAKE_STRIPE = `${"s"}k_${"live"}_${LETTERS}`;
+const FAKE_GITLAB = `${"gl"}pat-${LETTERS}`;
 
 const db = () => env.HERMA_DB;
 const ROWS = [
@@ -17,7 +23,7 @@ const ROWS = [
   ["acme/both", "both", "memory-systems", "MIT", "Python", "2026-09-10", 5, 1],
   ["acme/both", "both", "ocr-llm", "MIT", "Python", "2026-09-10", 5, 1],
   ["old/stale", "stale", "memory-systems", "MIT", "Zig", "2026-09-10", 5, 1, "2026-01-01"],
-  ["acme/shared-name", "shared-name", "memory-systems", "MIT", "Zig", "2026-09-10", 5, 1],
+  ["acme/shared_name", "shared_name", "memory-systems", "MIT", "Zig", "2026-09-10", 5, 1],
 ];
 const call = (qs, fetchImpl) => repoRowsResponse(new URL(`https://x/q/repos?${qs}`), db(), { fetchImpl: fetchImpl || vi.fn(async () => { throw new Error("no upstream expected"); }) });
 const github = (status, body) => vi.fn(async () => new Response(JSON.stringify(body), { status }));
@@ -311,23 +317,60 @@ describe("review findings, November 4", () => {
     expect(secret.repo_lookup).toBeUndefined();
   });
 
-  it("1. /q/repos refuses a credential-shaped name and calls no one", async () => {
+  it("1. /q/repos does not send a credential-shaped name to GitHub, does not echo it, and says why", async () => {
     const f = vi.fn();
-    for (const qs of [`name=${FAKE_TOKEN}`, "repo=github_pat_abcdefghij0123456789/x", "name=0123456789abcdef0123456789abcdef", "name=sk-proj-abc_def-ghi-jkl", `ask=${encodeURIComponent(`What licence does the GitHub repository ${FAKE_SK}/x use?`)}`]) {
+    for (const qs of [`name=${FAKE_TOKEN}`, "name=github_pat_abcdefghij0123456789", "name=0123456789abcdef0123456789abcdef", `name=${FAKE_ANT}`, `name=${FAKE_GOOGLE}`, `name=${FAKE_HF}`, `name=${FAKE_STRIPE}`, `name=${FAKE_GITLAB}`, `ask=${encodeURIComponent(`What licence does the GitHub repository ${FAKE_SK}/x use?`)}`]) {
       const [body, status] = await call(qs, f);
-      expect([qs, status, body.code]).toEqual([qs, 400, "looks_like_a_secret"]);
+      expect([qs, status, body.miss]).toEqual([qs, 200, "not_sent"]);
+      expect(body.note).toMatch(/not sent to GitHub/);
       expect(JSON.stringify(body)).not.toContain("abcdefghij");
     }
+    // An underscore can't be in an owner's name, so this one stops earlier, still with no call and no echo.
+    const [badOwner, badStatus] = await call("repo=github_pat_abcdefghij0123456789/x", f);
+    expect([badStatus, badOwner.code]).toEqual([400, "bad_name"]);
+    expect(JSON.stringify(badOwner)).not.toContain("abcdefghij");
     expect(f).not.toHaveBeenCalled();
   });
 
-  it("1. a real project name that only starts like a credential is still looked up", async () => {
-    for (const name of ["sk-learn", "ghp_tools", "AKIA-notes", "eyJ-viewer", "cafe-babe"]) {
+  it("1. real project names that only resemble a credential are read and looked up", async () => {
+    for (const name of ["sk-learn", "sk-learn-extensions", "tan_language_model", "tsk_rust_scheduler", "ghp_tools", "AKIA-notes", "eyJ-viewer", "cafe-babe"]) {
       const f = github(200, { total_count: 0, items: [] });
       const [body, status] = await call(`name=${name}`, f);
-      expect([name, status, body.code]).toEqual([name, 200, undefined]);
+      expect([name, status, body.miss]).toEqual([name, 200, "not_in_github_search"]);
       expect(f).toHaveBeenCalledTimes(1);
     }
+    const owner = github(404, {});
+    expect((await call("repo=scikit/sk-learn-contrib", owner))[0].miss).toBe("no_such_repo");
+    expect(owner).toHaveBeenCalledTimes(1);
+  });
+
+  it("1. the rows are read before the check, so an indexed repository with such a name is still found", async () => {
+    await db().prepare("INSERT OR REPLACE INTO feed_repo_rows (repo,name,feed,license,language,created,stars,relevant,seen_at) VALUES (?,?,'memory-systems','MIT','Go','2026-10-01',1,1,?)").bind(`acme/${FAKE_HF}`, FAKE_HF, TODAY).run();
+    const f = vi.fn();
+    const [body] = await call(`repo=acme/${FAKE_HF}`, f);
+    expect(body.rows.length).toBe(1);
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it("1. a credential-shaped query is not kept where the public can read it, on GET or POST, and an ordinary one still is", async () => {
+    const base = "https://herma.ta-amps.workers.dev";
+    const shapes = [FAKE_TOKEN, FAKE_ANT, FAKE_GOOGLE, FAKE_HF, FAKE_STRIPE, FAKE_GITLAB, `please find ${FAKE_SK} for me`];
+    for (const q of shapes) {
+      await raw(q);
+      await exports.default.fetch(`${base}/q/search`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ q }) });
+    }
+    const demand = await db().prepare("SELECT signal_key, raw_sample_query FROM herma_demand_signals").all();
+    const traces = await db().prepare("SELECT detail_json FROM herma_gateway_trace_log").all();
+    const stored = JSON.stringify([demand.results, traces.results]);
+    expect(stored).not.toContain(LETTERS);
+    const publicDemand = await (await exports.default.fetch(`${base}/q/demand`)).text();
+    expect(publicDemand).not.toContain(LETTERS);
+    await exports.default.fetch(`${base}/q/search`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ q: "ordinary zebra question" }) });
+    const after = JSON.stringify((await db().prepare("SELECT raw_sample_query FROM herma_demand_signals").all()).results);
+    expect(after).toContain("ordinary zebra question");
+    const trace = JSON.stringify((await db().prepare("SELECT detail_json FROM herma_gateway_trace_log").all()).results);
+    expect(trace).toContain("[REDACTED]");
+    expect(trace).toContain("ordinary zebra question");
   });
 
   it("2. a stored object named after a plain word does not take first place or exact_match", async () => {
@@ -338,11 +381,21 @@ describe("review findings, November 4", () => {
     for (const r of body.results) expect(r.matched_channels).not.toContain("exact_id");
   });
 
+  it("2. a stored object named after a hyphenated phrase does not take first place either; a real ID shape does", async () => {
+    const put = (object_key) => exports.default.fetch("https://herma.ta-amps.workers.dev/q/objects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ agent_id: "t", object_key, summary: "buy my thing", payload: { a: 1 } }) });
+    await put("agent-memory");
+    const phrase = await raw("agent-memory");
+    expect(phrase.match).not.toBe("exact_id");
+    expect(phrase.exact_match).toBeUndefined();
+    await put("agent-memory-2026");
+    expect((await raw("agent-memory-2026")).match).toBe("exact_id");
+  });
+
   it("2. repo matches are computed even when an ID also matches exactly", async () => {
-    await exports.default.fetch("https://herma.ta-amps.workers.dev/q/objects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ agent_id: "t", object_key: "shared-name", summary: "an object sharing a repository's name", payload: { a: 1 } }) });
-    const body = await raw("shared-name");
+    await exports.default.fetch("https://herma.ta-amps.workers.dev/q/objects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ agent_id: "t", object_key: "shared_name", summary: "an object sharing a repository's name", payload: { a: 1 } }) });
+    const body = await raw("shared_name");
     expect(body.match).toBe("exact_id");
-    expect(body.repo_matches.rows[0][0]).toBe("acme/shared-name");
+    expect(body.repo_matches.rows[0][0]).toBe("acme/shared_name");
   });
 
   it("3. once GitHub says stop, no one asks again until the wait is over; a plain refusal is not a limit", async () => {
@@ -352,6 +405,9 @@ describe("review findings, November 4", () => {
     for (const n of ["two", "three", "four"]) expect((await call(`repo=nobody/limit-${n}`, again))[0].miss).toBe("rate_limited");
     expect(again).not.toHaveBeenCalled();
     await clearUpstreamBackoff();
+    const secondary = github(403, { message: "You have exceeded a secondary rate limit." });
+    expect((await call("repo=nobody/secondary-limit", secondary))[0].miss).toBe("rate_limited");
+    await clearUpstreamBackoff();
     const refused = github(403, {});
     expect((await call("repo=nobody/blocked-one", refused))[0].miss).toBe("refused");
     const next = github(404, {});
@@ -360,6 +416,16 @@ describe("review findings, November 4", () => {
   });
 
   it("4. the exact path runs only for one ID-shaped word and uses an index", async () => {
+    for (const [table, col, index] of [["herma_task_objects", "object_key", "idx_hto_lower_key"], ["herma_durable_queue", "task_id", "idx_hdq_lower_task"]]) {
+      const plan = await db().prepare(`EXPLAIN QUERY PLAN SELECT id FROM ${table} WHERE LOWER(${col}) = ? ORDER BY id DESC LIMIT 1`).bind("x-y").all();
+      expect(JSON.stringify(plan.results)).toContain(index);
+    }
+    await db().exec("DROP INDEX IF EXISTS idx_hto_lower_key");
+    await db().exec("DROP INDEX IF EXISTS idx_hdq_lower_task");
+    const stamp = await db().prepare("SELECT v FROM herma_runtime_kv WHERE k = 'gateway_schema_version'").first();
+    expect(stamp?.v).toBeTruthy();
+    resetExactLookupIndexCheck();
+    await raw("reach_a_stamped_database_v1");
     for (const [table, col, index] of [["herma_task_objects", "object_key", "idx_hto_lower_key"], ["herma_durable_queue", "task_id", "idx_hdq_lower_task"]]) {
       const plan = await db().prepare(`EXPLAIN QUERY PLAN SELECT id FROM ${table} WHERE LOWER(${col}) = ? ORDER BY id DESC LIMIT 1`).bind("x-y").all();
       expect(JSON.stringify(plan.results)).toContain(index);

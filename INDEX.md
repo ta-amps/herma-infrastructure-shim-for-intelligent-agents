@@ -31,7 +31,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) |  |
 
-## deploy/ (44)
+## deploy/ (45)
 
 | File | What it is |
 |---|---|
@@ -47,6 +47,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/conversation.js](deploy/cloudflare/conversation.js) | Typed proposals only. |
 | [deploy/cloudflare/conversation_data.json](deploy/cloudflare/conversation_data.json) | JSON object: bilateral_chat_grid, bilateral_topics, categories, schemas, system_prompt |
 | [deploy/cloudflare/conversation_state.js](deploy/cloudflare/conversation_state.js) | Conversation coordination, not a work queue. |
+| [deploy/cloudflare/credential_shapes.js](deploy/cloudflare/credential_shapes.js) | One check for "this looks like a credential". |
 | [deploy/cloudflare/d1-herma.sql](deploy/cloudflare/d1-herma.sql) | Persistent Cloudflare D1 caller-isolated schema for Herma context-shimming AI middleware (ta-amps-herma). |
 | [deploy/cloudflare/dashboard_and_permalinks.js](deploy/cloudflare/dashboard_and_permalinks.js) | The live dashboard (/dashboard, /q/dashboard), a contribution's page (/c/<id>) and a worker's page (/w/<id>), |
 | [deploy/cloudflare/demo_page.js](deploy/cloudflare/demo_page.js) | The interactive demo page for a Task Object (/q/demo/<key>) and the script it runs (/q/demo-runner.js): a step |
