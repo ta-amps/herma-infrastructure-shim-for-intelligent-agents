@@ -7428,7 +7428,9 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
     (effectiveRawFence === undefined || effectiveRawFence === null || String(effectiveRawFence).trim() === "") &&
     existingTask &&
     existingTask.state === "leased" &&
-    Boolean(preCleanedSubmitUuid)
+    Boolean(preCleanedSubmitUuid) &&
+    // A worker id can be guessed from a name, so it stands in for the fence only with the worker's own token.
+    (env?.OPEN_WORK_LIMITS !== "on" || Boolean(authCheck.tokenVerified))
   ) {
     if (existingTask.leased_by === agentId && existingTask.leased_worker_uuid === preCleanedSubmitUuid) {
       effectiveRawFence = curToken;
@@ -7588,7 +7590,8 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
         isSandboxRedactedFence &&
         existingTask.leased_by === agentId &&
         Boolean(preCleanedSubmitUuid) &&
-        existingTask.leased_worker_uuid === preCleanedSubmitUuid;
+        existingTask.leased_worker_uuid === preCleanedSubmitUuid &&
+        (env?.OPEN_WORK_LIMITS !== "on" || Boolean(authCheck.tokenVerified));
       const reqToken = canHealRedacted ? curToken : Number(effectiveRawFence);
       if (canHealRedacted) {
         redactedFencingTokenAutoHealed = true;
