@@ -1,6 +1,6 @@
 # Connecting Configurable Agentic Coding Harnesses
 
-Herma accepts model routing and configuration from coding harnesses and personal assistants with scoped `hmk_` credentials. Public deterministic previews require no key. Matched requests either receive shimmed rule, URI, and `[NOUN/VERB CONTEXT]` entries from Herma's database or receive a zero-token direct response (`action: "respond_directly"`).
+the Teleion Fabric shim accepts model routing and configuration from coding harnesses and personal assistants with scoped `hmk_` credentials. Public deterministic previews require no key. Matched requests either receive shimmed rule, URI, and `[NOUN/VERB CONTEXT]` entries from the Teleion Fabric shim's database or receive a zero-token direct response (`action: "respond_directly"`).
 
 ## 1. Issue a Key
 
@@ -12,15 +12,15 @@ Save the printed `hmk_<id>.<secret>` token in a `0600` secret file.
 
 This CLI issues a key in the selected local database. It does not provision the
 hosted Worker. For hosted access an operator issues a scoped key through the
-authenticated `/v1/admin/keys` route. A Tessera `tsk_` or `tan_` credential does
-not substitute for a Herma harness key. Client labels do not create authority.
+authenticated `/v1/admin/keys` route. A Teleion Fabric `tsk_` or `tan_` credential does
+not substitute for a the Teleion Fabric shim harness key. Client labels do not create authority.
 
 ## 2. OpenCode / OpenAI-Compatible Harnesses (`/v1/chat/completions`)
 
-Point your provider `baseURL` at `https://herma.ta-amps.workers.dev/v1` (or `http://127.0.0.1:7730/v1` locally) and attach:
+Point your provider `baseURL` at `https://shim.teleionlabs.com/v1` (or `http://127.0.0.1:7730/v1` locally) and attach:
 - `X-Herma-Key: hmk_<id>.<secret>`
 - `X-Herma-Harness: opencode`
-- `X-Upstream-Api-Key: <your-upstream-llm-key>` (or set `HERMA_UPSTREAM_API_KEY` on the Herma origin; direct-response rules answer without an upstream key)
+- `X-Upstream-Api-Key: <your-upstream-llm-key>` (or set `HERMA_UPSTREAM_API_KEY` on the Teleion Fabric shim origin; direct-response rules answer without an upstream key)
 
 For an explicitly selected Meta provider, set `X-Upstream-Base-Url` to
 `https://api.meta.ai/v1` with a caller-owned upstream key. The allowed hostname
@@ -31,18 +31,18 @@ origin. In Workers the generic proxy uses `UPSTREAM_LLM_URL` and
 
 ## 3. Muse Code / Responses-Compatible Harnesses (`/v1/responses`)
 
-Point the Responses endpoint at `https://herma.ta-amps.workers.dev/v1/responses` with `X-Herma-Harness: muse-code` and `--contributor-mode off`. Herma shims matched provisions + noun/verb context into `instructions` or returns a direct `response` object.
+Point the Responses endpoint at `https://shim.teleionlabs.com/v1/responses` with `X-Herma-Harness: muse-code` and `--contributor-mode off`. The shim handles matched provisions + noun/verb context into `instructions` or returns a direct `response` object.
 
 This describes the Responses wire adapter, not a full native provider-host
 replacement. Native Muse startup also requests `/muse-code/models`; a client that
 sets only a global base URL may fail before inference. The recorded native Muse
 fixture used Meta's provider path with a separate typed MCP connector. Full native
-Muse startup through Herma's generic proxy is not certified. Preserve ordinary
+Muse startup through the Teleion Fabric shim's generic proxy is not certified. Preserve ordinary
 client approvals and sandboxing; inspect actual native tool events.
 
 ## 4. Claude Code (`/v1/messages`)
 
-Set `ANTHROPIC_BASE_URL=https://herma.ta-amps.workers.dev` and pass `X-Herma-Key` + `X-Herma-Harness: claude-code` via custom headers. Herma shims matched provisions + noun/verb context into the top-level `system` prompt or returns a direct Anthropic `message` object.
+Set `ANTHROPIC_BASE_URL=https://shim.teleionlabs.com` and pass `X-Herma-Key` + `X-Herma-Harness: claude-code` via custom headers. The shim handles matched provisions + noun/verb context into the top-level `system` prompt or returns a direct Anthropic `message` object.
 
 ## Credential and client requirements
 

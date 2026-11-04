@@ -8,12 +8,12 @@ Fresh builds matched the deployed Worker executable exactly.
 
 85 Python tests and 49 actual Worker checks passed, including strict decision types and offline no-egress controls.
 
-The installed dependency now pins merged Tessera. Context injection is optional and does not grant authority. Explicit typed conversations and configured model-assisted routing retain caller scope, provider policy and budget controls; they do not become a mandatory model review stage.
+The installed dependency now pins merged Teleion Fabric. Context injection is optional and does not grant authority. Explicit typed conversations and configured model-assisted routing retain caller scope, provider policy and budget controls; they do not become a mandatory model review stage.
 
 Follow the [worker-first policy](WORKER-FIRST-EXECUTION.md): independently
 schedulable reasoning is a claimed verb; inputs, contracts, artifacts and evidence
 are scoped nouns. Workers reason and self-check. Authentication, leases, CAS,
-types and receipts stay deterministic. Server inference is an explicitly
+types and records stay deterministic. Server inference is an explicitly
 configured, scoped and bounded exception. Missing capacity or invalid input does
 not enable it automatically.
 
@@ -23,12 +23,12 @@ certification.
 
 ## Earlier handoff
 
-> Herma: context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic Task Object, Task, and URI context from a user-configured database before LLM execution.
+> the Teleion Fabric shim: context-shimming AI middleware for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic Task Object, Task, and URI context from a user-configured database before LLM execution.
 
-- **Built & Verified (`v0.1.0`)**:
+- **Built & Checked (`v0.1.0`)**:
   - Strict Pydantic v2 schemas (`Provision` with `action: "shim_context" | "respond_directly"` and `context_refs`, versioned `ContextEntry` for `noun`/`verb`/`detail` records, `WorkingEntity`, `RuleOutcomeRecord`, `InsightsResponse`, `DryRunResponse`, `InjectionReceipt`).
   - Multi-caller isolation & privilege lockdown: `caller_scope = key:<key_id>` composite primary keys across `provisions`, `context_entries`, `injection_receipts`, `working_entities`, and `rule_outcomes`; `403 builtin_protected` on `system_builtin` IDs; `403 admin_required` on `/v1/admin/keys`; single-statement atomic SQL CAS (`409 version_conflict`); refusal of any model ID containing `contributor`.
-  - Layer-1 Governance Lens & SHA-256 blob verification on Tessera and remote sync (`status:quarantined` blocked, cross-surface `status:verified` required, `visibility_scope` / `allowed_surfaces` / `X-Herma-Cohort` enforced).
+  - Layer-1 Governance Lens & SHA-256 blob verification on Teleion Fabric and remote sync (`status:quarantined` blocked, cross-surface `status:verified` required, `visibility_scope` / `allowed_surfaces` / `X-Herma-Cohort` enforced).
   - Deterministic Anti-RAG entity memory (`GET /v1/memory`), automatic Turn `N` `error_signature` -> Turn `N-1` `retry_error` outcome telemetry (`POST /v1/outcomes`), and reviewable draft `candidate_provisions` synthesis (`GET /v1/insights`).
   - Responsive SVG-branded `/` and `/connect` pages with read-only interactive `POST /api/preview` (`persisted: false`), stateless JSON-RPC 2.0 `POST /mcp`, `/.well-known/agent-card.json`, `/llms.txt`, `/llms-full.txt`, `/robots.txt`, `/favicon.svg`, and `/healthz` across both Python FastAPI and Cloudflare Worker + D1.
 - **Next Extensions**:

@@ -1,72 +1,72 @@
 # Design decisions and measured limits
 
-Herma exists to supply the right small contract at the point of use. A longer
+the Teleion Fabric shim exists to supply the right small contract at the point of use. A longer
 prompt can provide missing information, but it cannot enforce permissions, make
 an invalid payload valid, or prove that a tool executed. These responsibilities
 stay separate so another harness can reuse the same workflow.
 
 | Decision | Reason | Tradeoff |
 | --- | --- | --- |
-| Tessera owns shared nouns and verbs | One authority for leases, CAS, grants and task receipts | Availability and projection freshness must be handled explicitly |
+| Teleion Fabric owns shared nouns and verbs | One authority for leases, CAS, grants and task records | Availability and projection freshness must be handled explicitly |
 | Context is caller-scoped | A custom rule must not alter another caller's request | Operators must provision a separate harness credential |
 | One typed proposal per conversation turn | Invalid types are rejected before any work action | The client must execute and report the result |
 | Deterministic checks retain authority | Models can suggest actions without minting permissions | Semantic correctness still needs appropriate tests |
-| Provider secrets stay on Herma | Server reasoning is possible without distributing operator keys | Paid access requires scoped authentication and budgets |
+| Provider secrets stay on the Teleion Fabric shim | Server reasoning is possible without distributing operator keys | Paid access requires scoped authentication and budgets |
 | Explicit request ID and version | Lost responses can be replayed without paying twice | Changed input or concurrent turns require conflict handling |
 
 A noun is versioned information: a contract, context entry, observation, artifact
-or receipt. A verb is work: inputs, expected output, permissions, dependency,
+or record. A verb is work: inputs, expected output, permissions, dependency,
 lease and completion evidence. Category names organize these resources; they do
-not certify that their contents are correct. Herma conversation state is not a
-second work queue. The client uses its own Tessera identity to perform work.
+not certify that their contents are correct. The Teleion Fabric shim conversation state is not a
+second work queue. The client uses its own Teleion Fabric identity to perform work.
 
 Workers should test and check their own work first. Server checks of schemas,
-permissions, content hashes and receipt relationships are deterministic. Work
+permissions, content hashes and record relationships are deterministic. Work
 needing additional judgment becomes a review verb for a capable independent
 agent, with the relevant evidence attached. Independent review remains necessary
 for consequential shared-artifact publication. This is not a requirement to call
 a server-side LLM on each task or turn. Server-funded LLM review is an exceptional
-bounded fallback, not the default work-completion path. Herma currently proposes
-and clarifies; it does not automatically grade or approve Tessera completions.
+bounded fallback, not the default work-completion path. The Teleion Fabric shim currently proposes
+and clarifies; it does not automatically grade or approve Teleion Fabric completions.
 
 ## Default execution belongs to workers
 
 Most agentic reasoning should happen inside a worker's configured harness while
-it holds a bounded Tessera verb. The verb references versioned input, contract,
-artifact and evidence nouns. Herma is optional: configured rules can supply a
+it holds a bounded Teleion Fabric verb. The verb references versioned input, contract,
+artifact and evidence nouns. The Teleion Fabric shim is optional: configured rules can supply a
 small permitted contract or context entry before the worker's own model call.
 Reading a noun, calculating a hash, checking a type or acquiring a lease does not
 need a model turn. The typed conversation endpoint is an explicit exception path,
 not the default router for every work action.
 
-| Work | Normal executor | Herma's role |
+| Work | Normal executor | the Teleion Fabric shim's role |
 | --- | --- | --- |
 | Clarify or decompose a brief | Authorized worker; park or create bounded dependent verbs | Supply configured context and the missing-field contract |
-| Research, coding and self-check | Worker harness and deterministic local tools | Inject only scoped, relevant nouns and verified reusable context |
+| Research, coding and self-check | Worker harness and deterministic local tools | Inject only scoped, relevant nouns and checked reusable context |
 | Extra judgment before shared publication | Separate capable reviewer claiming its review verb | Optional permitted context; no automatic approval |
 | Private infrastructure diagnosis | A specifically authorized private worker | Scoped context; server reasoning only when explicitly selected and budgeted |
-| Credential, CAS, lease or receipt acceptance | Deterministic fabric handlers | No authority override or model judgment |
+| Credential, CAS, lease or record acceptance | Deterministic fabric handlers | No authority override or model judgment |
 
 This is an orchestration pattern on existing interfaces, not a new claim that
 every provider or external action has an implemented adapter. A worker must name
 its required capabilities and effect class, validate its output and preserve
-actual failure/receipt evidence. A server exception needs a concrete reason,
+actual failure/record evidence. A server exception needs a concrete reason,
 configured credentials and budget; it must not silently follow every retry.
 
-`visibility_scope=private` means owner-key-only in Tessera. A team-private pool
+`visibility_scope=private` means owner-key-only in Teleion Fabric. A team-private pool
 uses a dedicated namespace plus authenticated surface-only or allowlisted access
 and explicit grants to separate keys. A shared account, category or private tag
-does not grant a worker access. Herma's `hmk_` scope remains separate from Tessera
+does not grant a worker access. The Teleion Fabric shim's `hmk_` scope remains separate from Teleion Fabric
 authority, and shimming cannot create either permission. See the central
 [work routing contract](https://github.com/ta-amps/tessera-infrastructure-work-and-storage-engine/blob/main/docs/work-routing.md).
 
 ## Observations, not a reliability benchmark
 
-The following observations were recorded on 2026-10-28. The second hosted provider they used was retired on 2026-11-01; Herma now routes to Muse models through the Meta API at standard tier. Local regression commands
+The following observations were recorded on 2026-10-28. The second hosted provider they used was retired on 2026-11-01; the Teleion Fabric shim now routes to Muse models through the Meta API at standard tier. Local regression commands
 are `make check` and `npm run check`; provider checks require an authorized live
 credential and consume the operator's configured allowance. They are not run in CI.
 The [public observation summary](evidence/conversation-observations.json) contains
-reported usage and receipt hashes without credentials or private transcripts.
+reported usage and record hashes without credentials or private transcripts.
 
 | Attempt | Observed outcome | What it establishes |
 | --- | --- | --- |
@@ -78,7 +78,7 @@ reported usage and receipt hashes without credentials or private transcripts.
 | Initial Meta Spark tool probe with 512 output tokens | Length finish, no usable tool call | Reasoning consumed almost all the output allowance |
 | Meta Wonder typed tool probe | Valid typed call | A different model worked for one case, not every harness |
 | Initial live conversation on the retired provider | Invalid proposal; explicit follow-up recovered | Retain the failure and use precise missing-field feedback |
-| Fresh deployed Herma turns on Meta and the retired provider | Both returned the exact typed object; identical requests replayed | Installed server secrets, validation and idempotent response replay worked |
+| Fresh deployed the Teleion Fabric shim turns on Meta and the retired provider | Both returned the exact typed object; identical requests replayed | Installed server secrets, validation and idempotent response replay worked |
 
 The last Meta turn reported 1,042 input and 482 output tokens. The retired provider
 reported 881 input and 1,200 output tokens. The Meta uncached tariff estimate is $0.003351,
@@ -90,12 +90,12 @@ These experiments changed catalog size, schema and transport together, so they
 are not a controlled causal estimate of a prompt's benefit. No universal success
 rate, complete personal-assistant compatibility or quality improvement is claimed.
 The hosted OpenCode run is summarized in
-[the native observation receipt](evidence/native-hosted-observation.json). Its two
+[the native observation record](evidence/native-hosted-observation.json). Its two
 earlier attempts stopped before inference on test-recorder and overly literal
 resolved-policy comparison bugs. They were fixed with offline controls without
 loosening the client permissions. Native keyed and native Muse hosted full loops,
 repeated-run reliability, Grokbot and other personal-assistant clients remain
-separate validation work. A passing Herma proposal still has `executed:false`.
+separate validation work. A passing the Teleion Fabric shim proposal still has `executed:false`.
 
 ## Remaining operational differences
 
@@ -114,7 +114,7 @@ Do not interpret public deterministic preview access as free paid inference.
 The default recovery sequence is classify the failure, supply missing fields,
 select less context, split a larger verb if needed, then make one bounded profile
 adjustment. Record the original input, environment, model, actual calls, schema
-errors and receipt. If progress stops, park the work with a concrete question.
+errors and record. If progress stops, park the work with a concrete question.
 More retries or encouragement do not replace a valid contract.
 
 ## Configured shim reasoning and offline boundaries

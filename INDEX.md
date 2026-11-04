@@ -7,12 +7,12 @@ Every file in this repo with a one-line description taken from the file itself. 
 | File | What it is |
 |---|---|
 | [.gitignore](.gitignore) |  |
-| [AGENTS.md](AGENTS.md) | AGENTS.md -- Herma Hard Rules |
+| [AGENTS.md](AGENTS.md) | AGENTS.md -- the Teleion Fabric shim Hard Rules |
 | [CHANGELOG.md](CHANGELOG.md) | Changelog |
 | [Dockerfile](Dockerfile) | Reproducible standalone container image for Herma (Python FastAPI + SQLite WAL). |
 | [LICENSE](LICENSE) | MIT License |
 | [Makefile](Makefile) | Herma. |
-| [README.md](README.md) | Herma -- the < 2 ms context & capability shim for any agent |
+| [README.md](README.md) | Teleion Fabric shim: context and capability checks for any agent |
 | [architecture.json](architecture.json) | herma |
 | [package.json](package.json) | herma-worker |
 | [pyproject.toml](pyproject.toml) |  |
@@ -257,6 +257,6 @@ Every file in this repo with a one-line description taken from the file itself. 
 
 | File | What it is |
 |---|---|
-| [training/README.md](training/README.md) | Herma LoRA as Parametric Memory (training/) |
+| [training/README.md](training/README.md) | the Teleion Fabric shim LoRA as Parametric Memory (training/) |
 | [training/requirements-train.txt](training/requirements-train.txt) | Reproducible PEFT LoRA & QLoRA training dependencies for Herma |
 | [training/shim-router-lora-spec.json](training/shim-router-lora-spec.json) | JSON object: spec_id, primitive_kind, plain_language_kind, status, as_of, summary |
