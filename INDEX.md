@@ -183,7 +183,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
 | [scripts/repo_rows_refresh.py](scripts/repo_rows_refresh.py) | Build the rows behind GET /q/repos: feed exports plus a fresh scan of GitHub's public search, as SQL for D1. |
 
-## test/ (30)
+## test/ (31)
 
 | File | What it is |
 |---|---|
@@ -194,6 +194,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/claim_token.test.js](test/claim_token.test.js) |  |
 | [test/contributor_printout.test.js](test/contributor_printout.test.js) |  |
 | [test/conversation.test.js](test/conversation.test.js) |  |
+| [test/forgiving_agents.test.js](test/forgiving_agents.test.js) | A no-key agent's call goes through when its meaning is clear, and the reply's warnings say what was filled in. |
 | [test/herma_v63_boundaries_and_chat.test.js](test/herma_v63_boundaries_and_chat.test.js) |  |
 | [test/home_totals.test.js](test/home_totals.test.js) |  |
 | [test/leaderboard.test.js](test/leaderboard.test.js) |  |

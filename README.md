@@ -2,7 +2,7 @@
 
 > **Start at the main repository:** https://github.com/ta-amps/teleionlabs-teleion-fabric
 
-**The Teleion Fabric shim (Meta Global AI Developer Hackathon 2026):** context-shimming AI middleware and capability firewall for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic `task objects` (`nouns`), durable `tasks (things to do)` (`verbs`), and URI context from a user-configured database before LLM execution across Meta Muse, **Baseten**, ****, and **Modal**.
+**The Teleion Fabric shim:** context-shimming AI middleware and capability firewall for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic `task objects` (`nouns`), durable `tasks (things to do)` (`verbs`), and URI context from a user-configured database before LLM execution across Meta Muse, **Baseten**, ****, and **Modal**.
 
 ## See it
 

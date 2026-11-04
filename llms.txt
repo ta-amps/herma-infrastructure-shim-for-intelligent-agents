@@ -1,6 +1,6 @@
 # Teleion Fabric shim: context and capability checks for any agent
 
-> The Teleion Fabric shim (Meta Global AI Developer Hackathon 2026): context-shimming AI middleware and capability firewall for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic task objects (nouns), durable tasks (things to do) (verbs), and URI context from a user-configured database before LLM execution across Meta Mu
+> The Teleion Fabric shim: context-shimming AI middleware and capability firewall for configurable coding harnesses -- intercepts requests via keyword, semantic, or micromodel rules to respond directly or shim atomic task objects (nouns), durable tasks (things to do) (verbs), and URI context from a user-configured database before LLM execution across Meta Muse, Baseten, , and Modal.
 
 ## Start here
 - [README.md](https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/main/README.md): what this is and how to run it

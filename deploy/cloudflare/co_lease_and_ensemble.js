@@ -668,23 +668,32 @@ export async function handleLeaseHeartbeatRequest(
 
   let params = Object.fromEntries(url.searchParams.entries());
   if (method === "POST") {
-    try {
-      const body = await request.json();
-      params = { ...params, ...(body || {}) };
-    } catch {
-      return {
-        status: CO_LEASE_ENSEMBLE_GRID.http_bad_request,
-        body: { ok: false, code: "invalid_json" },
-      };
-    }
+    // The body is optional: query values stand when it is empty or unreadable.
+    params = { ...params, ...(await request.json().catch(() => null) || {}) };
   }
 
   const taskId = String(params.task_id || params.id || "").trim();
-  const cleanAgent = gatewayOps?.cleanAgentId
-    ? gatewayOps.cleanAgentId(params.agent_id || params.agent || "")
-    : String(params.agent_id || params.agent || "").trim();
+  const namedAgent = params.agent_id || params.agent || params.worker || params.worker_id || "";
   const workerUuid = String(params.worker_uuid || params.uuid || "").trim();
-  const leaseEpoch = Number(params.lease_epoch ?? params.fencing_token ?? 0);
+  const warnings = [];
+  const leasedRow = taskId && (!namedAgent || !Number(params.lease_epoch ?? params.fencing_token ?? params.fence ?? 0))
+    ? await db.prepare("SELECT * FROM herma_durable_queue WHERE task_id = ? LIMIT 1").bind(taskId).first()
+    : null;
+  // A worker id that holds the lease names its worker, when the name was left out.
+  const agentFromLease = !namedAgent && workerUuid && leasedRow?.state === "leased" && leasedRow.leased_worker_uuid === workerUuid ? leasedRow.leased_by : "";
+  if (agentFromLease) warnings.push("no agent_id was sent; used the worker id's own lease");
+  const cleanAgent = gatewayOps?.cleanAgentId
+    ? gatewayOps.cleanAgentId(namedAgent || agentFromLease)
+    : String(namedAgent || agentFromLease).trim();
+  let leaseEpoch = Number(params.lease_epoch ?? params.fencing_token ?? params.fence ?? 0);
+  // No usable epoch: only the worker's own, unambiguous lease stands in for it.
+  if ((!Number.isInteger(leaseEpoch) || leaseEpoch <= 0) && cleanAgent && leasedRow?.state === "leased" && gatewayOps?.isOwnLease) {
+    const presented = String(params.worker_token || request.headers.get("x-herma-worker-token") || "").trim();
+    if (await gatewayOps.isOwnLease(leasedRow, { agentId: cleanAgent, workerUuid, workerToken: presented, infraAllowed })) {
+      leaseEpoch = Number(leasedRow.fencing_token);
+      warnings.push("no usable lease_epoch was sent; used this worker's own current lease");
+    }
+  }
   const progressNote = String(params.progress_note || params.note || "")
     .trim()
     .slice(0, CO_LEASE_ENSEMBLE_GRID.progress_note_max_len);
@@ -805,6 +814,7 @@ export async function handleLeaseHeartbeatRequest(
       heartbeat_at: nowIso,
       expires_at: newExpiresIso,
       progress_note: progressNote || null,
+      ...(warnings.length ? { warnings } : {}),
     },
   };
 }

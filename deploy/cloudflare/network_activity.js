@@ -361,11 +361,7 @@ let addressMinute = 0;
 let addressSalt = 0;
 
 function secondsToWait(request, env, nowMs) {
-  const hasExplicitLimit =
-    env?.NETWORK_READS_PER_MINUTE !== undefined &&
-    env?.NETWORK_READS_PER_MINUTE !== null &&
-    String(env.NETWORK_READS_PER_MINUTE).trim() !== "";
-  if (isOpenFreeWindow(env, nowMs) && !hasExplicitLimit) return 0;
+  if (isOpenFreeWindow(env, nowMs)) return 0;
   const address = String(request.headers.get("cf-connecting-ip") || "").trim();
   if (!address) return 0;
   const limit = Math.max(1, Number(env?.NETWORK_READS_PER_MINUTE) || NETWORK_GRID.reads_per_minute_per_address);

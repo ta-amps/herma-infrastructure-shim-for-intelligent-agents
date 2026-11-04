@@ -266,8 +266,11 @@ describe("GET /q/network", () => {
     for (let i = 0; i < 4; i += 1) expect((await callWith("/q/network", capped, { headers: address })).status).toBe(200);
   });
 
-  it("has its own generous cap per address, and does not limit a caller that has no address", async () => {
-    const small = { NETWORK_READS_PER_MINUTE: "3" };
+  it("after the free window has its own generous cap per address, and does not limit a caller that has no address", async () => {
+    const free = { NETWORK_READS_PER_MINUTE: "1" };
+    const one = { "cf-connecting-ip": "198.51.100.8" };
+    for (let i = 0; i < 3; i += 1) expect((await callWith("/q/network", free, { headers: one })).status).toBe(200); // no cap while access is free
+    const small = { NETWORK_READS_PER_MINUTE: "3", HERMA_FREE_WINDOW_NOW_ISO: "2027-01-01T00:00:05-05:00" };
     const address = { "cf-connecting-ip": "198.51.100.9" };
     const codes = [];
     for (let i = 0; i < 5; i += 1) codes.push((await callWith("/q/network", small, { headers: address })).status);
