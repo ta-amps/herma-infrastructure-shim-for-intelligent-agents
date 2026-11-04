@@ -2476,7 +2476,7 @@ export async function withoutLeaseDetails(request, response, env) {
   if (body && body.claimed_task === true) return new Response(text0, { status: response.status, statusText: response.statusText, headers: response.headers });
   const clean = dropLeaseFields(body);
   if (typeof clean.detail === "string") {
-    clean.detail = clean.detail.replace(/ \(expected=\d+\)/, "").replace(/is leased by '[^']*', not '[^']*'/, "is held by another worker");
+    clean.detail = clean.detail.replace(/ \(expected=\d+\)/, "").replace(/fencing_token \(\d+\)/, "fencing_token").replace(/is leased by '[^']*', not '[^']*'/, "is held by another worker");
   }
   const headers = new Headers(response.headers);
   headers.delete("content-length");

@@ -4953,9 +4953,8 @@ async function evaluateFreeAccessWindowGuardrail(request, url, env, db, { infraA
     };
   }
 
-  // Zero abuse/rate-limit gates during the open free window unless HERMA_STRICT_AUTH or explicit test cap FREE_ACCESS_UNAUTH_RPM_CAP is set
-  const explicitRpmOverride = env?.FREE_ACCESS_UNAUTH_RPM_CAP !== undefined && env?.FREE_ACCESS_UNAUTH_RPM_CAP !== null && String(env.FREE_ACCESS_UNAUTH_RPM_CAP).trim() !== "";
-  if (config.strict_auth_mode || explicitRpmOverride) {
+  // Zero abuse/rate-limit gates during the open free window, unless HERMA_STRICT_AUTH is set
+  if (config.strict_auth_mode) {
     const clientIp = String(request.headers.get("cf-connecting-ip") || "").trim();
     if (clientIp) {
       const bucketIdx = Math.floor(Date.now() / QUEUE_GATEWAY_GRID.free_access_rpm_window_ms);
@@ -6545,7 +6544,12 @@ async function releaseLeasedTask(
     /^\[?REDACTED(?:_TOKEN)?\]?$|^\*{3,}$|^<redacted>$/i.test(rawEpochStr) &&
     Boolean(cleanUuid) &&
     existing.leased_worker_uuid === cleanUuid;
-  const parsedEpoch = isRedactedHolder ? curFence : Number(rawEpochStr);
+  const epochUnreadable = !isRedactedHolder && (rawEpochStr === "" || !Number.isFinite(Number(rawEpochStr)));
+  const ownLeaseNoEpoch =
+    epochUnreadable &&
+    !infraAllowed &&
+    (await isUnambiguouslyOwnLease(db, existing, { agentId: cleanAgent, workerUuid: cleanUuid, tokenVerified: Boolean(authCheck.tokenVerified) }));
+  const parsedEpoch = isRedactedHolder || ownLeaseNoEpoch ? curFence : Number(rawEpochStr);
   if (!infraAllowed && (!Number.isInteger(parsedEpoch) || parsedEpoch <= 0 || parsedEpoch !== curFence)) {
     return {
       conflict: true,
@@ -6597,6 +6601,7 @@ async function releaseLeasedTask(
     );
   }
   return {
+    ...(ownLeaseNoEpoch ? { warnings: ["no usable lease_epoch was sent; used this worker's own current lease"] } : {}),
     ok: true,
     released: wasReleased,
     task_id: cleanTid,
@@ -7032,6 +7037,25 @@ async function storeReasoningSuggestionTaskObject(
   };
 }
 
+const REDACTED_FENCE_RE = /^\[?REDACTED(?:_TOKEN)?\]?$|^\*{3,}$|^<redacted>$/i;
+
+// True only when the lease can be nobody else's: a name that isn't shared, the worker id if one was sent, and no second
+// active lease for this name on the Task. A name alone won't do when that worker has a token and didn't show it.
+async function isUnambiguouslyOwnLease(db, task, { agentId, workerUuid, tokenVerified = false }) {
+  if (!agentId || task.leased_by !== agentId || GENERIC_EPHEMERAL_AGENTS.has(String(agentId).toLowerCase())) return false;
+  const leaseUuid = String(task.leased_worker_uuid || "");
+  if (workerUuid && leaseUuid !== workerUuid) return false;
+  if (!workerUuid && !tokenVerified && leaseUuid) {
+    const holder = await db.prepare("SELECT worker_token_sha256 FROM herma_worker_registry WHERE worker_uuid = ?").bind(leaseUuid).first();
+    if (String(holder?.worker_token_sha256 || "").trim()) return false;
+  }
+  const others = await db
+    .prepare("SELECT COUNT(*) AS n FROM herma_task_co_leases WHERE task_id = ? AND agent_id = ? AND state = 'active' AND lease_epoch != ?")
+    .bind(task.task_id, agentId, Number(task.fencing_token || 0))
+    .first();
+  return Number(others?.n || 0) === 0;
+}
+
 async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed, payload, reqMeta = {}) {
   const agentId = cleanAgentId(
     payload.agent_id || payload.agent || payload.worker || payload.worker_id || "volunteer-agent"
@@ -7084,6 +7108,14 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       "completed task branch"
   ).slice(0, QUEUE_GATEWAY_GRID.summary_max_len);
   const nowIso = new Date().toISOString();
+  // What this call filled in or cut short; the reply says so.
+  const submitWarnings = [];
+  const summaryFull = String(
+    payload.summary || payload.result_summary || payload.description || payload.desc || payload.completed_branch || payload.title || altSummaryText || ""
+  );
+  if (summaryFull.length > QUEUE_GATEWAY_GRID.summary_max_len) {
+    submitWarnings.push(`the summary was cut to ${QUEUE_GATEWAY_GRID.summary_max_len} characters`);
+  }
 
   const existingTask =
     taskId !== "self_seed"
@@ -7105,7 +7137,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
     payload.objects ||
     payload.nouns ||
     (payload.task_object && typeof payload.task_object === "object" ? [payload.task_object] : []);
-  // One object, or a map of key to object, is kept like a list; anything else is refused, never dropped.
+  // One object, or a map of key to object, is kept like a list; text or a number is kept as one object's value, never dropped.
   let objectsList = rawObjectsInput;
   if (rawObjectsInput && typeof rawObjectsInput === "object" && !Array.isArray(rawObjectsInput)) {
     const looksLikeOne = ["object_key", "key", "summary", "payload", "category"].some((k) => k in rawObjectsInput);
@@ -7117,15 +7149,19 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
             : { object_key: key, payload: { value } }
         );
   } else if (rawObjectsInput && !Array.isArray(rawObjectsInput)) {
-    return {
-      forbidden: true,
-      code: "invalid_task_objects",
-      detail: "task_objects must be a list, one object, or a map of key to object.",
-    };
+    objectsList = [rawObjectsInput];
+    submitWarnings.push("task_objects was not a list or an object; kept its value as one object");
   }
   const explicitRawObjects = Array.isArray(objectsList)
-    ? objectsList.slice(0, QUEUE_GATEWAY_GRID.max_objects_per_submit)
+    ? objectsList.slice(0, QUEUE_GATEWAY_GRID.max_objects_per_submit).map((item) =>
+        item && typeof item === "object" && !Array.isArray(item)
+          ? item
+          : { summary: String(typeof item === "string" ? item : JSON.stringify(item) ?? "").slice(0, QUEUE_GATEWAY_GRID.summary_max_len), payload: { value: item } }
+      )
     : [];
+  if (Array.isArray(objectsList) && objectsList.length > QUEUE_GATEWAY_GRID.max_objects_per_submit) {
+    submitWarnings.push(`kept the first ${QUEUE_GATEWAY_GRID.max_objects_per_submit} of ${objectsList.length} task_objects; send the rest in another call`);
+  }
 
   const enqueueDirectPrompt =
     payload.prompt ||
@@ -7145,9 +7181,13 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
     (reqMeta.action === "enqueue" && enqueueDirectPrompt
       ? [{ ...payload, prompt: payload.prompt || enqueueDirectPrompt }]
       : []);
-  const rawVerbs = Array.isArray(rawVerbsCandidate)
-    ? rawVerbsCandidate.slice(0, QUEUE_GATEWAY_GRID.max_verbs_per_submit)
-    : [];
+  // One follow-up sent on its own is kept like a list of one.
+  const verbsList = Array.isArray(rawVerbsCandidate) ? rawVerbsCandidate : rawVerbsCandidate ? [rawVerbsCandidate] : [];
+  if (!Array.isArray(rawVerbsCandidate) && rawVerbsCandidate) submitWarnings.push("follow-up tasks were not a list; kept as one");
+  if (verbsList.length > QUEUE_GATEWAY_GRID.max_verbs_per_submit) {
+    submitWarnings.push(`kept the first ${QUEUE_GATEWAY_GRID.max_verbs_per_submit} of ${verbsList.length} follow-up tasks; send the rest in another call`);
+  }
+  const rawVerbs = verbsList.slice(0, QUEUE_GATEWAY_GRID.max_verbs_per_submit);
 
   const rawObjects =
     explicitRawObjects.length > 0
@@ -7197,10 +7237,11 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       rawVerbs,
     })
   );
-  const idempotencyScopeKey = explicitIdemKey
+  const autoIdemScope = async (fence) => `idem:${agentId}:auto:${await sha256HexGateway(`${agentId}:${taskId}:${fence}:${canonicalSubmissionDigest}`)}`;
+  let idempotencyScopeKey = explicitIdemKey
     ? `idem:${agentId}:explicit:${explicitIdemKey}`
     : taskId !== "self_seed" && fenceStrForDigest !== ""
-      ? `idem:${agentId}:auto:${await sha256HexGateway(`${agentId}:${taskId}:${fenceStrForDigest}:${canonicalSubmissionDigest}`)}`
+      ? await autoIdemScope(fenceStrForDigest)
       : "";
 
   if (idempotencyScopeKey) {
@@ -7406,10 +7447,49 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
     }
   }
 
+  // A POST that leaves out the fence, or sends one that isn't a number, goes through when this is clearly the worker's own lease.
+  const fenceUnreadable =
+    effectiveRawFence === undefined ||
+    effectiveRawFence === null ||
+    String(effectiveRawFence).trim() === "" ||
+    (!REDACTED_FENCE_RE.test(String(effectiveRawFence).trim()) && !Number.isFinite(Number(effectiveRawFence)));
+  if (fenceUnreadable && reqMeta.transportMethod !== "GET" && existingTask && existingTask.state === "leased") {
+    const ownLease = await isUnambiguouslyOwnLease(db, existingTask, {
+      agentId,
+      workerUuid: preCleanedSubmitUuid,
+      tokenVerified: Boolean(authCheck.tokenVerified),
+    });
+    if (ownLease) {
+      effectiveRawFence = curToken;
+      submitWarnings.push("no usable fencing_token was sent; used this worker's own current lease");
+      if (!idempotencyScopeKey) idempotencyScopeKey = await autoIdemScope(String(curToken));
+    }
+  } else if (
+    fenceUnreadable &&
+    reqMeta.transportMethod !== "GET" &&
+    existingTask &&
+    existingTask.state === "done" &&
+    existingTask.completed_by === agentId &&
+    !explicitIdemKey
+  ) {
+    // The same submit sent again after its answer was lost replays that answer.
+    const priorOwn = await db
+      .prepare("SELECT response_json FROM herma_submission_idempotency WHERE idempotency_scope_key = ? AND agent_id = ? LIMIT 1")
+      .bind(await autoIdemScope(String(curToken)), agentId)
+      .first();
+    if (priorOwn?.response_json) {
+      try {
+        return { ...JSON.parse(priorOwn.response_json), idempotent_replay: true };
+      } catch {
+        // proceed if corrupted
+      }
+    }
+  }
+
   const isSandboxRedactedFence =
     effectiveRawFence !== undefined &&
     effectiveRawFence !== null &&
-    /^\[?REDACTED(?:_TOKEN)?\]?$|^\*{3,}$|^<redacted>$/i.test(String(effectiveRawFence).trim());
+    REDACTED_FENCE_RE.test(String(effectiveRawFence).trim());
   if (taskId !== "self_seed" && existingTask) {
     if (existingTask.state === "done") {
       const reqTokenForDone =
@@ -8790,6 +8870,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
     idempotent_replay: false,
     resolution_role: resolutionRole,
     salvaged_concurrent_twin_attempt: salvagedConcurrentTwinAttempt,
+    ...(submitWarnings.length ? { warnings: submitWarnings } : {}),
     ...(redactedFencingTokenAutoHealed ? { redacted_fencing_token_auto_healed: true } : {}),
     ...(browserGetFenceAutoResolved ? { browser_get_fence_auto_resolved: true } : {}),
     ...(ensembleGroup ? { ensemble_group: ensembleGroup } : {}),
@@ -9230,6 +9311,10 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
   }
 
   const gatewayOps = {
+    isOwnLease: async (task, { agentId, workerUuid, workerToken, infraAllowed: infra }) => {
+      const auth = await verifyWorkerUuidAccess(db, { agentId, workerUuid, workerToken, infraAllowed: infra, env });
+      return auth.ok && isUnambiguouslyOwnLease(db, task, { agentId, workerUuid: cleanWorkerUuid(workerUuid), tokenVerified: Boolean(auth.tokenVerified) });
+    },
     scrubSensitiveText,
     cleanAgentId,
     sanitizeObjectKeyPreservingSuffix,
@@ -9940,12 +10025,8 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
   if (action === "onboard" || action === "register") {
     let params = Object.fromEntries(url.searchParams.entries());
     if (method === "POST") {
-      try {
-        const body = await request.json();
-        params = { ...params, ...(body || {}) };
-      } catch {
-        return sendJson({ ok: false, code: "invalid_json" }, QUEUE_GATEWAY_GRID.http_bad_request);
-      }
+      // The body is optional here: query values stand when it is empty or unreadable.
+      params = { ...params, ...(await request.json().catch(() => null) || {}) };
     } else if (method !== "GET" && method !== "HEAD") {
       return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
@@ -10053,12 +10134,8 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
   if (action === "seeds") {
     let params = Object.fromEntries(url.searchParams.entries());
     if (method === "POST") {
-      try {
-        const body = await request.json();
-        params = { ...params, ...(body || {}) };
-      } catch {
-        return sendJson({ ok: false, code: "invalid_json" }, QUEUE_GATEWAY_GRID.http_bad_request);
-      }
+      // The body is optional here: query values stand when it is empty or unreadable.
+      params = { ...params, ...(await request.json().catch(() => null) || {}) };
     } else if (method !== "GET" && method !== "HEAD") {
       return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
@@ -10238,12 +10315,8 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         lease_epoch: segments[4] || params.lease_epoch || params.fencing_token || "",
       };
     } else if (method === "POST") {
-      try {
-        const body = await request.json();
-        params = { ...params, ...(body || {}) };
-      } catch {
-        return sendJson({ ok: false, code: "invalid_json" }, QUEUE_GATEWAY_GRID.http_bad_request);
-      }
+      // The body is optional here: query values stand when it is empty or unreadable.
+      params = { ...params, ...(await request.json().catch(() => null) || {}) };
     } else {
       return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
@@ -10409,11 +10482,16 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       return sendText(formatClaimBanner(publicUrl, claimOut, pulse));
     }
     if (method === "POST") {
+      // A claim needs nothing from its body: an empty or unreadable one is a plain claim.
       let body = {};
+      let unreadableBody = false;
       try {
-        body = await request.json();
+        const text = await request.text();
+        const parsed = text.trim() ? JSON.parse(text) : {};
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) body = parsed;
+        else unreadableBody = true;
       } catch {
-        return sendJson({ ok: false, code: "invalid_json" }, QUEUE_GATEWAY_GRID.http_bad_request);
+        unreadableBody = true;
       }
       const agentId = cleanAgentId(body.agent_id || body.agent || body.worker || "volunteer-agent");
       traceCtx.agent_id = agentId;
@@ -10537,6 +10615,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         ...(briefClaims
             ? { bilateral_guidance: { worker_profile: claimOut.bilateral_guidance?.worker_profile } }
             : { worker_toolkit_guidance: workerToolkitGuidance, bilateral_guidance: claimOut.bilateral_guidance, pulse }),
+        ...(unreadableBody ? { warnings: ["the request body wasn't a JSON object; treated it as a plain claim"] } : {}),
       });
     }
     return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);

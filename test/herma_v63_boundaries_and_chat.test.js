@@ -58,12 +58,12 @@ describe("Herma v6.3 Q1-Q10 Boundary Hardening, Plain-Language Dashboard & Conve
     const claimDoc = await claimRes.json();
     const leaseTask = claimDoc.lease;
 
-    // Missing fencing_token on leased task -> 409
+    // Missing fencing_token from anyone but the lease's own worker -> 409 (the holder's own case is in forgiving_agents.test.js)
     const missingFenceRes = await callGateway("/q/submit", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        agent_id: "q1-holder",
+        agent_id: "q1-not-the-holder",
         task_id: leaseTask.task_id,
         summary: "missing fencing_token",
       }),
