@@ -440,6 +440,20 @@ const hasOwnerTokenLabel = (labelsJson) => {
   }
 };
 const OWNER_LABEL_SINCE = "2026-11-04T05:30:00.000Z";
+// A claim that can safely run twice: one Task, by a name with a stable worker, so a second run gets the same lease. A bare shared
+// handle mints a new worker each run, and a batch or force_new takes new Tasks, so asking those again would strand leases.
+export function claimReusesItsLease(url) {
+  const name = /^\/q\/claim\/([^/]+)\/?$/.exec(url.pathname)?.[1];
+  if (!name || url.searchParams.has("batch_size") || url.searchParams.has("force_new")) return false;
+  let agent = "";
+  try {
+    agent = cleanAgentId(decodeURIComponent(name));
+  } catch {
+    return false;
+  }
+  return Boolean(agent) && !GENERIC_EPHEMERAL_AGENTS.has(agent);
+}
+
 const GENERIC_EPHEMERAL_AGENTS = new Set([
   "volunteer-agent",
   "volunteer-worker",
@@ -7893,20 +7907,43 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       : (await db.prepare("SELECT 1 AS hit FROM herma_object_aliases WHERE alias_key = ? LIMIT 1").bind(requestedObjKey).first()) ||
         (await db.prepare("SELECT 1 AS hit FROM herma_task_objects WHERE requested_object_key = ? LIMIT 1").bind(requestedObjKey).first()) ||
         (requestedObjKey.startsWith("verb_") ? await db.prepare("SELECT 1 AS hit FROM herma_durable_queue WHERE task_id = ? LIMIT 1").bind(requestedObjKey).first() : null);
-    // A submit answered "busy" can leave its object stored with the Task still open. The same worker sending the same bytes
-    // for the same Task again is that retry: it keeps the key and adds no second row.
+    // A submit answered "busy" can already have closed its Task and stored its object: the Task is closed first, and the failure can
+    // come after the row. The same worker sending the same work again on that real Task is that retry: it keeps the key and adds no
+    // second row. Anything else goes on as a new submit: other fields changed, a newer version on the key (a resend may be meant to
+    // restore an older one), or a row made with a token when this call doesn't show it.
     const retriedOwnRow =
-      !salvagedConcurrentTwinAttempt && taskId !== "self_seed" && (priorOwnerRow || readsElsewhere)
+      existingTask && !salvagedConcurrentTwinAttempt && taskId !== "self_seed" && (priorOwnerRow || readsElsewhere)
         ? await db
             .prepare(
-              "SELECT object_key, COALESCE(version_num, 1) AS version_num FROM herma_task_objects WHERE requested_object_key = ? AND producer_agent = ? AND worker_uuid = ? AND source_task_id = ? AND sha256_hash = ? ORDER BY id ASC LIMIT 1"
+              `SELECT object_key, COALESCE(version_num, 1) AS version_num, labels_json FROM herma_task_objects AS t
+               WHERE requested_object_key = ? AND producer_agent = ? AND worker_uuid = ? AND source_task_id = ? AND sha256_hash = ?
+                 AND category = ? AND visibility = ? AND summary = ? AND verification_verdict = ?
+                 AND id = (SELECT MAX(id) FROM herma_task_objects AS n WHERE n.object_key = t.object_key)
+               ORDER BY id ASC LIMIT 1`
             )
-            .bind(requestedObjKey, agentId, workerProfile.worker_uuid, taskId, await sha256HexGateway(serializedRaw))
+            .bind(
+              requestedObjKey,
+              agentId,
+              workerProfile.worker_uuid,
+              taskId,
+              await sha256HexGateway(serializedRaw),
+              scrubSensitiveText(item.category || "knowledge_noun").slice(0, QUEUE_GATEWAY_GRID.agent_max_len),
+              objVis,
+              scrubSensitiveText(item.summary || item.description || item.desc || summary).slice(0, QUEUE_GATEWAY_GRID.summary_max_len),
+              cleanVerificationVerdict(item.verification_verdict || pObj?.verification_verdict || payload.verification_verdict || "UNREVIEWED")
+            )
             .first()
+            .then((row) => (row && hasOwnerTokenLabel(row.labels_json) && !(authCheck.tokenVerified || authCheck.ownTokenWorker) ? null : row))
         : null;
     if (retriedOwnRow) {
       effectiveObjKey = retriedOwnRow.object_key;
       versionNum = Number(retriedOwnRow.version_num || 1);
+      namespacedDueToPriorOwner = effectiveObjKey !== requestedObjKey;
+      if (namespacedDueToPriorOwner) {
+        submitWarnings.push(
+          `saved as ${effectiveObjKey}: ${requestedObjKey} stays with the worker that made it, which can add versions by sending its worker_token`
+        );
+      }
     } else if (salvagedConcurrentTwinAttempt) {
       const contenderSuffix = (await sha256HexGateway(`${workerProfile.worker_uuid}:${serializedRaw}`)).slice(
         0,
