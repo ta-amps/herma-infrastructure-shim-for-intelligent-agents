@@ -2447,7 +2447,7 @@ export default {
 
 // Public addresses and headers say the public names; every old header still works, and a client that asks with one
 // is told so. Callers with a key get the stored names. Bodies read by digest pass through unchanged.
-const KEY_HEADERS = ["authorization", "x-herma-api-key", "x-herma-key", "x-herma-infra-key", "x-herma-admin-token", "x-bootstrap-secret"];
+const KEY_HEADERS = ["authorization", "x-herma-api-key", "x-herma-key", "x-herma-infra-key", "x-herma-admin-token", "x-bootstrap-secret", "x-upstream-api-key"];
 async function serveWithPublicNames(request, env, ctx) {
   const asked = request.headers.get("access-control-request-headers") || "";
   const headers = new Headers(request.headers);
@@ -2457,13 +2457,13 @@ async function serveWithPublicNames(request, env, ctx) {
   const inbound = new Request(request, { headers });
   const answer = await (agentStartAsset(inbound) || onboardingApplication.fetch(inbound, env, ctx));
   const out = await withPublicNames(inbound, answer, {
-    skip: ["/q/object", "/q/compose", "/q/upload", "/kits/", "/assets/", "/agent-start"],
+    skip: ["/q/object", "/q/compose", "/q/upload", "/kits/", "/assets/", "/agent-start", "/v1/chat/completions", "/v1/responses", "/v1/messages"],
     keyHeaders: KEY_HEADERS,
   });
-  if (request.method !== "OPTIONS") return out;
-  const old = asked.split(",").map((h) => h.trim()).filter((h) => /^x-herma-/i.test(h));
-  if (!old.length) return out;
+  const allow = out.headers.get("access-control-allow-headers");
+  if (!allow) return out;
   const reply = new Headers(out.headers);
-  reply.set("access-control-allow-headers", [out.headers.get("access-control-allow-headers"), ...old].filter(Boolean).join(", "));
+  const old = asked.split(",").map((h) => h.trim()).filter((h) => /^x-herma-/i.test(h));
+  reply.set("access-control-allow-headers", [allow.replace(/X-Herma-/g, "X-Shim-"), ...old].join(", "));
   return new Response(out.body, { status: out.status, statusText: out.statusText, headers: reply });
 }
