@@ -112,6 +112,9 @@ describe("GET /q/repos?ask=", () => {
     expect([own.direct, own.answer]).toEqual([true, "zed"]);
     const [two] = await ask('A public GitHub repository named "kilnb" is a new tool. Which GitHub account owns it?', search([item("zed/kilnb", "2026-10"), item("someone/kilnb", "2024-01")]));
     expect(two.direct).toBe(false);
+    const fetchWithForks = search([item("zed/kilnf", "2026-10")]);
+    await ask('A public GitHub repository named "kilnf" is a new tool. Which GitHub account owns it?', fetchWithForks);
+    expect(decodeURIComponent(fetchWithForks.mock.calls[0][0])).toContain("fork:true");
     const [partial] = await ask('A repository named "kilnc". Which GitHub account owns it?', search([item("zed/kilnc", "2026-10")], 400));
     expect(partial.direct).toBe(false);
     const [limited] = await ask('A repository named "both". Which GitHub account owns it?', github(403, {}));

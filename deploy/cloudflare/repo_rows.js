@@ -69,7 +69,7 @@ function cacheStore() {
 async function upstream({ repo, name }, fetchImpl) {
   const path = repo
     ? `/repos/${repo.split("/").map(encodeURIComponent).join("/")}`
-    : `/search/repositories?per_page=30&q=${encodeURIComponent(`${name} in:name`)}`;
+    : `/search/repositories?per_page=30&q=${encodeURIComponent(`${name} in:name fork:true`)}`;
   const cacheKey = new Request(`https://repo-rows.invalid${path.toLowerCase()}`);
   const cache = cacheStore();
   if (cache) {
