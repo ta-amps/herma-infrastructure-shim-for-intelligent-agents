@@ -344,7 +344,7 @@ describe("review findings, November 4", () => {
     const demand = JSON.stringify((await db().prepare("SELECT signal_key, raw_sample_query FROM herma_demand_signals").all()).results);
     expect(demand).not.toContain(LETTERS);
     const real = github(200, { total_count: 0, items: [] });
-    expect((await call("name=tsk_rust_scheduler", real))[0].miss).toBe("not_in_github_search");
+    expect((await call("name=tan_rust_compiler", real))[0].miss).toBe("not_in_github_search"); // another name: answers stay in the edge cache
     expect(real).toHaveBeenCalledTimes(1);
   });
 
