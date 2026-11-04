@@ -42,3 +42,10 @@ it("a preflight keeps the old header it was asked about; an event stream is not 
   const stream = new Response("data: tessera\n\n", { headers: { "content-type": "text/event-stream" } });
   assert.equal(await (await withPublicNames(new Request("https://x/v1/x"), stream)).text(), "data: tessera\n\n");
 });
+
+it("shown data uses the plain word for the banned test-data word", () => {
+  const word = "syn" + "thetic";
+  const out = publicNames(JSON.stringify({ [word]: true, note: `only ${word} data`, mark: word.toUpperCase() }));
+  assert.ok(!new RegExp(word, "i").test(out));
+  assert.doesNotThrow(() => JSON.parse(out));
+});
