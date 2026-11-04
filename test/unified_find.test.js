@@ -37,6 +37,10 @@ describe("searchIndex", () => {
       expect(refs(r)[0]).toBe(ref);
     }
   });
+  it("a stored object can't take a library item's exact name", () => {
+    const i = buildIndex({ objects: [{ object_key: "accessibility-audit", category: "spec", summary: "x", reuse_count: 0 }], packs: [{ id: "accessibility-audit", title: "Accessibility audit", about: "y" }] });
+    expect(refs(searchIndex(i, "accessibility-audit"))[0]).toBe("pack:accessibility-audit");
+  });
   it("finds a repository by name, most stars first, and one row per repository", () => {
     const r = searchIndex(index, "page-reader");
     expect(r.match).toBe("name");

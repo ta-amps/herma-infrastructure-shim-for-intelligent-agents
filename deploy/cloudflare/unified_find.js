@@ -5,9 +5,10 @@ import { publicNames } from "./public_names.js";
 import CATALOG from "./find_catalog.generated.json" with { type: "json" };
 
 const INDEX_TTL_MS = 10 * 60 * 1000;
-const MAX_TOKENS = 1500000;
+const MAX_TOKENS = 800000;
 const COLD_WAIT_MS = 3000;
 const SPARE_HITS = 3;
+const HINT_TITLE_CHARS = 120;
 const HINT_CHECK_MS = 300;
 const RELOAD_GAP_MS = 60 * 1000;
 const ROWS_TTL_S = 300;
@@ -135,7 +136,8 @@ export function buildIndex({ objects = [], repos = [], kits = [], packs = [], fe
   const names = new Map();
   const owners = new Map();
   docs.forEach((d, i) => {
-    exact.set(d.id.toLowerCase(), i);
+    // The library's own names first: a stored object can't take a pack's, kit's or repository's exact name.
+    if (!exact.has(d.id.toLowerCase())) exact.set(d.id.toLowerCase(), i);
     if (d.name) {
       if (!names.has(d.name)) names.set(d.name, []);
       names.get(d.name).push(i);
@@ -425,7 +427,7 @@ export async function reuseHintsForTask(db, title, { limit = 3, waitUntil } = {}
       return [];
     }
     if (Date.now() - held.at >= INDEX_TTL_MS) refreshLater(db, waitUntil);
-    const out = searchIndex(held.index, title, limit * 2);
+    const out = searchIndex(held.index, String(title || "").slice(0, HINT_TITLE_CHARS), limit * 2);
     if (!out.found || out.match !== "words") return [];
     // Optional, so it never holds up a lease that is already issued.
     let timer;
