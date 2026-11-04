@@ -1,6 +1,7 @@
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import {
+  handleBilateralBridge,
   BRIDGE_GRID_CONFIG,
   computeTaskFingerprint,
   parseSlugReply,
@@ -14,22 +15,16 @@ async function callBridge(path, init = {}) {
 }
 
 describe("bilateral agent transport shim (/bridge/*)", () => {
-  it("guards against link-preview false positives on landing and wrong challenge code", async () => {
+  it("a link preview of the landing page connects nobody", async () => {
     const channel = "ch_unit_preview_" + crypto.randomUUID().slice(0, 8);
     const landing = await callBridge(`/bridge/${channel}`);
     expect(landing.status).toBe(200);
     const landingText = await landing.text();
-    expect(landingText).toContain("STATUS: READY_FOR_HANDSHAKE");
+    expect(landingText).toContain("STATUS: READY");
 
     const statusBefore = await (await callBridge(`/bridge/${channel}/status`)).json();
     expect(statusBefore.connected_agents).toBe(0);
 
-    const wrongChallenge = await callBridge(`/bridge/${channel}/hello/muse/9999`);
-    expect(wrongChallenge.status).toBe(400);
-    expect(await wrongChallenge.text()).toContain("HANDSHAKE_CHALLENGE_MISMATCH");
-
-    const statusAfterWrong = await (await callBridge(`/bridge/${channel}/status`)).json();
-    expect(statusAfterWrong.connected_agents).toBe(0);
   });
 
   it("completes GET handshake + GET slug reply + peer POST inbox task handoff with token redaction", async () => {
@@ -101,5 +96,102 @@ describe("bilateral agent transport shim (/bridge/*)", () => {
     const fp2 = await computeTaskFingerprint("durable task queue lease fencing replay");
     expect(fp1.simhash64_hex).toBe(fp2.simhash64_hex);
     expect(fp1.simhash64_hex).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  describe("reply on an ended lease", () => {
+    const options = { withSecurity: (r) => r };
+    const openEnv = (fabric) => ({ TESSERA: fabric, FREE_OPEN_UNTIL_UTC: "2099-01-01T00:00:00Z" });
+    function fakeDb(row) {
+      const statement = {
+        bind: () => statement,
+        first: async () => row,
+        run: async () => ({ success: true }),
+        all: async () => ({ results: [] }),
+      };
+      return { prepare: () => statement, batch: async () => [] };
+    }
+    function fakeFabric({ submitStatuses = [409] } = {}) {
+      const seen = { sessions: 0, submits: 0 };
+      return {
+        seen,
+        fetch: async (url) => {
+          const path = new URL(url).pathname;
+          if (path === "/v1/session/anonymous") {
+            seen.sessions += 1;
+            return Response.json({ session_token: `tok${seen.sessions}`, principal_id: "p", namespace: "demo.p" });
+          }
+          if (path === "/v1/tasks/claim") return Response.json({ task_id: `task${seen.sessions}`, fencing_token: 1 });
+          if (path.startsWith("/v1/stores/")) return Response.json({ ok: true });
+          if (path === "/v1/tasks/submit") {
+            const status = submitStatuses[seen.submits];
+            seen.submits += 1;
+            if (status) return Response.json({ error: "x" }, { status });
+            return Response.json({ receipt_hash: "a".repeat(64) });
+          }
+          return Response.json({}, { status: 404 });
+        },
+      };
+    }
+    const post = (channel, body) =>
+      new Request(`https://x.test/bridge/${channel}/reply`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify(body),
+      });
+    const oldSession = { tessera_token: "old", active_task_id: "task-old", active_fence: 1, turn_seq: 1 };
+
+    it("takes one new session and Task when the lease ended, and stores the reply", async () => {
+      const fabric = fakeFabric();
+      const res = await handleBilateralBridge(post("c1", { sender: "late", summary: "a real answer" }), openEnv(fabric), fakeDb(oldSession), "https://x.test", options);
+      const body = await res.json();
+      expect(body.agent_name).toBe("late");
+      expect(body.submit_ok).toBe(true);
+      expect(body.fabric_record_sha256).toHaveLength(64);
+      expect(fabric.seen.submits).toBe(2);
+      expect(fabric.seen.sessions).toBe(1);
+    });
+
+    it("stores a reply from an agent that never said hello", async () => {
+      const fabric = fakeFabric({ submitStatuses: [] });
+      const res = await handleBilateralBridge(post("c2", { agent: "new", summary: "hi" }), openEnv(fabric), fakeDb(null), "https://x.test", options);
+      expect((await res.json()).submit_ok).toBe(true);
+    });
+
+    it("a session whose demo Tasks ran out gets a new one instead of staying degraded", async () => {
+      const fabric = fakeFabric({ submitStatuses: [] });
+      const spent = { tessera_token: "old", active_task_id: "bridge_task_abc", active_fence: 1, turn_seq: 4 };
+      const res = await handleBilateralBridge(post("c5", { agent: "long", summary: "turn four" }), openEnv(fabric), fakeDb(spent), "https://x.test", options);
+      expect((await res.json()).submit_ok).toBe(true);
+      expect(fabric.seen.sessions).toBe(1);
+    });
+
+    it("a link preview of a reply URL opens no Task and stores nothing as a reply", async () => {
+      const fabric = fakeFabric({ submitStatuses: [] });
+      const res = await handleBilateralBridge(new Request("https://x.test/bridge/c6/reply/someone", { headers: { accept: "text/plain" } }), openEnv(fabric), fakeDb(null), "https://x.test", options);
+      expect(await res.text()).toContain("NOTHING_STORED");
+      expect(fabric.seen.sessions).toBe(0);
+      const live = await handleBilateralBridge(new Request("https://x.test/bridge/c6/reply/someone/t1", { headers: { accept: "text/plain" } }), openEnv(fabric), fakeDb(oldSession), "https://x.test", options);
+      expect(await live.text()).toContain("NOTHING_STORED");
+      expect(fabric.seen.submits).toBe(0);
+    });
+
+    it("makes no second try when the upstream is really down, and says so", async () => {
+      const fabric = fakeFabric({ submitStatuses: [503, 503] });
+      const res = await handleBilateralBridge(post("c3", { agent: "down", summary: "x" }), openEnv(fabric), fakeDb(oldSession), "https://x.test", options);
+      const body = await res.json();
+      expect(body.submit_ok).toBe(false);
+      expect(body.bilateral_status).toBe("DEGRADED_UNPERSISTED");
+      expect(fabric.seen.submits).toBe(1);
+    });
+
+    it("while open, a channel page asks for no challenge and any hello works", async () => {
+      const fabric = fakeFabric({ submitStatuses: [] });
+      const page = await handleBilateralBridge(new Request("https://x.test/bridge/c4"), openEnv(fabric), fakeDb(null), "https://x.test", options);
+      const text = await page.text();
+      expect(text).not.toContain("CHALLENGE");
+      expect(text).not.toContain("1366");
+      const hello = await handleBilateralBridge(new Request("https://x.test/bridge/c4/hello/a/999", { headers: { accept: "text/plain" } }), openEnv(fabric), fakeDb(null), "https://x.test", options);
+      expect(await hello.text()).toContain("FABRIC_MODE");
+    });
   });
 });

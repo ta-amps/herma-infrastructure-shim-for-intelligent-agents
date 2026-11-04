@@ -7,6 +7,7 @@ import CATALOG from "./find_catalog.generated.json" with { type: "json" };
 const INDEX_TTL_MS = 10 * 60 * 1000;
 const MAX_TOKENS = 800000;
 const COLD_WAIT_MS = 3000;
+const MAYBE_HITS = 3;
 const SPARE_HITS = 3;
 const HINT_TITLE_CHARS = 120;
 const HINT_CHECK_MS = 300;
@@ -29,6 +30,7 @@ const ERANOS = "https://eranosforgood.org";
 export const TUNE = {
   k1: 1.2, b: 0.5, name: 3, words: 1.5, about: 1, tags: 1,
   minCoverage: 0.6, minCoverageLong: 0.4, longTerms: 4, minScore: 2.0, phrase: 1.3, also: 0.7,
+  maybeCoverage: 0.35, maybeCoverageLong: 0.2, maybeScore: 1.5,
   kindPrior: { pack: 1.6, kit: 1.6, obj: 1, repo: 0.75 }, askedKind: 3, junk: 0.55, reuse: 0.04, stars: 0.03,
 };
 const LOW_VALUE = new Set(["worker_memory", "system_feedback_signal", "worker_issue_report", "peer_review", "aggregate_review_digest", "version_propagation_recheck", "aggregate_review_plan", "eval_and_rank", "evaluation_rubric", "public_general", "discovery_candidate", "feed_run"]);
@@ -278,7 +280,19 @@ export function searchIndex(index, rawQuery, limit = DEFAULT_LIMIT) {
   ranked.sort((a, b) => b.v - a.v);
   const fits = (r) => r.raw >= TUNE.minScore && r.coverage >= minCoverage && (terms.length < TUNE.longTerms || r.n >= 2);
   const top = ranked.find(fits);
-  if (!top) return { found: false, match: "none", hits: [], ...(rewrote ? { rewrote } : {}) };
+  if (!top) {
+    // Not an answer, and it says so: found stays false. A caller with a model of its own can read these and decide, or ask again.
+    const low2 = terms.length >= TUNE.longTerms ? TUNE.maybeCoverageLong : TUNE.maybeCoverage;
+    const maybe = [];
+    const fam = new Set();
+    for (const r of ranked) {
+      if (r.raw < TUNE.maybeScore || r.coverage < low2 || (r.d.family && fam.has(r.d.family))) continue;
+      if (r.d.family) fam.add(r.d.family);
+      maybe.push(r.d);
+      if (maybe.length >= MAYBE_HITS) break;
+    }
+    return { found: false, match: "none", hits: [], maybe, ...(rewrote ? { rewrote } : {}) };
+  }
   const seen = new Set();
   const list = [];
   for (const r of ranked) {
@@ -468,9 +482,13 @@ export async function findResponse(url, db, { waitUntil } = {}) {
     hits = await stillPublic(db, out.hits);
   }
   hits = hits.slice(0, limit);
-  if (!hits.length) out = { found: false, match: "none", hits: [] };
+  if (!hits.length) out = { found: false, match: "none", hits: [], maybe: out.maybe };
   const body = { ok: true, q: q.slice(0, 200), found: out.found, match: out.match, hits: hits.map(hitForReply) };
   if (out.rewrote) body.rewrote = out.rewrote;
-  if (!out.found) body.note = "Nothing here fits. Try again with 2 to 4 distinctive words, or a name.";
+  if (!out.found) {
+    const maybe = out.maybe?.length ? (await stillPublic(db, out.maybe)).map(hitForReply) : [];
+    if (maybe.length) body.maybe = maybe;
+    body.note = maybe.length ? "No clear match. Items in maybe share only some of your words: read them before you trust one, or try again with 2 to 4 distinctive words." : "Nothing here fits. Try again with 2 to 4 distinctive words, or a name.";
+  }
   return [body, 200];
 }

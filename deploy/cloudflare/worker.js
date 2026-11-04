@@ -1,5 +1,6 @@
 import { findResponse } from "./unified_find.js";
 import { withPublicNames } from "./public_names.js";
+import { stripPiiDeep, withoutPersonalData } from "./pii_strip.js";
 import { claimReusesItsLease, isServerInfraAuthorized } from "./priority_work_gateway.js";
 import { agentStartAsset } from "./agent_start.js";
 import { canonicalRedirect, isPageNavigation } from "./canonical_host.js";
@@ -1425,7 +1426,7 @@ async function handleStatelessMcp(request, db, env) {
       findUrl.searchParams.set("q", findQ);
       if (Number.isInteger(args.limit)) findUrl.searchParams.set("limit", String(args.limit));
       const [findBody] = await findResponse(findUrl, db);
-      return jsonResp({ jsonrpc: "2.0", id: reqId, result: { content: [{ type: "text", text: canonicalJson(findBody) }], isError: false } });
+      return jsonResp({ jsonrpc: "2.0", id: reqId, result: { content: [{ type: "text", text: canonicalJson(stripPiiDeep(findBody)) }], isError: false } });
     }
 
     if (toolName === "list_builtin_provisions") {
@@ -2530,6 +2531,11 @@ export async function withoutLeaseDetails(request, response, env) {
 // Public addresses and headers say the public names; every old header still works, and a client that asks with one
 // is told so. Callers with a key get the stored names. Bodies read by digest pass through unchanged.
 const KEY_HEADERS = ["authorization", "x-herma-api-key", "x-herma-key", "x-herma-infra-key", "x-herma-admin-token", "x-bootstrap-secret", "x-upstream-api-key"];
+// Owner, Nov 4: what the public reads has common personal data stripped, by default on these paths. The skipped paths hand
+// a caller its own working tokens or serve files by digest. Our own server infrastructure reads stored text.
+const PERSONAL_PATHS = ["/q/", "/c/", "/w/", "/api/object/", "/dashboard", "/starter", "/help", "/status"];
+const PERSONAL_SKIP = ["/q/claim", "/q/complete", "/q/submit", "/q/register", "/q/onboard", "/q/heartbeat", "/q/release", "/q/upload", "/q/blob/", "/q/kits", "/q/prompts"];
+
 async function serveWithPublicNames(request, env, ctx) {
   const asked = request.headers.get("access-control-request-headers") || "";
   const headers = new Headers(request.headers);
@@ -2542,7 +2548,12 @@ async function serveWithPublicNames(request, env, ctx) {
     skip: ["/q/object/", "/q/compose", "/q/upload", "/kits/", "/assets/", "/agent-start", "/v1/chat/completions", "/v1/responses", "/v1/messages"],
     keyHeaders: KEY_HEADERS,
   });
-  const out = await withoutLeaseDetails(inbound, named, env);
+  const out = await withoutPersonalData(inbound, await withoutLeaseDetails(inbound, named, env), {
+    trusted: await isServerInfraAuthorized(inbound, env, env.HERMA_DB).catch(() => false),
+    paths: PERSONAL_PATHS,
+    skip: PERSONAL_SKIP,
+    postPaths: ["/q/search"],
+  });
   const allow = out.headers.get("access-control-allow-headers");
   if (!allow) return out;
   const reply = new Headers(out.headers);

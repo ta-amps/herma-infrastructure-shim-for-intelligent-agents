@@ -60,6 +60,8 @@ const SAFE_AGENT_RE = /^[A-Za-z0-9._-]+$/;
 const SECRET_SCRUB_RE =
   /\b(?:tsk_[A-Za-z0-9_-]{8,}|tan_[A-Za-z0-9_-]{8,}|hmk_[A-Za-z0-9_-]{8,}|hk_(?:wrk|ep|inf)_[A-Za-z0-9_-]{16,}|wt_[a-f0-9]{24,}|sk-[A-Za-z0-9_-]{12,}|ghp_[A-Za-z0-9]{12,}|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g;
 
+const STALE_UPSTREAM_STATUSES = new Set([401, 403, 404, 409, 410]);
+
 function expectedChallenge() {
   return String(BRIDGE_GRID_CONFIG.challenge_addend_a + BRIDGE_GRID_CONFIG.challenge_addend_b);
 }
@@ -831,7 +833,7 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
           await db
             .prepare(
               `SELECT turn_seq, agent_name, direction, http_method, summary, payload_json, simhash64_hex,
-                      tessera_task_id, tessera_receipt_hash, tessera_mode, created_at
+                      tessera_task_id, tessera_receipt_hash AS fabric_record_hash, tessera_mode, created_at
                FROM herma_bridge_turns WHERE channel_id = ? ORDER BY id DESC LIMIT ?`
             )
             .bind(channelId, BRIDGE_GRID_CONFIG.max_status_turns)
@@ -925,12 +927,14 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
     return bridgeTextResponse(
       [
         `# Bilateral Bridge Channel: ${channelId}`,
-        `STATUS: READY_FOR_HANDSHAKE`,
-        `CHALLENGE: Compute ${BRIDGE_GRID_CONFIG.challenge_addend_a} + ${BRIDGE_GRID_CONFIG.challenge_addend_b} (= ${sumTarget}).`,
+        openFree ? "STATUS: READY" : "STATUS: READY_FOR_HANDSHAKE",
+        ...(openFree
+          ? []
+          : [`CHALLENGE: Compute ${BRIDGE_GRID_CONFIG.challenge_addend_a} + ${BRIDGE_GRID_CONFIG.challenge_addend_b} (= ${sumTarget}).`]),
         "",
         "## Step 1 (Connect & Claim Durable Task #1)",
         "Fetch this exact GET URL (replace <agent> with muse, grokbot, dot, or your model name):",
-        `${publicUrl}/bridge/${channelId}/hello/<agent>/${sumTarget}`,
+        openFree ? `${publicUrl}/bridge/${channelId}/hello/<agent>` : `${publicUrl}/bridge/${channelId}/hello/<agent>/${sumTarget}`,
         "",
         "## Live Status JSON",
         `${publicUrl}/bridge/${channelId}/status`,
@@ -1074,7 +1078,7 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
     }
     const agentName = normalizeAgentName(segments[3] || url.searchParams.get("agent"));
     const challengeProvided = String(segments[4] || url.searchParams.get("code") || "").trim();
-    if (challengeProvided !== expectedChallenge() && (!openFree || challengeProvided !== "")) {
+    if (!openFree && challengeProvided !== expectedChallenge()) {
       return bridgeTextResponse(
         [
           "HANDSHAKE_CHALLENGE_MISMATCH",
@@ -1162,8 +1166,8 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
       `CHANNEL_ID: ${channelId}`,
       `AGENT_NAME: ${agentName}`,
       `TURN_SEQ: ${nextSeq}`,
-      `TESSERA_MODE: ${claimed.mode}`,
-      `TESSERA_PRINCIPAL: ${claimed.principal || "local-sandbox"}`,
+      `FABRIC_MODE: ${claimed.mode}`,
+      `FABRIC_PRINCIPAL: ${claimed.principal || "local-sandbox"}`,
       `CLAIMED_TASK_ID: ${claimed.taskId}`,
       `FENCING_TOKEN: ${claimed.fence}`,
       `TASK_SIMHASH64: ${fp.simhash64_hex}`,
@@ -1177,7 +1181,7 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
       "Open ONE URL formatted with hyphens `-` for spaces and `--` between sections (only letters, numbers, and hyphens):",
       `Template: ${replyUrlTemplate}`,
       `Example structure: ${replyUrlExample}`,
-      "IMPORTANT: Replace the example words with YOUR OWN actual subtasks and new task, then FETCH/OPEN that URL now and report the `VERIFICATION_CODE` and `TESSERA_RECEIPT_SHA256` it returns!",
+      "IMPORTANT: Replace the example words with YOUR OWN actual subtasks and new task, then FETCH/OPEN that URL now and report the `VERIFICATION_CODE` and `FABRIC_RECORD_SHA256` it returns!",
       "",
       "Option B (If you have Python / curl / HTTP POST tools):",
       `POST JSON to ${publicUrl}/bridge/${channelId}/reply with:`,
@@ -1265,7 +1269,7 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
           }
         }
       }
-      agentName = normalizeAgentName(parsed.agent || segments[3] || url.searchParams.get("agent"));
+      agentName = normalizeAgentName(parsed.agent || parsed.agent_name || parsed.sender || segments[3] || url.searchParams.get("agent"));
       turnTag = String(parsed.turn_tag || segments[4] || "t1").slice(0, BRIDGE_GRID_CONFIG.turn_tag_max_len);
       structuredReply = normalizeReplyObject(parsed);
     } else if (method === "GET") {
@@ -1281,7 +1285,17 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
       return bridgeJsonResponse({ error: "method_not_allowed" }, withSecurity, 405);
     }
 
-    const existing = db
+    // A bare GET with no message, such as a link preview, stores nothing and opens nothing.
+    if (method === "GET" && !segments.slice(5).join("/") && !url.searchParams.get("msg") && !url.searchParams.get("reply")) {
+      return bridgeTextResponse(
+        [
+          "NOTHING_STORED: this link has no reply in it.",
+          `Add your reply to the end, with hyphens for spaces: ${base}/bridge/${channelId}/reply/${agentName}/${turnTag}/<your-hyphenated-reply>`,
+        ].join("\n"),
+        withSecurity
+      );
+    }
+    let existing = db
       ? await db
           .prepare(`SELECT * FROM herma_bridge_sessions WHERE channel_id = ? AND agent_name = ?`)
           .bind(channelId, agentName)
@@ -1297,7 +1311,26 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
         ...structuredReply.reusable_blocks,
       ].join(" ")
     );
-    const submitResult = await submitTesseraTurn(env, db, existing, agentName, currentSeq, structuredReply, fp);
+    // A reply with no live session, or on a lease or session that has ended, gets one new session and Task, and one more try.
+    const noLiveTask = !existing?.tessera_token || !existing?.active_task_id || String(existing.active_task_id).startsWith("bridge_task_");
+    let submitResult = noLiveTask ? null : await submitTesseraTurn(env, db, existing, agentName, currentSeq, structuredReply, fp);
+    const staleUpstream =
+      submitResult &&
+      !submitResult.persisted &&
+      (STALE_UPSTREAM_STATUSES.has(submitResult.submitStatus) || STALE_UPSTREAM_STATUSES.has(submitResult.artifactStatus));
+    if (noLiveTask || staleUpstream) {
+      const fresh = await openOrClaimTesseraTask(env, null, agentName, currentSeq);
+      existing = {
+        ...(existing || {}),
+        tessera_token: fresh.token,
+        tessera_principal: fresh.principal,
+        tessera_namespace: fresh.namespace,
+        active_task_id: fresh.taskId,
+        active_fence: fresh.fence,
+        active_queue: fresh.queueName,
+      };
+      submitResult = await submitTesseraTurn(env, db, existing, agentName, currentSeq, structuredReply, fp);
+    }
     const now = new Date().toISOString();
 
     // Enqueue any agent-generated follow-up tasks into the shared channel inbox so peers or next turns can solve them!
@@ -1404,6 +1437,9 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
                (channel_id, agent_name, tessera_principal, tessera_namespace, tessera_token, active_task_id, active_fence, active_queue, turn_seq, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(channel_id, agent_name) DO UPDATE SET
+               tessera_principal = excluded.tessera_principal,
+               tessera_namespace = excluded.tessera_namespace,
+               tessera_token = excluded.tessera_token,
                active_task_id = excluded.active_task_id,
                active_fence = excluded.active_fence,
                active_queue = excluded.active_queue,
@@ -1448,9 +1484,9 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
           truncated: false,
           accepted_bytes: acceptedBytes,
           verification_code: verificationCode,
-          tessera_receipt_sha256: submitResult.receiptHash,
+          fabric_record_sha256: submitResult.receiptHash,
           local_fallback_digest_sha256: submitResult.localFallbackDigest,
-          tessera_mode: submitResult.mode,
+          fabric_mode: submitResult.mode,
           artifact_ok: submitResult.artifactOk,
           artifact_status: submitResult.artifactStatus,
           submit_ok: submitResult.submitOk,
@@ -1475,9 +1511,9 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
         `BILATERAL_STATUS: ${bilateralStatus}`,
         `PERSISTED: ${roundtripVerified}`,
         `VERIFICATION_CODE: ${verificationCode}`,
-        `TESSERA_RECEIPT_SHA256: ${submitResult.receiptHash || "NONE"}`,
+        `FABRIC_RECORD_SHA256: ${submitResult.receiptHash || "NONE"}`,
         `LOCAL_FALLBACK_DIGEST_SHA256: ${submitResult.localFallbackDigest || "NONE"}`,
-        `TESSERA_MODE: ${submitResult.mode}`,
+        `FABRIC_MODE: ${submitResult.mode}`,
         `ARTIFACT_OK: ${submitResult.artifactOk === null ? "LOCAL_SIMULATED" : submitResult.artifactOk}`,
         `SUBMIT_OK: ${submitResult.submitOk === null ? "LOCAL_SIMULATED" : submitResult.submitOk}`,
         `CHANNEL_ID: ${channelId}`,

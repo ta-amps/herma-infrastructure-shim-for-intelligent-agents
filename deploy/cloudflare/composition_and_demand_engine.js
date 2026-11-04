@@ -1058,7 +1058,7 @@ export async function handleComposeObjectsRequest(request, db, publicUrl, infraA
       unverifiedPayloadKeys.push(obj.object_key);
     }
     const verdict = String(obj.verification_verdict || "UNREVIEWED");
-    if (verdict.startsWith("QUARANTINED") || verdict === "VALIDATOR_FAILED") {
+    if (verdict.startsWith("QUARANTINED") || verdict === "VALIDATOR_FAILED" || verdict === "REFUTED") {
       quarantinedKeys.push(obj.object_key);
     }
 

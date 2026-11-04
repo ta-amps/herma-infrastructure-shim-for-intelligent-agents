@@ -534,7 +534,7 @@ describe("Universal On-Demand TaskObject API Runtime, Scoped Key Vault & Swappab
     expect(winRes.status).toBe(200);
     const winDoc = await winRes.json();
     expect(winDoc.salvaged_concurrent_twin_attempt).toBe(false);
-    expect(winDoc.stored_task_objects[0].verification_verdict).toBe("REPRODUCED");
+    expect(winDoc.stored_task_objects[0].verification_verdict).toBe("UNREVIEWED"); // a maker can't declare its own verdict
     expect(winDoc.applied_evaluations.length).toBe(1);
     expect(winDoc.applied_evaluations[0].verification_verdict).toBe("REPRODUCED");
 
@@ -567,7 +567,7 @@ describe("Universal On-Demand TaskObject API Runtime, Scoped Key Vault & Swappab
     // Winner's object and task receipt remain 100% untouched!
     const winnerObj = await (await callGateway("/q/object/shared_muse_audit_v1")).json();
     expect(winnerObj.summary).toBe("Winner audit report");
-    expect(winnerObj.verification_verdict).toBe("REPRODUCED");
+    expect(winnerObj.verification_verdict).toBe("UNREVIEWED");
     const taskCheck = await (await callGateway(`/q/task/${claimA.lease.task_id}`)).json();
     expect(taskCheck.task.receipt_hash).toBe(winDoc.receipt_hash);
     expect(taskCheck.stored_task_objects.length).toBe(2); // both winner and contender objects linked for peer comparison!

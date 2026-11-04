@@ -2,6 +2,7 @@
 // Starter & Code-Reuse Hub (`/q/starter`, `/starter`), Meta Muse Telemetry (`/q/meta-telemetry`),
 // and Modal Finetuning Dataset Export (`/q/training-export`) for Herma v6.3.
 
+import { stripPiiDeep } from "./pii_strip.js";
 import { MODELS_USED_LINK, documentHtml, scrubBannedWords, tidyText } from "./page_shell.js";
 import { NETWORK_MAP_NOTICE } from "./network_activity.js";
 import { scrubSensitiveText } from "./bilateral_bridge.js";
@@ -572,7 +573,7 @@ export async function runTraditionalHermaIntake(
           .prepare(
             `SELECT object_key, category, summary, payload_json, sha256_hash, worker_uuid, eval_count, quality_milli, total_payload_bytes
              FROM herma_task_objects
-             WHERE source_task_id IN (${ph}) AND ${visFilter} AND is_tombstoned = 0
+             WHERE source_task_id IN (${ph}) AND ${visFilter} AND is_tombstoned = 0 AND COALESCE(verification_verdict, 'UNREVIEWED') != 'REFUTED'
              ORDER BY id DESC LIMIT ?`
           )
           .bind(...sibTaskIds, HELP_STARTER_GRID.max_sibling_objects)
@@ -646,7 +647,7 @@ export async function runTraditionalHermaIntake(
       .prepare(
         `SELECT id, object_key, category, summary, payload_json, sha256_hash, eval_count, quality_milli, total_payload_bytes
          FROM herma_task_objects
-         WHERE ${visFilter} AND is_tombstoned = 0 ${categoryClause}
+         WHERE ${visFilter} AND is_tombstoned = 0 AND COALESCE(verification_verdict, 'UNREVIEWED') != 'REFUTED' ${categoryClause}
          ORDER BY eval_count DESC, quality_milli DESC, id DESC
          LIMIT ?`
       )
@@ -1645,7 +1646,7 @@ export async function buildStarterCatalogData(db, infraAllowed, publicUrl) {
       `SELECT id, object_key, category, summary, payload_json, sha256_hash, eval_count, quality_milli,
               prog_lang, deliverable_kind, total_payload_bytes, created_at
        FROM herma_task_objects
-       WHERE ${visFilter} AND is_tombstoned = 0
+       WHERE ${visFilter} AND is_tombstoned = 0 AND COALESCE(verification_verdict, 'UNREVIEWED') != 'REFUTED'
        ORDER BY eval_count DESC, quality_milli DESC, id DESC
        LIMIT ?`
     )
@@ -3984,43 +3985,7 @@ export async function handleMetaTelemetryRequest(request, env, db) {
   };
 }
 
-// Owner direction, Nov 4: Meta's terms come first. Meta Model API Terms s.10.1(ix) bars using Outputs to train competing
-// models and collecting them into training datasets for that use, so this public route serves no row from a Meta model,
-// and no row whose maker can't be shown not to be one. Task Objects carry no maker, so none qualifies today. Caller and
-// worker text also stays off this route until a privacy read clears it. The route stays open; stored records are untouched.
-export const TRAINING_EXPORT_WITHHELD_NOTE =
-  "No rows are served here for now. We hold back model answers and any row we can't trace, to follow Meta's license terms, " +
-  "and we hold back text from callers and workers until a privacy read is done. Stored records are unchanged. " +
-  "Notice: https://teleionlabs.com/legal/meta-models.txt";
-
 export async function handleTrainingExportRequest(request, env, db, publicUrl) {
-  const method = request.method.toUpperCase();
-  if (method !== "GET" && method !== "HEAD") {
-    return { status: HELP_STARTER_GRID.http_method_not_allowed, isJsonl: false, body: { ok: false, error: "method_not_allowed" } };
-  }
-  const withheldUrl = new URL(request.url);
-  if (
-    (withheldUrl.searchParams.get("format") || "").toLowerCase() === "jsonl" ||
-    (request.headers.get("accept") || "").includes("application/x-ndjson")
-  ) {
-    return { status: HELP_STARTER_GRID.http_ok, isJsonl: true, jsonl: "", note: TRAINING_EXPORT_WITHHELD_NOTE };
-  }
-  return {
-    status: HELP_STARTER_GRID.http_ok,
-    isJsonl: false,
-    body: {
-      ok: true,
-      schema: HELP_STARTER_GRID.schema_training_id,
-      count: 0,
-      examples: [],
-      withheld: true,
-      note: TRAINING_EXPORT_WITHHELD_NOTE,
-    },
-  };
-}
-
-// The earlier export, kept for the day rows carry a maker and a privacy read clears them. Nothing routes here.
-export async function buildTrainingExportFromRecords(request, env, db, publicUrl) {
   await ensureHelpAndStarterSchema(db);
   const method = request.method.toUpperCase();
   if (method !== "GET" && method !== "HEAD") {
@@ -4123,7 +4088,7 @@ export async function buildTrainingExportFromRecords(request, env, db, publicUrl
     if (w > prev) verbWinRateByKind.set(arm.verb_kind, w);
   }
 
-  const examples = [];
+  let examples = [];
 
   for (const tr of tracesRes?.results || []) {
     if (examples.length >= limit) break;
@@ -4307,6 +4272,9 @@ export async function buildTrainingExportFromRecords(request, env, db, publicUrl
       })),
     });
   }
+
+  // Owner, Nov 4: the export stays open, with common personal data stripped from what it serves. Stored rows are unchanged.
+  examples = examples.map((ex) => stripPiiDeep(ex));
 
   if (wantsJsonl) {
     const jsonlBody = examples.map((ex) => JSON.stringify(ex)).join("\n") + (examples.length ? "\n" : "");

@@ -1560,6 +1560,7 @@ export async function searchPublicTaskObjectsForPreview(
          FROM herma_task_objects
          WHERE visibility IN ('public_ngo', 'public_commons')
            AND COALESCE(is_tombstoned, 0) = 0
+           AND COALESCE(verification_verdict, 'UNREVIEWED') != 'REFUTED'
          ORDER BY quality_milli DESC, id DESC
          LIMIT ?`
       )
@@ -3031,7 +3032,8 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
                       intent_bucket, opt_goal, target_env, prog_lang, locale_country, deliverable_kind,
                       500 AS complexity_milli, chunk_count, total_payload_bytes,
                       COALESCE(audience_reach_milli, 350) AS audience_reach_milli, COALESCE(reuse_count, 0) AS reuse_count,
-                      COALESCE(step_mode, '') AS step_mode, COALESCE(reuse_mode, '') AS reuse_mode
+                      COALESCE(step_mode, '') AS step_mode, COALESCE(reuse_mode, '') AS reuse_mode,
+                      COALESCE(verification_verdict, 'UNREVIEWED') AS verification_verdict, COALESCE(eval_count, 0) AS eval_count
                FROM herma_task_objects WHERE ${visFilter}`;
 
   if (!skipCandidateScan && (scope === "all" || scope === "tasks")) {
@@ -3095,6 +3097,8 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
     const sha = String(item.content_sha256 || "");
     const baseRrf = (rrfScores.get(sha) || 0) * QUEUE_GATEWAY_GRID.rrf_scale;
     const isExactId = Boolean(exactId) && String(item.item_id).toLowerCase() === exactId;
+    // Work a different worker refuted stays readable by its exact id, and is not offered for reuse.
+    if (item.verification_verdict === "REFUTED" && !isExactId) continue;
     if (rawQuery && baseRrf === 0 && !hasBroadStructuralFilter && !isExactId) {
       continue;
     }
@@ -5585,6 +5589,21 @@ const FIELD_WORK_PHRASES = Object.freeze([
   "collect genuine",
   "recruit a",
   "live two-pair run",
+  "recruit ",
+  "real non-specialist",
+  "real reader",
+  "real-reader",
+  "real-site",
+  "gloved 20",
+  "physical eyes-closed",
+  "bare-arm block",
+  "the 5-user",
+  "live facilitator",
+  "field-print",
+  "field-test the three-blob",
+  "field trial",
+  "coordinator pairs",
+  "survivor-advocate",
 ]);
 const FIELD_WORK_SQL = FIELD_WORK_PHRASES.map(
   (phrase) => `LOWER(COALESCE(title, '')) LIKE '%${phrase}%'`
@@ -6751,7 +6770,15 @@ async function releaseLeasedTask(
   };
 }
 
-async function applyWorkerEvaluations(db, infraAllowed, evaluatorProfile, rawEvaluations, nowIso) {
+// A maker doesn't get to say its own work passed: only a server key sets a good verdict at submit. A caution it adds stays.
+function makerDeclaredVerdict(raw, infraAllowed) {
+  const verdict = cleanVerificationVerdict(raw || "UNREVIEWED");
+  return infraAllowed || (verdict !== "CONFIRMED" && verdict !== "REPRODUCED" && verdict !== "REFUTED") ? verdict : "UNREVIEWED";
+}
+
+const OWN_CHECKER_WORKERS = new Set(["w_teleionwarmc_5ab473a2"]);
+
+async function applyWorkerEvaluations(db, infraAllowed, evaluatorProfile, rawEvaluations, nowIso, ownChecker = false) {
   const items = Array.isArray(rawEvaluations)
     ? rawEvaluations.slice(0, QUEUE_GATEWAY_GRID.max_evaluations_per_submit)
     : [];
@@ -6973,8 +7000,11 @@ async function applyWorkerEvaluations(db, infraAllowed, evaluatorProfile, rawEva
                 QUEUE_GATEWAY_GRID.eval_blend_total
             );
       if (convFlag) newQual = Math.max(0, newQual - QUEUE_GATEWAY_GRID.convergence_qual_demote);
+      // A free identity can be made in one request, so only our own checker, with its token, or a server key sets this column.
+      // Every other worker's verdict stays a recorded opinion in the evaluations.
+      const verdictCounts = infraAllowed || ownChecker;
       const nextObjVerdict =
-        verVerdict !== "UNREVIEWED" ? verVerdict : cleanVerificationVerdict(objTarget.verification_verdict);
+        verdictCounts && verVerdict !== "UNREVIEWED" ? verVerdict : cleanVerificationVerdict(objTarget.verification_verdict);
 
       await db
         .prepare(
@@ -7931,7 +7961,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
               scrubSensitiveText(item.category || "knowledge_noun").slice(0, QUEUE_GATEWAY_GRID.agent_max_len),
               objVis,
               scrubSensitiveText(item.summary || item.description || item.desc || summary).slice(0, QUEUE_GATEWAY_GRID.summary_max_len),
-              cleanVerificationVerdict(item.verification_verdict || pObj?.verification_verdict || payload.verification_verdict || "UNREVIEWED")
+              makerDeclaredVerdict(item.verification_verdict || pObj?.verification_verdict || payload.verification_verdict, infraAllowed)
             )
             .first()
             .then((row) => (row && hasOwnerTokenLabel(row.labels_json) && !(authCheck.tokenVerified || authCheck.ownTokenWorker) ? null : row))
@@ -8011,9 +8041,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       0,
       QUEUE_GATEWAY_GRID.summary_max_len
     );
-    const objVerdict = cleanVerificationVerdict(
-      item.verification_verdict || pObj?.verification_verdict || payload.verification_verdict || "UNREVIEWED"
-    );
+    const objVerdict = makerDeclaredVerdict(item.verification_verdict || pObj?.verification_verdict || payload.verification_verdict, infraAllowed);
     const objAssetModality = normalizeAssetModality(item, pObj);
 
     const isChunked = payloadByteLen > QUEUE_GATEWAY_GRID.payload_max_len;
@@ -8478,7 +8506,8 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
     infraAllowed,
     workerProfile,
     mergedEvalList,
-    nowIso
+    nowIso,
+    OWN_CHECKER_WORKERS.has(String(workerProfile?.worker_uuid || "")) && Boolean(authCheck.tokenVerified)
   );
 
   // 3. Enqueue & index follow-up tasks (Q3 private inheritance + Q6 unreviewed quality_milli = 0)
@@ -9968,10 +9997,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       return finalizeWithTrace(
         new Response(out.jsonl, {
           status: out.status,
-          headers: {
-            "content-type": "application/x-ndjson; charset=utf-8",
-            ...(out.note ? { "x-export-note": out.note } : {}),
-          },
+          headers: { "content-type": "application/x-ndjson; charset=utf-8" },
         }),
         out.status
       );

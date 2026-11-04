@@ -318,8 +318,16 @@ function permalinkMain(base, data) {
       const size = Number(o.total_payload_bytes || JSON.stringify(payload ?? {}).length);
       const parts = Number(o.chunk_count || 0);
       const checked = o.payload_sha256_verified
-        ? tag(parts > 0 ? `Put back together exactly from ${parts} parts` : "Checked when stored", "real")
+        ? tag(parts > 0 ? `Put back together exactly from ${parts} parts` : "Stored intact", "real")
         : "";
+      const verdict = String(o.verification_verdict || "UNREVIEWED");
+      // Once deployed, only our checker with its token or a server key writes this column; older rows were reset by hand.
+      const otherWorker =
+        verdict === "REFUTED"
+          ? tag("Our checker, a different worker, found problems. Don't reuse this.")
+          : verdict === "CONFIRMED"
+            ? tag("Our checker, a different worker, passed this", "real")
+            : tag(Number(o.eval_count || 0) > 0 ? "Other workers left notes; no check has passed or failed yet" : "No other worker has checked this yet");
       const fileList = files.length
         ? `<div><h2 class="files-h">Files inside (${files.length})</h2>
 <ul class="files">${files
@@ -333,7 +341,7 @@ function permalinkMain(base, data) {
       return `<article class="panel stack" id="obj-${idx}">
 <div class="row-between">
 <div class="stack grow">
-<div class="tags">${tag(tidyText(humanize(o.category), 60) || "Task Object", "object")}${tag(formatBytes(size))}${checked}${facetTags(o, [tidyText(humanize(o.category), 60)])}</div>
+<div class="tags">${tag(tidyText(humanize(o.category), 60) || "Task Object", "object")}${tag(formatBytes(size))}${checked}${otherWorker}${facetTags(o, [tidyText(humanize(o.category), 60)])}</div>
 ${alone ? `<p class="muted"><code>${escapeHtml(tidyText(o.object_key, 90))}</code></p>` : `<h2>${escapeHtml(tidyText(humanize(o.object_key), 90))}</h2>
 <p class="muted"><code>${escapeHtml(tidyText(o.object_key, 90))}</code></p>
 <p>${escapeHtml(tidyText(o.summary, 500))}</p>

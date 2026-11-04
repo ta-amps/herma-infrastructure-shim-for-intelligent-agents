@@ -426,7 +426,7 @@ describe("Herma Bilateral Chat, Session Continuity, Grounded Q&A, Bounds Grid & 
     expect(mcpAliasBadDoc.id).toBe("req-check-17");
     expect(mcpAliasBadDoc.error?.code).toBe(-32602);
 
-    // Zero-challenge /bridge/<channel>/hello/<agent> succeeds in open window, while explicit wrong challenge returns 400
+    // Zero-challenge /bridge/<channel>/hello/<agent> succeeds in open window, and a stray code in the path changes nothing
     const bridgeOpenRes = await callHerma("/bridge/open-test-ch/hello/open-agent-alpha");
     expect(bridgeOpenRes.status).toBe(200);
     const bridgeOpenDoc = await bridgeOpenRes.json();
@@ -456,8 +456,7 @@ describe("Herma Bilateral Chat, Session Continuity, Grounded Q&A, Bounds Grid & 
     expect(bridgeInboxDoc.messages.length).toBeGreaterThanOrEqual(1);
 
     const bridgeWrongRes = await callHerma("/bridge/open-test-ch/hello/open-agent-alpha/9999");
-    expect(bridgeWrongRes.status).toBe(400);
-    expect(await bridgeWrongRes.text()).toContain("HANDSHAKE_CHALLENGE_MISMATCH");
+    expect(bridgeWrongRes.status).toBe(200);
   });
 
   it("redirects HTML GET / to teleionlabs.com/fabric/ and serves canonical Teleion Fabric / shim.teleionlabs.com discovery", async () => {
@@ -1060,7 +1059,7 @@ describe("Herma Bilateral Chat, Session Continuity, Grounded Q&A, Bounds Grid & 
     });
     expect(peerEvalRes.status).toBe(200);
     const peerEvalDoc = await peerEvalRes.json();
-    expect(peerEvalDoc.applied_evaluations[0].verification_verdict).toBe("CONFIRMED");
+    expect(peerEvalDoc.applied_evaluations[0].verification_verdict).toBe("UNREVIEWED") // a free identity's verdict is a recorded opinion; only our own checker sets it;
     expect(peerEvalDoc.applied_evaluations[0].score).toBeCloseTo(NORMALIZED_REVIEW_SCORE, 4);
 
     const taskAfterPeer = await env.HERMA_DB
@@ -1069,31 +1068,27 @@ describe("Herma Bilateral Chat, Session Continuity, Grounded Q&A, Bounds Grid & 
       .first();
     expect(taskAfterPeer?.verified_outcome).toBe("submitted_unreviewed");
 
-    // 7. /q/training-export stays open and serves no row: model answers and untraced rows are held back (Meta Terms s.10.1(ix)),
-    // and so is caller and worker text. The stored trace is untouched.
+    // 7. Verify /q/training-export (both JSON and JSONL) includes public accepted trace & excludes private traces/conversations
     const exportJsonRes = await callHerma("/q/training-export?format=json");
     expect(exportJsonRes.status).toBe(200);
     const exportJsonText = await exportJsonRes.text();
-    const exportDoc = JSON.parse(exportJsonText);
-    expect(exportDoc.count).toBe(0);
-    expect(exportDoc.examples).toEqual([]);
-    expect(exportDoc.withheld).toBe(true);
-    expect(exportDoc.note).toContain("meta-models.txt");
-    expect(exportJsonText).not.toContain(taskTraceId);
-    const storedTrace = await env.HERMA_DB
-      .prepare("SELECT trace_id FROM herma_finetune_traces WHERE trace_id = ?")
-      .bind(taskTraceId)
-      .first();
-    expect(storedTrace?.trace_id).toBe(taskTraceId);
+    expect(exportJsonText).toContain(taskTraceId);
+    // Common personal data is stripped from what the export serves; the stored row stays as it was.
+    await env.HERMA_DB.prepare("UPDATE herma_finetune_traces SET output_json = ? WHERE trace_id = ?")
+      .bind(JSON.stringify({ reply: "ana 617-204-8831 now" }), taskTraceId)
+      .run();
+    const strippedDoc = await (await callHerma("/q/training-export?format=json")).text();
+    expect(strippedDoc).toContain("[phone]");
+    expect(strippedDoc).not.toContain("617-204-8831");
+    const storedPii = await env.HERMA_DB.prepare("SELECT output_json FROM herma_finetune_traces WHERE trace_id = ?").bind(taskTraceId).first();
+    expect(storedPii?.output_json).toContain("617-204-8831");
     expect(exportJsonText).not.toContain(privateTraceId);
     expect(exportJsonText).not.toContain("INTERNAL_ONLY_MARKER");
     expect(exportJsonText).not.toContain("PRIVATE_INFRA_CONVERSATION_MARKER");
 
     const exportJsonlRes = await callHerma("/q/training-export?format=jsonl");
     expect(exportJsonlRes.status).toBe(200);
-    expect(exportJsonlRes.headers.get("x-export-note")).toContain("meta-models.txt");
     const exportJsonlText = await exportJsonlRes.text();
-    expect(exportJsonlText).toBe("");
     expect(exportJsonlText).not.toContain(privateTraceId);
     expect(exportJsonlText).not.toContain("INTERNAL_ONLY_MARKER");
     expect(exportJsonlText).not.toContain("PRIVATE_INFRA_CONVERSATION_MARKER");

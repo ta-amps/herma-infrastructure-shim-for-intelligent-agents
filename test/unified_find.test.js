@@ -76,6 +76,13 @@ describe("searchIndex", () => {
   it("drops common words before weighing the rest", () => {
     expect(searchIndex(index, "looking for shelter intake").found).toBe(true);
   });
+  it("offers partial matches only as maybe, with found still false", () => {
+    const r = searchIndex(index, "walrus ukulele baklava zebra shelter intake");
+    expect(r.found).toBe(false);
+    expect(r.hits).toEqual([]);
+    expect(r.maybe.map((d) => d.family || d.id)).toContain("shelter_intake_schema");
+    expect(searchIndex(index, "qwertyuiop zxcvbnm").maybe).toEqual([]);
+  });
   it("treats a word that names a built-in like any other word", () => {
     expect(searchIndex(index, "constructor xyzzy").found).toBe(false);
     expect(searchIndex(index, "__proto__").found).toBe(false);
@@ -139,6 +146,13 @@ describe("GET /q/find on a real database", () => {
     await env.HERMA_DB.prepare("INSERT INTO herma_task_objects (object_key, category, summary, visibility, is_tombstoned, reuse_count, producer_agent, payload_json, simhash64_hex, sha256_hash, created_at, verification_verdict) VALUES ('walrus-plan', 'spec', 'x', 'public_commons', 0, 0, 'find-test', '{}', '0', 'walrus-plan', '2026-11-04T00:00:00Z', 'REFUTED')").run();
     expect((await (await call("/q/find?q=walrus-plan")).json()).hits[0].id).toBe("walrus-plan");
     await env.HERMA_DB.prepare("DELETE FROM herma_task_objects WHERE object_key = 'walrus-plan'").run();
+  });
+  it("the reply carries maybe, with found false", async () => {
+    const b = await (await call("/q/find?q=glacier+ukulele+xyzzyq+quokkaz")).json();
+    expect(b.found).toBe(false);
+    expect(b.hits).toEqual([]);
+    expect(b.maybe.map((h) => h.id)).toContain("find_test_public_v1");
+    expect(b.note).toContain("maybe");
   });
   it("asks for q, and refuses other methods", async () => {
     expect((await call("/q/find")).status).toBe(400);

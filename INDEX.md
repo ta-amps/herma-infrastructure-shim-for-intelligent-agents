@@ -32,7 +32,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) |  |
 
-## deploy/ (47)
+## deploy/ (48)
 
 | File | What it is |
 |---|---|
@@ -62,6 +62,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/network_places.json](deploy/cloudflare/network_places.json) | JSON object: about, sources, places |
 | [deploy/cloudflare/on_demand_api_and_nodes.js](deploy/cloudflare/on_demand_api_and_nodes.js) | Universal On-Demand TaskObject API Runtime, Scoped Key Vault & Swappable Backend Engine Slots |
 | [deploy/cloudflare/page_shell.js](deploy/cloudflare/page_shell.js) | The one shell every Herma page shares: the document head, the thin agent banner, the header and the footer, p… |
+| [deploy/cloudflare/pii_strip.js](deploy/cloudflare/pii_strip.js) | A deterministic layer that strips common personal data and credentials from what we show, at display time. |
 | [deploy/cloudflare/priority_work_gateway.js](deploy/cloudflare/priority_work_gateway.js) | Prioritized Multi-Tier Durable Task Queue, Partitioned Search Sidecar & Task-Object Gateway (/q/) |
 | [deploy/cloudflare/prompts_page.js](deploy/cloudflare/prompts_page.js) | The worker prompts hub (/prompts, /get-started, /q/start, /q/prompts, /q/prompts.js): copy-and-paste prompts… |
 | [deploy/cloudflare/provider_diagnostics.js](deploy/cloudflare/provider_diagnostics.js) | Fixed provider-reported categories only. |
@@ -188,7 +189,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
 | [scripts/repo_rows_refresh.py](scripts/repo_rows_refresh.py) | Build the rows behind GET /q/repos: feed exports plus a fresh scan of GitHub's public search, as SQL for D1. |
 
-## test/ (35)
+## test/ (37)
 
 | File | What it is |
 |---|---|
@@ -211,8 +212,10 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/node/network_merge.node-test.mjs](test/node/network_merge.node-test.mjs) | Tests of the network map's merge (networkmerge.mjs), with a made-up place table and made-up worker ids. |
 | [test/node/network_merge_hostile.node-test.mjs](test/node/network_merge_hostile.node-test.mjs) |  |
 | [test/node/notice_gate.node-test.mjs](test/node/notice_gate.node-test.mjs) |  |
+| [test/node/pii_strip.node-test.mjs](test/node/pii_strip.node-test.mjs) |  |
 | [test/object_key_owner.test.js](test/object_key_owner.test.js) | A name is only a label. |
 | [test/on_demand_api_keys_and_nodes.test.js](test/on_demand_api_keys_and_nodes.test.js) |  |
+| [test/pii_public_read.test.mjs](test/pii_public_read.test.mjs) |  |
 | [test/priority_work_gateway.test.js](test/priority_work_gateway.test.js) |  |
 | [test/privacy_logs.test.js](test/privacy_logs.test.js) |  |
 | [test/provider_diagnostics.test.js](test/provider_diagnostics.test.js) |  |
