@@ -245,7 +245,8 @@ export function buildPageScrubber(config) {
   return function scrubPage(html) {
     return String(html ?? "").replace(
       /<(code|pre|script|style|textarea)\b[^>]*>[\s\S]*?<\/\1\s*>|<[^>]*>|[^<]+/gi,
-      (piece) => (piece[0] === "<" ? piece : scrubText(piece))
+      // A worker's name in a code tag shows the public name too. Links, attributes and every other code value stay as they are.
+      (piece) => (piece[0] !== "<" ? scrubText(piece) : /^<code\b/i.test(piece) ? piece.replace(/-(?:herma|tessera)-/gi, "-fabric-") : piece)
     );
   };
 }
