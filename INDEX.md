@@ -179,7 +179,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/page_interactions.mjs](scripts/page_interactions.mjs) | Clicks through the interactive parts of the redesigned pages (fixture server, the Worker's real page policy)… |
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
 
-## test/ (27)
+## test/ (28)
 
 | File | What it is |
 |---|---|
@@ -205,6 +205,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/provider_diagnostics.test.js](test/provider_diagnostics.test.js) |  |
 | [test/provider_grants.test.js](test/provider_grants.test.js) |  |
 | [test/provider_health.test.js](test/provider_health.test.js) |  |
+| [test/q_submit_forms_and_field_work.test.js](test/q_submit_forms_and_field_work.test.js) |  |
 | [test/team_agents.test.js](test/team_agents.test.js) |  |
 | [test/thick_path_and_schema_coach.test.js](test/thick_path_and_schema_coach.test.js) |  |
 | [test/triggers.test.js](test/triggers.test.js) |  |
