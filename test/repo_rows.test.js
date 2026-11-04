@@ -108,12 +108,12 @@ describe("GET /q/repos?ask=", () => {
   });
 
   it("answers an owner question only once GitHub's search also shows every owner", async () => {
-    const [own] = await ask('A public GitHub repository named "kiln" is a new agent harness, created in 2026-10. Which GitHub account or organization owns it? Answer with the owner name.', search([item("zed/kiln", "2026-10")]));
+    const [own] = await ask('A public GitHub repository named "kiln", created in 2026-10. Which GitHub account or organization owns it? Answer with the owner name.', search([item("zed/kiln", "2026-10")]));
     expect([own.direct, own.answer]).toEqual([true, "zed"]);
-    const [two] = await ask('A public GitHub repository named "kilnb" is a new tool. Which GitHub account owns it?', search([item("zed/kilnb", "2026-10"), item("someone/kilnb", "2024-01")]));
+    const [two] = await ask('A public GitHub repository named "kilnb". Which GitHub account owns it?', search([item("zed/kilnb", "2026-10"), item("someone/kilnb", "2024-01")]));
     expect(two.direct).toBe(false);
     const fetchWithForks = search([item("zed/kilnf", "2026-10")]);
-    await ask('A public GitHub repository named "kilnf" is a new tool. Which GitHub account owns it?', fetchWithForks);
+    await ask('A public GitHub repository named "kilnf". Which GitHub account owns it?', fetchWithForks);
     expect(decodeURIComponent(fetchWithForks.mock.calls[0][0])).toContain("fork:true");
     const [partial] = await ask('A repository named "kilnc". Which GitHub account owns it?', search([item("zed/kilnc", "2026-10")], 400));
     expect(partial.direct).toBe(false);
@@ -142,6 +142,7 @@ describe("GET /q/repos?ask=", () => {
     expect((await ask("What license did acme/memfold use in 2024?"))[0].direct).toBe(false);
     expect((await ask("What licence does acme/memfold use in its fork?"))[0].direct).toBe(false);
     expect((await ask("Who owned acme/memfold before?"))[0].direct).toBe(false);
+    expect((await ask('A repository named "both" is a private project. Which GitHub account owns it?', search([item("acme/both", "2026-09")])))[0].direct).toBe(false);
   });
 });
 
