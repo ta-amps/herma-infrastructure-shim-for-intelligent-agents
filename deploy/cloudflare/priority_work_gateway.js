@@ -440,6 +440,20 @@ const hasOwnerTokenLabel = (labelsJson) => {
   }
 };
 const OWNER_LABEL_SINCE = "2026-11-04T05:30:00.000Z";
+// A claim that can safely run twice: one Task, by a name with a stable worker, so a second run gets the same lease. A bare shared
+// handle mints a new worker each run, and a batch or force_new takes new Tasks, so asking those again would strand leases.
+export function claimReusesItsLease(url) {
+  const name = /^\/q\/claim\/([^/]+)\/?$/.exec(url.pathname)?.[1];
+  if (!name || url.searchParams.has("batch_size") || url.searchParams.has("force_new")) return false;
+  let agent = "";
+  try {
+    agent = cleanAgentId(decodeURIComponent(name));
+  } catch {
+    return false;
+  }
+  return Boolean(agent) && !GENERIC_EPHEMERAL_AGENTS.has(agent);
+}
+
 const GENERIC_EPHEMERAL_AGENTS = new Set([
   "volunteer-agent",
   "volunteer-worker",
@@ -2120,6 +2134,9 @@ async function runPriorityGatewaySchemaInitOnce(
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_hdq_verb_kind ON herma_durable_queue (state, verb_kind, priority DESC, id ASC)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_hdq_content_sha ON herma_durable_queue (content_sha256)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_hdq_receipt ON herma_durable_queue (receipt_hash)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_hdq_parent ON herma_durable_queue (parent_task_id)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_hto_source_task ON herma_task_objects (source_task_id)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_hto_requested_key ON herma_task_objects (requested_object_key)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_hto_key ON herma_task_objects (object_key, id DESC)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_hto_lower_key ON herma_task_objects (LOWER(object_key))`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_hdq_lower_task ON herma_durable_queue (LOWER(task_id))`),
@@ -3702,7 +3719,9 @@ async function buildContributionPermalinkData(db, infraAllowed, rawLookupId) {
     .prepare(`SELECT * FROM herma_durable_queue WHERE task_id = ? AND ${visFilter} LIMIT 1`)
     .bind(cleanId)
     .first();
-  if (!taskRow && cleanId.length >= QUEUE_GATEWAY_GRID.band_hex_width * 2) {
+  // A prefix lookup reads every row, so it runs only for what can be a hash: a page for an ordinary name costs one indexed read.
+  const couldBeHash = /^[0-9a-f]+$/i.test(cleanId);
+  if (!taskRow && couldBeHash && cleanId.length >= QUEUE_GATEWAY_GRID.band_hex_width * 2) {
     taskRow = await db
       .prepare(`SELECT * FROM herma_durable_queue WHERE SUBSTR(LOWER(receipt_hash), 1, ?) = ? AND ${visFilter} ORDER BY id DESC LIMIT 1`)
       .bind(cleanId.length, cleanId.toLowerCase())
@@ -3719,14 +3738,19 @@ async function buildContributionPermalinkData(db, infraAllowed, rawLookupId) {
     rawObjs = oRes?.results || [];
   }
   if (rawObjs.length === 0) {
-    const directObj = await db
-      .prepare(
-        `SELECT * FROM herma_task_objects
-         WHERE (object_key = ? OR SUBSTR(LOWER(sha256_hash), 1, ?) = ?) AND ${visFilter}
-         ORDER BY id DESC LIMIT 5`
-      )
-      .bind(cleanId, cleanId.length, cleanId.toLowerCase())
-      .all();
+    const directObj = couldBeHash
+      ? await db
+          .prepare(
+            `SELECT * FROM herma_task_objects
+             WHERE (object_key = ? OR SUBSTR(LOWER(sha256_hash), 1, ?) = ?) AND ${visFilter}
+             ORDER BY id DESC LIMIT 5`
+          )
+          .bind(cleanId, cleanId.length, cleanId.toLowerCase())
+          .all()
+      : await db
+          .prepare(`SELECT * FROM herma_task_objects WHERE object_key = ? AND ${visFilter} ORDER BY id DESC LIMIT 5`)
+          .bind(cleanId)
+          .all();
     rawObjs = directObj?.results || [];
     if (!taskRow && rawObjs[0]?.source_task_id) {
       taskRow = await db
@@ -7883,7 +7907,44 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       : (await db.prepare("SELECT 1 AS hit FROM herma_object_aliases WHERE alias_key = ? LIMIT 1").bind(requestedObjKey).first()) ||
         (await db.prepare("SELECT 1 AS hit FROM herma_task_objects WHERE requested_object_key = ? LIMIT 1").bind(requestedObjKey).first()) ||
         (requestedObjKey.startsWith("verb_") ? await db.prepare("SELECT 1 AS hit FROM herma_durable_queue WHERE task_id = ? LIMIT 1").bind(requestedObjKey).first() : null);
-    if (salvagedConcurrentTwinAttempt) {
+    // A submit answered "busy" can already have closed its Task and stored its object: the Task is closed first, and the failure can
+    // come after the row. The same worker sending the same work again on that real Task is that retry: it keeps the key and adds no
+    // second row. Anything else goes on as a new submit: other fields changed, a newer version on the key (a resend may be meant to
+    // restore an older one), or a row made with a token when this call doesn't show it.
+    const retriedOwnRow =
+      existingTask && !salvagedConcurrentTwinAttempt && taskId !== "self_seed" && (priorOwnerRow || readsElsewhere)
+        ? await db
+            .prepare(
+              `SELECT object_key, COALESCE(version_num, 1) AS version_num, labels_json FROM herma_task_objects AS t
+               WHERE requested_object_key = ? AND producer_agent = ? AND worker_uuid = ? AND source_task_id = ? AND sha256_hash = ?
+                 AND category = ? AND visibility = ? AND summary = ? AND verification_verdict = ?
+                 AND id = (SELECT MAX(id) FROM herma_task_objects AS n WHERE n.object_key = t.object_key)
+               ORDER BY id ASC LIMIT 1`
+            )
+            .bind(
+              requestedObjKey,
+              agentId,
+              workerProfile.worker_uuid,
+              taskId,
+              await sha256HexGateway(serializedRaw),
+              scrubSensitiveText(item.category || "knowledge_noun").slice(0, QUEUE_GATEWAY_GRID.agent_max_len),
+              objVis,
+              scrubSensitiveText(item.summary || item.description || item.desc || summary).slice(0, QUEUE_GATEWAY_GRID.summary_max_len),
+              cleanVerificationVerdict(item.verification_verdict || pObj?.verification_verdict || payload.verification_verdict || "UNREVIEWED")
+            )
+            .first()
+            .then((row) => (row && hasOwnerTokenLabel(row.labels_json) && !(authCheck.tokenVerified || authCheck.ownTokenWorker) ? null : row))
+        : null;
+    if (retriedOwnRow) {
+      effectiveObjKey = retriedOwnRow.object_key;
+      versionNum = Number(retriedOwnRow.version_num || 1);
+      namespacedDueToPriorOwner = effectiveObjKey !== requestedObjKey;
+      if (namespacedDueToPriorOwner) {
+        submitWarnings.push(
+          `saved as ${effectiveObjKey}: ${requestedObjKey} stays with the worker that made it, which can add versions by sending its worker_token`
+        );
+      }
+    } else if (salvagedConcurrentTwinAttempt) {
       const contenderSuffix = (await sha256HexGateway(`${workerProfile.worker_uuid}:${serializedRaw}`)).slice(
         0,
         QUEUE_GATEWAY_GRID.hash_prefix_chars / 2
@@ -8077,12 +8138,12 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
           .bind(effectiveObjKey, objHash, cIdx, txt)
       );
       const batchLimit = QUEUE_GATEWAY_GRID.chunk_batch_stmt_limit;
-      const firstBatch = [insertObjStmt, ...chunkStmts.slice(0, batchLimit - 1)];
-      await db.batch(firstBatch);
+      const firstBatch = [...(retriedOwnRow ? [] : [insertObjStmt]), ...chunkStmts.slice(0, batchLimit - 1)];
+      if (firstBatch.length > 0) await db.batch(firstBatch);
       for (let bIdx = batchLimit - 1; bIdx < chunkStmts.length; bIdx += batchLimit) {
         await db.batch(chunkStmts.slice(bIdx, bIdx + batchLimit));
       }
-    } else {
+    } else if (!retriedOwnRow) {
       await insertObjStmt.run();
     }
 
@@ -10983,7 +11044,15 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         );
       }
       if (parsedReq.invalidJson) {
-        return sendJson({ ok: false, code: "invalid_json" }, QUEUE_GATEWAY_GRID.http_bad_request);
+        return sendJson(
+          {
+            ok: false,
+            code: "invalid_json",
+            detail:
+              "Nothing was saved. The JSON has a mistake, most often a closing bracket too many or too few near the end. Fix only that and send the same full work again. Do not shorten it.",
+          },
+          QUEUE_GATEWAY_GRID.http_bad_request
+        );
       }
       const body = parsedReq.json || {};
       traceCtx.agent_id = cleanAgentId(body.agent_id || body.agent || body.worker || "");
