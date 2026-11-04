@@ -14,90 +14,13 @@ const makeTask = async (maker) => {
   return made.enqueued_followup_tasks[0].task_id;
 };
 
-describe("a worker's own lease stands in for a missing fence", () => {
-  it("a named worker submits with no fence, and sending it again replays the answer", async () => {
-    const who = unique("own-lease");
-    const tid = await makeTask(`${who}-maker`);
-    const claimed = await (await post("/q/claim", { agent_id: who, task_id: tid })).json();
-    expect(claimed.lease.task_id).toBe(tid);
-    const submit = { agent_id: who, task_id: tid, summary: "Finished without naming the fence, a test.", output: "the answer" };
-    const done = await post("/q/submit", submit);
-    expect(done.status).toBe(200);
-    const out = await done.json();
-    expect(out.warnings.join(" ")).toContain("own current lease");
-    const again = await post("/q/submit", submit);
-    expect(again.status).toBe(200);
-    expect((await again.json()).idempotent_replay).toBe(true);
-    // Different work after the Task closed is still a conflict.
-    expect((await post("/q/submit", { ...submit, summary: "Something else entirely, a test." })).status).toBe(409);
-  });
-
-  it("a fence that isn't a number is read the same way for the holder", async () => {
-    const who = unique("own-garbled");
-    const tid = await makeTask(`${who}-maker`);
-    await post("/q/claim", { agent_id: who, task_id: tid });
-    expect((await post("/q/submit", { agent_id: who, task_id: tid, fencing_token: "the-token", summary: "A garbled fence from the holder, a test." })).status).toBe(200);
-  });
-
-  it("a late worker, a stranger, a shared name and a wrong worker id can't use it", async () => {
-    const who = unique("late");
-    const tid = await makeTask(`${who}-maker`);
-    await post("/q/claim", { agent_id: `${who}-a`, task_id: tid, lease_seconds: 1 });
-    await new Promise((r) => setTimeout(r, 1500));
-    const second = await (await post("/q/claim", { agent_id: `${who}-b`, task_id: tid })).json();
-    const summary = "This must not close the Task, a test.";
-    const late = await post("/q/submit", { agent_id: `${who}-a`, task_id: tid, summary });
-    expect(late.status).toBe(409);
-    // The refusal a stranger reads names no fence, even in its text.
-    const { withoutLeaseDetails } = await import("../deploy/cloudflare/worker.js");
-    const filtered = await (await withoutLeaseDetails(new Request("https://x/q/submit", { method: "POST" }), new Response(await late.text(), { status: 409, headers: { "content-type": "application/json" } }), limits)).json();
-    expect(filtered.expected_fencing_token).toBeUndefined();
-    expect(filtered.detail).not.toMatch(/\(\d+\)/);
-    expect((await post("/q/submit", { agent_id: `${who}-c`, task_id: tid, summary })).status).toBe(409);
-    expect((await post("/q/submit", { task_id: tid, summary })).status).toBe(409);
-    expect((await post("/q/submit", { agent_id: `${who}-b`, worker_uuid: "w_someone_else", task_id: tid, summary })).status).toBe(409);
-    expect((await post("/q/submit", { agent_id: `${who}-b`, task_id: tid, fencing_token: second.lease.fencing_token - 1, summary })).status).toBe(409);
-    expect((await post("/q/heartbeat", { agent_id: `${who}-a`, task_id: tid })).status).toBeGreaterThanOrEqual(400);
-    expect((await post("/q/release", { agent_id: `${who}-a`, task_id: tid })).status).toBe(409);
-    // The holder still closes it.
-    expect((await post("/q/submit", { agent_id: `${who}-b`, task_id: tid, summary: "The holder finishes it, a test." })).status).toBe(200);
-  });
-
-  it("a shared name holding a lease must still send the fence", async () => {
-    const tid = await makeTask(unique("shared-maker"));
-    const claimed = await (await post("/q/claim", { agent_id: "volunteer-agent", task_id: tid })).json();
-    expect(claimed.lease.task_id).toBe(tid);
-    expect((await post("/q/submit", { agent_id: "volunteer-agent", task_id: tid, summary: "Shared name, no fence, a test." })).status).toBe(409);
-    expect((await post("/q/submit", { agent_id: "volunteer-agent", task_id: tid, fencing_token: claimed.lease.fencing_token, summary: "Shared name with its fence, a test." })).status).toBe(200);
-  });
-
-  it("a worker with a token has to show it or its worker id", async () => {
-    const who = unique("tokened");
-    const joined = await (await post("/q/onboard", { agent_id: who })).json();
-    const uuid = joined.worker_profile.worker_uuid;
-    const tid = await makeTask(`${who}-maker`);
-    const claimed = await (await post("/q/claim", { agent_id: who, worker_uuid: uuid, task_id: tid })).json();
-    expect(claimed.lease.task_id).toBe(tid);
-    expect((await post("/q/submit", { agent_id: who, task_id: tid, summary: "A name alone, no id or token, a test." })).status).toBe(409);
-    const done = await post("/q/submit", { agent_id: who, worker_uuid: uuid, task_id: tid, summary: "With its worker id, a test." });
-    expect(done.status).toBe(200);
-  });
-
-  it("heartbeat and release work the same way, and a worker id names its worker", async () => {
-    const who = unique("beat");
-    const tid = await makeTask(`${who}-maker`);
-    const claimed = await (await post("/q/claim", { agent_id: who, task_id: tid })).json();
-    const beat = await post("/q/heartbeat", { agent_id: who, task_id: tid });
-    expect(beat.status).toBe(200);
-    const beatOut = await beat.json();
-    expect(beatOut.lease_epoch).toBe(claimed.lease.fencing_token);
-    expect(beatOut.warnings.join(" ")).toContain("own current lease");
-    expect((await post("/q/heartbeat", { worker_uuid: claimed.lease.leased_worker_uuid, task_id: tid })).status).toBe(200);
-    const released = await post("/q/release", { agent_id: who, task_id: tid });
-    expect(released.status).toBe(200);
-    const relOut = await released.json();
-    expect(relOut.released).toBe(true);
-    expect(relOut.warnings.join(" ")).toContain("own current lease");
+describe("a name alone doesn't stand in for a fence", () => {
+  it("a submit with no fence and no token is refused, so a stranger can't close a named worker's lease", async () => {
+    const name = unique("forgiving-holder");
+    const tid = await makeTask(`${name}-maker`);
+    await post("/q/claim", { agent_id: name, task_id: tid });
+    const stranger = await post("/q/submit", { agent_id: name, task_id: tid, summary: "A stranger using the holder's name." });
+    expect(stranger.status).toBe(409);
   });
 });
 

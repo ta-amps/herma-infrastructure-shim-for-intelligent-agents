@@ -7042,6 +7042,8 @@ const REDACTED_FENCE_RE = /^\[?REDACTED(?:_TOKEN)?\]?$|^\*{3,}$|^<redacted>$/i;
 // True only when the lease can be nobody else's: a name that isn't shared, the worker id if one was sent, and no second
 // active lease for this name on the Task. A name alone won't do when that worker has a token and didn't show it.
 async function isUnambiguouslyOwnLease(db, task, { agentId, workerUuid, tokenVerified = false }) {
+  // A name or a guessable worker id proves nothing: only a worker that showed its own token skips the fence.
+  if (!tokenVerified) return false;
   if (!agentId || task.leased_by !== agentId || GENERIC_EPHEMERAL_AGENTS.has(String(agentId).toLowerCase())) return false;
   const leaseUuid = String(task.leased_worker_uuid || "");
   if (workerUuid && leaseUuid !== workerUuid) return false;
