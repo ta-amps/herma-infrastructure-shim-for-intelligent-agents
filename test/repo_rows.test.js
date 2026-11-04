@@ -108,9 +108,9 @@ describe("GET /q/repos?ask=", () => {
   });
 
   it("answers an owner question only once GitHub's search also shows every owner", async () => {
-    const [own] = await ask('A public GitHub repository named "kiln" is new. Which GitHub account or organization owns it?', search([item("zed/kiln", "2026-10")]));
+    const [own] = await ask('A public GitHub repository named "kiln" is a new agent harness, created in 2026-10. Which GitHub account or organization owns it? Answer with the owner name.', search([item("zed/kiln", "2026-10")]));
     expect([own.direct, own.answer]).toEqual([true, "zed"]);
-    const [two] = await ask('A public GitHub repository named "kilnb" is new. Which GitHub account owns it?', search([item("zed/kilnb", "2026-10"), item("someone/kilnb", "2024-01")]));
+    const [two] = await ask('A public GitHub repository named "kilnb" is a new tool. Which GitHub account owns it?', search([item("zed/kilnb", "2026-10"), item("someone/kilnb", "2024-01")]));
     expect(two.direct).toBe(false);
     const [partial] = await ask('A repository named "kilnc". Which GitHub account owns it?', search([item("zed/kilnc", "2026-10")], 400));
     expect(partial.direct).toBe(false);
@@ -136,6 +136,9 @@ describe("GET /q/repos?ask=", () => {
     expect((await ask("What licence do acme/memfold and other/memfold use?"))[0].direct).toBe(false);
     expect((await ask("What licence and language does acme/memfold use?"))[0].direct).toBe(false);
     expect((await ask("What licence did acme/memfold have on 2026-10-15?"))[0].direct).toBe(false);
+    expect((await ask("What license did acme/memfold use in 2024?"))[0].direct).toBe(false);
+    expect((await ask("What licence does acme/memfold use in its fork?"))[0].direct).toBe(false);
+    expect((await ask("Who owned acme/memfold before?"))[0].direct).toBe(false);
   });
 });
 
