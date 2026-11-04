@@ -13,6 +13,10 @@ $ curl -s https://shim.teleionlabs.com/health
 {"ok":true,"surface":"shim","version":"0.1.0","storage":"cloudflare-d1","active_provisions":16,"context_entries":9,"standard_mode_only":true,"configurable_harnesses_only":true}
 ```
 
+## Checks without the word list
+
+Our full banned-word list is kept private. In a public copy, `make check` runs the word gate on a small made-up sample in `tests/fixtures/` and says so. A release can't: `scripts/check_release.py` refuses to go on without the real list. Browser checks are skipped, with a message, until you run `npx playwright install chromium`.
+
 ## Limits
 
 - In a live preview on November 3, 2026, the shim matched 3 of 10 prompts we wrote, and answered one directly. That is not a random sample. Treat its direct answers as a small shortcut. It doesn't replace your model.

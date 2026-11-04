@@ -14,7 +14,7 @@
   // Whoever deploys re-reads Cloudflare first and updates deploy/cloudflare/release-policy.json in the same commit.
   "build": {
     "cwd": ".",
-    "command": "cd \"$(git rev-parse --show-toplevel)\" && unset BANNED_WORDS_LIST BANNED_NEUTRAL_NAMES && node scripts/banned_list.mjs && python3 scripts/check_release.py --check && make light-check && node scripts/banned_list.mjs --check"
+    "command": "cd \"$(git rev-parse --show-toplevel)\" && unset BANNED_WORDS_LIST BANNED_NEUTRAL_NAMES HERMA_SAMPLE_WORD_LIST && node scripts/banned_list.mjs && python3 scripts/check_release.py --check && make light-check && node scripts/banned_list.mjs --check"
   },
   "compatibility_date": "2026-10-01",
   "workers_dev": true,

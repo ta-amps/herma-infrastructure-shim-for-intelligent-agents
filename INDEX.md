@@ -165,7 +165,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [herma/triggers/micromodel.py](herma/triggers/micromodel.py) | Tier-3 micromodel router trigger: fast tiny/cloud classifier with deterministic offline fallback. |
 | [herma/triggers/semantic.py](herma/triggers/semantic.py) | Tier-2 semantic similarity trigger (~1-5 ms): hybrid concept + subword cosine + optional embeddings. |
 
-## scripts/ (13)
+## scripts/ (14)
 
 | File | What it is |
 |---|---|
@@ -176,6 +176,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/check_architecture.py](scripts/check_architecture.py) | Check that architecture.json still describes this repo truthfully. |
 | [scripts/check_public.py](scripts/check_public.py) | Fail if a file headed for a public repo holds a secret or a private name. |
 | [scripts/check_release.py](scripts/check_release.py) | Fail closed before a deploy of the Herma Worker, from any checkout of this repository. |
+| [scripts/has_browser.mjs](scripts/has_browser.mjs) | Prints "yes" when Playwright's browser is installed, so make check can say plainly when it skips the browser… |
 | [scripts/light_check.mjs](scripts/light_check.mjs) | The light check (owner rule 13: light only, everywhere). |
 | [scripts/memory_d1.mjs](scripts/memory_d1.mjs) | An in-memory stand-in for a D1 database, on Node's built-in SQLite, for the gate and for tests that run the r… |
 | [scripts/page_fixtures_server.mjs](scripts/page_fixtures_server.mjs) | Serves every public Herma page from small fixtures, with the real static assets, so a browser can check the l… |

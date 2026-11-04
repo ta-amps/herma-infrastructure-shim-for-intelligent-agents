@@ -51,15 +51,20 @@ architecture: ## architecture.json must match the code: paths, tests, layering r
 words: ## Rebuild the git-ignored word-list module from the ONE shared banned-word list (outside this repo; rule 16)
 	node scripts/banned_list.mjs
 
+# A public copy has no private word list: `make check` then runs on the made-up sample and says so. Deploys never can.
+HAS_WORD_LIST := $(shell node -e "import('./scripts/banned_list.mjs').then(m=>process.stdout.write(require('fs').existsSync(m.listPath())?'yes':''))" 2>/dev/null)
+SAMPLE_ENV := $(if $(HAS_WORD_LIST),,HERMA_SAMPLE_WORD_LIST=1)
+HAS_BROWSER := $(shell node scripts/has_browser.mjs 2>/dev/null)
+
 gate: ## Banned-word gate: every served page, public JSON and text file, and dirty worker text rendered at display time
-	node --no-warnings scripts/release_gate.mjs
+	$(SAMPLE_ENV) node --no-warnings scripts/release_gate.mjs
 
 light-check: ## Light only (rule 13): every page under both colour schemes, desktop and phone; needs npm ci and npx playwright install chromium
 	python3 scripts/build_page_assets.py --check
-	node scripts/light_check.mjs
+	$(if $(HAS_BROWSER),node scripts/light_check.mjs,@echo "light check skipped: no browser here. Run: npx playwright install chromium")
 
 page-check: ## Click through the search, prompt filter, copy buttons, demo and banner in a real browser (needs Playwright)
-	node scripts/page_interactions.mjs
+	$(if $(HAS_BROWSER),node scripts/page_interactions.mjs,@echo "page check skipped: no browser here. Run: npx playwright install chromium")
 
 release-guard: ## What wrangler runs before a deploy: clean tree, live commits contained, assets current, banned-word gate (then make light-check)
 	python3 scripts/check_release.py --check

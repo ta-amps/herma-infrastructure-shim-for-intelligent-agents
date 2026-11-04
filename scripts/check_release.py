@@ -39,7 +39,7 @@ FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
 # A release always uses the real shared list: the paths that the tests override are dropped for every step.
-OVERRIDES = ("BANNED_WORDS_LIST", "BANNED_NEUTRAL_NAMES")
+OVERRIDES = ("BANNED_WORDS_LIST", "BANNED_NEUTRAL_NAMES", "HERMA_SAMPLE_WORD_LIST")
 
 
 def release_environment() -> dict[str, str]:

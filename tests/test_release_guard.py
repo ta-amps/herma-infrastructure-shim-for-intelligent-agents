@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from banned_support import shared_words_or_none
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -142,9 +143,29 @@ def test_wrangler_runs_the_guard_and_the_light_check_before_every_deploy() -> No
     )
 
 
-def test_the_asset_versions_and_the_gate_pass_on_this_tree() -> None:
+def test_the_asset_versions_and_the_gate_pass_on_this_tree(monkeypatch: pytest.MonkeyPatch) -> None:
     assert check_release.check_assets(REPO_ROOT) == []
+    if shared_words_or_none() is None:
+        pytest.skip("the real gate needs the private word list; the next test covers its absence")
     assert check_release.check_gate(REPO_ROOT) == []
+
+
+def test_a_release_never_runs_on_the_sample_list(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With no real list, the deploy path fails closed even if someone asks for the sample list."""
+    generated = REPO_ROOT / "deploy/cloudflare/banned_words.generated.js"
+    before = generated.read_bytes() if generated.exists() else None
+    monkeypatch.setenv("HERMA_SAMPLE_WORD_LIST", "1")
+    monkeypatch.setenv("TELEION_NOTES", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    try:
+        problems = check_release.check_gate(REPO_ROOT)
+    finally:
+        if before is not None:
+            generated.write_bytes(before)
+    assert problems, "the release gate passed with no real word list"
+    assert "missing" in " ".join(problems)
 
 
 def made_up_environment(**extra: str) -> dict[str, str]:

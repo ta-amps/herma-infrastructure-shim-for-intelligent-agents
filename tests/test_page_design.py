@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -314,6 +315,7 @@ def test_every_page_uses_plain_words(
         capture_output=True,
         text=True,
         check=True,
+        env={**os.environ, "HERMA_SAMPLE_WORD_LIST": "1"},  # the real list is used when it is here
     )
     found = json.loads(result.stdout)
     assert {name: problems for name, problems in found.items() if problems} == {}
@@ -493,6 +495,23 @@ def bad_site(tmp_path_factory: pytest.TempPathFactory) -> Any:
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is needed for the light check")
+def _no_browser() -> bool:
+    found = subprocess.run(
+        ["node", "scripts/has_browser.mjs"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return found.stdout.strip() != "yes"
+
+
+needs_browser = pytest.mark.skipif(
+    _no_browser(), reason="no browser here: npx playwright install chromium"
+)
+
+
+@needs_browser
 def test_the_light_check_fails_on_every_kind_of_dark_page(bad_site: str) -> None:
     for name, (_extra, _css, _body, should_pass) in BAD_PAGES.items():
         result = subprocess.run(
@@ -530,6 +549,7 @@ def test_the_light_check_fails_on_every_kind_of_dark_page(bad_site: str) -> None
         assert message in result.stdout, message
 
 
+@needs_browser
 def test_the_light_check_passes_on_every_redesigned_page() -> None:
     result = subprocess.run(
         ["node", "scripts/light_check.mjs"],

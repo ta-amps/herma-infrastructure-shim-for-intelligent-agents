@@ -32,7 +32,11 @@ const LONG_HEX = /(?<![0-9a-f])[0-9a-f]{12,}(?![0-9a-f])/i;
 let INPUTS;
 let RULES;
 try {
-  INPUTS = ensureGenerated();
+  // A public copy has no private word list, so `make check` may ask for the made-up sample. A release never can:
+  // scripts/check_release.py drops this setting, and without the real list this gate fails closed.
+  const sampleOk = process.env.HERMA_SAMPLE_WORD_LIST === "1";
+  INPUTS = ensureGenerated({ fixtureOk: sampleOk });
+  if (INPUTS.source === "fixture") console.error("release gate: ON THE MADE-UP SAMPLE WORD LIST. The full list is kept private; this result does not clear a release.");
   RULES = compileList(INPUTS.list);
 } catch (error) {
   console.error(`release gate FAILED: ${error.message}`);
