@@ -51,6 +51,7 @@
     "HERMA_META_BUDGET_USD": "5",
     "STORAGE_MODE": "cloud",
     "PUBLIC_URL": "https://shim.teleionlabs.com",
+    "PUBLIC_NAMES_FILTER": "on",
     "CANONICAL_REDIRECT": "on",
     "TESSERA_URL": "https://tessera.ta-amps.workers.dev",
     "ORIGIN": "https://herma-api.fly.dev"

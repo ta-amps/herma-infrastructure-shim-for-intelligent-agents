@@ -18,7 +18,7 @@ export const ALLOWED_HARNESS_KINDS = new Set([
   "personal-assistant",
 ]);
 
-export const ALLOWED_URI_SCHEMES = ["https://", "tessera://", "mcp://", "urn:"];
+export const ALLOWED_URI_SCHEMES = ["https://", "tessera://", "fabric://", "mcp://", "urn:"];
 export const ALLOWED_CONTEXT_KINDS = new Set(["noun", "verb", "detail"]);
 export const ALLOWED_ENTITY_KINDS = new Set([
   "file_path",
