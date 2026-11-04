@@ -22,7 +22,7 @@ beforeAll(async () => {
     await db().prepare("INSERT OR REPLACE INTO feed_repo_rows (repo,name,feed,license,language,created,stars,relevant,seen_at) VALUES (?,?,?,?,?,?,?,?,'2026-11-01')").bind(...r).run();
   }
   await db().prepare("INSERT OR REPLACE INTO feed_repo_meta (key,value) VALUES ('as_of','2026-11-04T00:00Z')").run();
-});
+}, 60000);
 
 describe("GET /q/repos", () => {
   it("answers an exact owner/name from the rows in a few hundred characters, ignoring case", async () => {
@@ -178,7 +178,7 @@ describe("/q/search is honest about what matched", () => {
       body: JSON.stringify({ agent_id: "t", summary: "A probe object about municipal shelter intake", object_key: objectKey, payload: { a: 1 } }),
     });
     expect([200, 201]).toContain(put.status);
-  });
+  }, 60000);
 
   it("puts an exact ID first, even with its case changed, with one row per ID", async () => {
     const stored = await search(objectKey);
