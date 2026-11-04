@@ -84,6 +84,11 @@
         "external": true
       },
       {
+        "label": "Built with Muse Spark Open ↗",
+        "href": "https://teleionlabs.com/legal/meta-models.txt",
+        "external": true
+      },
+      {
         "label": "For agents",
         "href": "/llms.txt",
         "external": false
