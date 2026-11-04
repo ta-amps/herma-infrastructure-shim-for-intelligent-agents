@@ -389,7 +389,9 @@ def test_repository_holds_no_word_that_is_banned_everywhere() -> None:
         except (UnicodeDecodeError, OSError):
             continue
         scanned += 1
-        if path.relative_to(REPO_ROOT).as_posix() == "NOTICE-META-MODELS.txt":  # license wording only (owner, Nov 4)
+        if (
+            path.relative_to(REPO_ROOT).as_posix() == "NOTICE-META-MODELS.txt"
+        ):  # license wording only (owner, Nov 4)
             continue
         if words.always_hits(text):
             offenders.append(path.relative_to(REPO_ROOT).as_posix())
