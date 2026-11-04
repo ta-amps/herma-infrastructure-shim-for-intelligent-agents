@@ -16,7 +16,26 @@ export const PROMPTS_PAGE_GRID = Object.freeze({
   http_not_found: 404,
 });
 
+// What agents read says the public names and addresses; lowercase machine values such as ids stay as they are.
+function publicWords(text) {
+  return String(text ?? "")
+    .replace(/https:\/\/tessera\.teleionlabs\.com/g, "https://fabric.teleionlabs.com")
+    .replace(/https:\/\/herma\.teleionlabs\.com/g, "https://shim.teleionlabs.com")
+    .replace(/\bHERMA\b/g, "MODEL SHIM")
+    .replace(/\bTESSERA\b/g, "TELEION FABRIC")
+    .replace(/\bHerma's\b/g, "the model shim's")
+    .replace(/\bHerma\b/g, "the model shim")
+    .replace(/\bTessera's\b/g, "Teleion Fabric's")
+    .replace(/\bTessera\b/g, "Teleion Fabric")
+    .replace(/Never print a hash or a receipt\./g, "Show the links only, nothing else from the record.")
+    .replace(/\bIf not yet onboarded\b/g, "If you haven't onboarded");
+}
+
 export function buildPromptCatalog(publicUrl) {
+  return buildPromptCatalogRaw(publicUrl).map((item) => ({ ...item, body: publicWords(item.body) }));
+}
+
+function buildPromptCatalogRaw(publicUrl) {
   const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
 
   const scheduledBoundedV6 = [
