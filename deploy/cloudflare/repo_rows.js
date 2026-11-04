@@ -128,7 +128,7 @@ const ASK_FORMS = [
   [2, new RegExp(`^What is the (?:primary )?(?:programming )?language of (?:the )?(?:GitHub )?(?:repository |repo )?${REPO_IN_ASK}\\?$`, "i")],
   [0, new RegExp(`^Who owns (?:the )?(?:GitHub )?(?:repository |repo )?${REPO_IN_ASK}\\?$`, "i")],
 ];
-const ASK_OWNER_BY_NAME = /^(?:An? )?(?:public )?(?:GitHub )?(?:repository|repo) named "([A-Za-z0-9._-]{2,100})"(?: is an? [A-Za-z ,-]{1,80})?(?:, created in (20\d\d-\d\d))?\. Which GitHub (?:account|organi[sz]ation)(?: or organi[sz]ation)? owns it\?$/i;
+const ASK_OWNER_BY_NAME = /^(?:An? )?(?:public )?(?:GitHub )?(?:repository|repo) named "([A-Za-z0-9._-]{2,100})"(?:, created in (20\d\d-\d\d))?\. Which GitHub (?:account|organi[sz]ation)(?: or organi[sz]ation)? owns it\?$/i;
 
 function parseAsk(ask) {
   const text = String(ask).slice(0, 600).trim().replace(/\s+Answer with [a-z ]{1,40}\.$/i, "");
