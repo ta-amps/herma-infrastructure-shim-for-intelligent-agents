@@ -31,7 +31,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) |  |
 
-## deploy/ (42)
+## deploy/ (43)
 
 | File | What it is |
 |---|---|
@@ -63,6 +63,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/prompts_page.js](deploy/cloudflare/prompts_page.js) | The worker prompts hub (/prompts, /get-started, /q/start, /q/prompts, /q/prompts.js): copy-and-paste prompts… |
 | [deploy/cloudflare/provider_diagnostics.js](deploy/cloudflare/provider_diagnostics.js) | Fixed provider-reported categories only. |
 | [deploy/cloudflare/provider_health.js](deploy/cloudflare/provider_health.js) | Deterministic shared availability inside the existing operator allowance coordinator. |
+| [deploy/cloudflare/public_names.js](deploy/cloudflare/public_names.js) | Public output says Teleion Fabric and the shim's public address. |
 | [deploy/cloudflare/release-policy.json](deploy/cloudflare/release-policy.json) | JSON object: schema, note, required_ancestors, live_when_recorded, rules |
 | [deploy/cloudflare/sha256_sync.js](deploy/cloudflare/sha256_sync.js) | A small synchronous SHA-256 for the Worker's display filter. |
 | [deploy/cloudflare/site_pages.js](deploy/cloudflare/site_pages.js) | The pages that are not the dashboard or a record: the home, Get started and Trust & safety (design contract |
@@ -179,7 +180,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/page_interactions.mjs](scripts/page_interactions.mjs) | Clicks through the interactive parts of the redesigned pages (fixture server, the Worker's real page policy)… |
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
 
-## test/ (28)
+## test/ (29)
 
 | File | What it is |
 |---|---|
@@ -205,6 +206,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/provider_diagnostics.test.js](test/provider_diagnostics.test.js) |  |
 | [test/provider_grants.test.js](test/provider_grants.test.js) |  |
 | [test/provider_health.test.js](test/provider_health.test.js) |  |
+| [test/public_names.test.js](test/public_names.test.js) |  |
 | [test/q_submit_forms_and_field_work.test.js](test/q_submit_forms_and_field_work.test.js) |  |
 | [test/team_agents.test.js](test/team_agents.test.js) |  |
 | [test/thick_path_and_schema_coach.test.js](test/thick_path_and_schema_coach.test.js) |  |

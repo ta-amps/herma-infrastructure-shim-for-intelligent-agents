@@ -1,3 +1,4 @@
+import { withPublicNames } from "./public_names.js";
 import { agentStartAsset } from "./agent_start.js";
 import { canonicalRedirect, isPageNavigation } from "./canonical_host.js";
 import { readHomeTotals } from "./home_totals.js";
@@ -1260,13 +1261,13 @@ async function syncFromTesseraCloud(
 
     const resolvedUris = [];
     for (const u of prov.uris || []) {
-      if (u.uri?.startsWith("tessera://blobs/") && !u.inline_excerpt) {
-        validateBlobSha256(u.uri.slice("tessera://blobs/".length));
+      if (u.uri?.replace(/^fabric:/, "tessera:").startsWith("tessera://blobs/") && !u.inline_excerpt) {
+        validateBlobSha256(u.uri.replace(/^fabric:/, "tessera:").slice("tessera://blobs/".length));
         resolvedUris.push(u);
         continue;
       }
-      if (u.uri?.startsWith("tessera://buckets/") && !u.inline_excerpt) {
-        const rest = u.uri.slice("tessera://buckets/".length).trim();
+      if (u.uri?.replace(/^fabric:/, "tessera:").startsWith("tessera://buckets/") && !u.inline_excerpt) {
+        const rest = u.uri.replace(/^fabric:/, "tessera:").slice("tessera://buckets/".length).trim();
         const slash = rest.indexOf("/");
         if (slash > 0 && !rest.includes("..")) {
           const bucket = rest.slice(0, slash);
@@ -2439,6 +2440,30 @@ export default {
   async fetch(request, env, ctx) {
     // Herma's own pages carry the one thin agent banner (page_shell.js), so the older "Put your agent to work" block is
     // not injected into the home page any more; the /agent-start.* files stay available.
-    return agentStartAsset(request) || onboardingApplication.fetch(request, env, ctx);
+    if (env.PUBLIC_NAMES_FILTER !== "on") return agentStartAsset(request) || onboardingApplication.fetch(request, env, ctx);
+    return serveWithPublicNames(request, env, ctx);
   },
 };
+
+// Public addresses and headers say the public names; every old header still works, and a client that asks with one
+// is told so. Callers with a key get the stored names. Bodies read by digest pass through unchanged.
+const KEY_HEADERS = ["authorization", "x-herma-api-key", "x-herma-key", "x-herma-infra-key", "x-herma-admin-token", "x-bootstrap-secret", "x-upstream-api-key"];
+async function serveWithPublicNames(request, env, ctx) {
+  const asked = request.headers.get("access-control-request-headers") || "";
+  const headers = new Headers(request.headers);
+  for (const [name, value] of request.headers) {
+    if (/^x-shim-/i.test(name)) headers.set(name.replace(/^x-shim-/i, "x-herma-"), value);
+  }
+  const inbound = new Request(request, { headers });
+  const answer = await (agentStartAsset(inbound) || onboardingApplication.fetch(inbound, env, ctx));
+  const out = await withPublicNames(inbound, answer, {
+    skip: ["/q/object", "/q/compose", "/q/upload", "/kits/", "/assets/", "/agent-start", "/v1/chat/completions", "/v1/responses", "/v1/messages"],
+    keyHeaders: KEY_HEADERS,
+  });
+  const allow = out.headers.get("access-control-allow-headers");
+  if (!allow) return out;
+  const reply = new Headers(out.headers);
+  const old = asked.split(",").map((h) => h.trim()).filter((h) => /^x-herma-/i.test(h));
+  reply.set("access-control-allow-headers", [allow.replace(/X-Herma-/g, "X-Shim-"), ...old].join(", "));
+  return new Response(out.body, { status: out.status, statusText: out.statusText, headers: reply });
+}
