@@ -84,6 +84,7 @@ function editWithin(a, b, limit) {
 /** rows: the public rows. Pure, so tests can build an index with no database. */
 export function buildIndex({ objects = [], repos = [], kits = [], packs = [], feedWords = {}, terms = {} }) {
   const docs = [];
+  const tfs = [];
   const add = (d, fields) => {
     const tf = new Map();
     let len = 0;
@@ -93,7 +94,8 @@ export function buildIndex({ objects = [], repos = [], kits = [], packs = [], fe
         len += w;
       }
     }
-    docs.push({ ...d, tf, len });
+    tfs.push(tf);
+    docs.push({ ...d, len });
   };
   for (const p of packs) add({ kind: "pack", id: p.id, title: p.title, about: p.about, url: `${LIBRARY}/${p.id}`, prior: TUNE.kindPrior.pack }, [[`${p.id} ${p.title}`, TUNE.name], [terms[`pack:${p.id}`]?.join(" "), TUNE.words], [p.about, TUNE.about], ["seed pack", TUNE.tags]]);
   for (const k of kits) add({ kind: "kit", id: k.id, title: k.title, about: k.about, url: `${ERANOS}/catalog/${k.id}`, prior: TUNE.kindPrior.kit }, [[`${k.id} ${k.title}`, TUNE.name], [terms[`kit:${k.id}`]?.join(" "), TUNE.words], [k.about, TUNE.about], [k.tags, TUNE.tags]]);
@@ -118,7 +120,7 @@ export function buildIndex({ objects = [], repos = [], kits = [], packs = [], fe
   let total = 0;
   docs.forEach((d, i) => {
     total += d.len;
-    for (const [t, w] of d.tf) {
+    for (const [t, w] of tfs[i]) {
       if (!postings.has(t)) postings.set(t, []);
       postings.get(t).push([i, w]);
     }
@@ -211,7 +213,7 @@ export function searchIndex(index, rawQuery, limit = DEFAULT_LIMIT) {
   if (!/\s/.test(low) && low.length >= 6 && ID_SHAPE.test(low)) {
     const near = closestName(index, low);
     if (near) {
-      if (index.exact.has(near)) return take([hit(index.exact.get(near))], "near_name", { rewrote: near });
+      if (index.exact.has(near) && !hit(index.exact.get(near)).gone) return take([hit(index.exact.get(near))], "near_name", { rewrote: near });
       if (index.names.has(near)) return take(index.names.get(near).map(hit).sort((a, b) => b.stars - a.stars), "near_name", { rewrote: near });
     }
   }
@@ -266,9 +268,9 @@ export function searchIndex(index, rawQuery, limit = DEFAULT_LIMIT) {
     ranked.push({ d, v, coverage, raw: s, n });
   }
   ranked.sort((a, b) => b.v - a.v);
-  const fits = (r) => r.coverage >= minCoverage && (terms.length < TUNE.longTerms || r.n >= 2);
+  const fits = (r) => r.raw >= TUNE.minScore && r.coverage >= minCoverage && (terms.length < TUNE.longTerms || r.n >= 2);
   const top = ranked.find(fits);
-  if (!top || top.raw < TUNE.minScore) return { found: false, match: "none", hits: [], ...(rewrote ? { rewrote } : {}) };
+  if (!top) return { found: false, match: "none", hits: [], ...(rewrote ? { rewrote } : {}) };
   const seen = new Set();
   const list = [];
   for (const r of ranked) {
@@ -442,10 +444,12 @@ export async function findResponse(url, db, { waitUntil } = {}) {
   // A few spare hits, so a row that just left public view doesn't shorten the answer.
   let out = searchIndex(index, q, limit + SPARE_HITS);
   // Tasks aren't in the index, and a new object may not be yet: a query shaped like an ID asks the rows directly.
-  const indexedExact = out.match === "exact";
-  if (!indexedExact && ID_LOOKUP.test(q.trim())) {
+  // An exact object name is a read by id: it follows that rule, not the rule for what's offered for reuse.
+  const exactObject = out.match === "exact" && out.hits[0]?.kind === "obj";
+  if (exactObject || (out.match !== "exact" && ID_LOOKUP.test(q.trim()))) {
     const direct = await lookupId(db, q.trim().toLowerCase());
     if (direct) out = { found: true, match: "exact", hits: [direct], read: true };
+    else if (exactObject) out = { found: false, match: "none", hits: [] };
   }
   // `read`: those rows were just read, under the rule for a read by id.
   let hits = out.read ? out.hits : await stillPublic(db, out.hits);

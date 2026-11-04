@@ -126,7 +126,9 @@ describe("GET /q/find on a real database", () => {
     expect(after.found).toBe(true);
     expect(after.hits[0].id).toMatch(/^find_family_a_/);
     expect(after.hits[0].id).not.toBe(first[0]);
-    // By its exact id it still reads.
+    // By its exact id it still reads, even when the index still holds it.
+    await env.HERMA_DB.prepare("UPDATE herma_task_objects SET verification_verdict = 'REFUTED' WHERE object_key = ?").bind(after.hits[0].id).run();
+    expect((await (await call(`/q/find?q=${after.hits[0].id}`)).json()).hits[0].id).toBe(after.hits[0].id);
     expect((await (await call("/q/find?q=find_family_b_v1")).json()).hits[0].id).toBe("find_family_b_v1");
   });
   it("asks for q, and refuses other methods", async () => {
