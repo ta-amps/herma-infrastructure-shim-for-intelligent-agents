@@ -141,7 +141,7 @@ def test_http_edge_lockdown_and_dry_run_across_wire_formats(
     assert "PROV-TESSERA-FENCING@v1" in data_chat["receipt"]["provisions_fired"]
     assert "https://fabric.teleionlabs.com/llms.txt" in data_chat["receipt"]["uris_injected"]
     sys_msg = data_chat["augmented_payload"]["messages"][0]["content"]
-    assert "[HERMA PROVISION: PROV-TESSERA-FENCING@v1" in sys_msg
+    assert "[FABRIC PROVISION: PROV-TESSERA-FENCING@v1" in sys_msg
 
     # Turn-2 deduplication skips re-injecting PROV-TESSERA-FENCING:
     turn2_msgs = [
@@ -174,7 +174,7 @@ def test_http_edge_lockdown_and_dry_run_across_wire_formats(
     )
     assert r_resp.status_code == 200
     assert "PROV-RISK-REVIEW-NON-ACCUSATORY@v1" in r_resp.json()["receipt"]["provisions_fired"]
-    assert "HERMA PROVISION" in r_resp.json()["augmented_payload"]["instructions"]
+    assert "FABRIC PROVISION" in r_resp.json()["augmented_payload"]["instructions"]
 
     # Anthropic /v1/messages envelope injection:
     r_anth = client.post(
@@ -193,7 +193,7 @@ def test_http_edge_lockdown_and_dry_run_across_wire_formats(
     )
     assert r_anth.status_code == 200
     assert "PROV-EDGE-ORIGIN-LOCKDOWN@v1" in r_anth.json()["receipt"]["provisions_fired"]
-    assert "HERMA PROVISION" in r_anth.json()["augmented_payload"]["system"]
+    assert "FABRIC PROVISION" in r_anth.json()["augmented_payload"]["system"]
 
     # Contributor model refused over HTTP:
     r_contrib = client.post(

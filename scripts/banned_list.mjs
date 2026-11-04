@@ -60,7 +60,7 @@ export function readList({ fixtureOk = false } = {}) {
 }
 
 /** The pattern groups this guard reads. `fingerprints` is hex of 12 or more characters, checked in every element, code included (owner, Nov 2). */
-const READ_GROUPS = new Set(["always", "visible_text", "agent_apps_outside_models_page", "fingerprints"]);
+const READ_GROUPS = new Set(["always", "visible_text", "agent_apps_outside_models_page", "fingerprints", "marketing_voice"]);
 
 /** Names of groups in the list that hold patterns but that this guard does not read (so a new group is noticed, never silently skipped). */
 export function unreadGroups(list) {
@@ -72,7 +72,7 @@ export function groups(list) {
   const take = (g) => (Array.isArray(list?.[g]?.patterns) ? list[g].patterns.map(String) : []);
   return {
     always: take("always"),
-    visible: take("visible_text"),
+    visible: [...take("visible_text"), ...take("marketing_voice")],
     apps: take("agent_apps_outside_models_page"),
     fingerprints: take("fingerprints"),
     privateSha256: Array.isArray(list?.private_names?.sha256) ? list.private_names.sha256.map((h) => String(h).toLowerCase()) : [],

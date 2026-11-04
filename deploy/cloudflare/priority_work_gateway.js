@@ -4882,7 +4882,7 @@ function resolveFreeAccessWindowConfig(env) {
     strict_auth_mode: strictAuth,
     open_zero_auth_active: unauthenticatedAccessActive && !strictAuth,
     unauthenticated_access_active: unauthenticatedAccessActive,
-    unauthenticated_rpm_cap: unauthRpmCap,
+    unauthenticated_rpm_cap: strictAuth || env?.FREE_ACCESS_UNAUTH_RPM_CAP ? unauthRpmCap : null,
     paid_muse_daily_calls_cap: paidMuseDailyCallsCap,
   };
 }
@@ -6011,7 +6011,7 @@ async function claimNextAuthorizedTask(
       const pool = await db
         .prepare(
           `SELECT * FROM herma_durable_queue
-           WHERE state = 'ready' AND tier = ? ${prereqReadyClause}
+           WHERE state = 'ready' AND tier = ? AND ${visAllowed} ${prereqReadyClause}
            ORDER BY ${bandOrderClause} priority DESC, id ASC LIMIT ?`
         )
         .bind(requestedTier, ...bandBind, poolLimit)

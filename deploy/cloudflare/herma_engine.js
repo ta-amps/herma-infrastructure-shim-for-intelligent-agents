@@ -2054,7 +2054,7 @@ export function extractEnvelope(wireFormat, payload, extraPaths = []) {
   const fullHistory = allChunks.filter(Boolean).join("\n");
   const recentText = activeChunks.length ? activeChunks.slice(-3).join("\n") : fullHistory;
   const existingIds = new Set();
-  const markerRe = /\[HERMA PROVISION:\s*(PROV-[A-Z0-9-]+)@v\d+/g;
+  const markerRe = /\[(?:HERMA|FABRIC) PROVISION:\s*(PROV-[A-Z0-9-]+)@v\d+/g;
   let m;
   while ((m = markerRe.exec(fullHistory)) !== null) existingIds.add(m[1]);
 
@@ -2112,7 +2112,7 @@ export function renderContextEntriesBlock(refs, contextMap) {
 
 function renderProvisionBlock(stored, contextMap = null) {
   const prov = stored.provision;
-  const lines = [`[HERMA PROVISION: ${prov.prov_id}@v${stored.version} | ${prov.title}]`];
+  const lines = [`[FABRIC PROVISION: ${prov.prov_id}@v${stored.version} | ${prov.title}]`];
   if (String(prov.inject_text || "").trim()) {
     lines.push(String(prov.inject_text).trim());
   }
@@ -2129,11 +2129,11 @@ function renderProvisionBlock(stored, contextMap = null) {
       lines.push(line);
     }
   }
-  lines.push(`[/HERMA PROVISION: ${prov.prov_id}]`);
+  lines.push(`[/FABRIC PROVISION: ${prov.prov_id}]`);
   let rendered = lines.join("\n");
   const maxChars = prov.max_chars || 2400;
   if (rendered.length > maxChars) {
-    rendered = rendered.slice(0, maxChars - 36).trimEnd() + `\n[/HERMA PROVISION: ${prov.prov_id}]`;
+    rendered = rendered.slice(0, maxChars - 36).trimEnd() + `\n[/FABRIC PROVISION: ${prov.prov_id}]`;
   }
   return { rendered, uris, shimmedRefs };
 }
