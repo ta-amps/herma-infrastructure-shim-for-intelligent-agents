@@ -52,6 +52,7 @@
     "STORAGE_MODE": "cloud",
     "PUBLIC_URL": "https://shim.teleionlabs.com",
     "PUBLIC_NAMES_FILTER": "on",
+    "OPEN_WORK_LIMITS": "on",
     "CANONICAL_REDIRECT": "on",
     "TESSERA_URL": "https://tessera.ta-amps.workers.dev",
     "ORIGIN": "https://herma-api.fly.dev"

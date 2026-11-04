@@ -501,6 +501,19 @@ export async function verifyLegitimateCoLeaseOrGrace(
   const expMs = Date.parse(coRow.expires_at || "") || 0;
   const isExpired = expMs > 0 && expMs <= nowMs;
   if (isExpired) {
+    // Someone else holds a newer lease on this Task: the late work must not close it under them.
+    const current = await db
+      .prepare("SELECT state, fencing_token, leased_by, lease_expires_at FROM herma_durable_queue WHERE task_id = ? LIMIT 1")
+      .bind(String(taskId))
+      .first();
+    if (
+      current?.state === "leased" &&
+      Number(current.fencing_token) > reqToken &&
+      current.leased_by !== agentId &&
+      (Date.parse(current.lease_expires_at || "") || 0) > nowMs
+    ) {
+      return { matched: false, newerLeaseActive: true };
+    }
     const overdueMs = nowMs - expMs;
     if (!hasSalvageableWork || overdueMs > CO_LEASE_ENSEMBLE_GRID.late_finisher_grace_ms) {
       return { matched: false, graceExceeded: true };

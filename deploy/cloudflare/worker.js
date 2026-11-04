@@ -1,4 +1,5 @@
 import { withPublicNames } from "./public_names.js";
+import { isServerInfraAuthorized } from "./priority_work_gateway.js";
 import { agentStartAsset } from "./agent_start.js";
 import { canonicalRedirect, isPageNavigation } from "./canonical_host.js";
 import { readHomeTotals } from "./home_totals.js";
@@ -2445,6 +2446,43 @@ export default {
   },
 };
 
+// Who holds a lease and its fence go only to the worker that claimed it, so a stranger can't act as that worker.
+// A refusal says what's wrong without naming the holder or the right number.
+const LEASE_FIELDS = ["leased_by", "leased_worker_uuid", "fencing_token", "lease_epoch", "fence_seq", "expected_fencing_token", "expected_lease_epoch", "active_fencing_token"];
+function dropLeaseFields(value) {
+  if (Array.isArray(value)) return value.map(dropLeaseFields);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).filter(([k]) => !LEASE_FIELDS.includes(k)).map(([k, v]) => [k, k === "payload" ? v : dropLeaseFields(v)]));
+}
+export async function withoutLeaseDetails(request, response, env) {
+  if (env.OPEN_WORK_LIMITS !== "on") return response;
+  const path = new URL(request.url).pathname;
+  if (!path.startsWith("/q/") && !path.startsWith("/help") && !path.startsWith("/chat")) return response;
+  // The worker's own lease answers keep its fence.
+  if (response.status !== 409 && /^\/q\/(?:claim|heartbeat|submit|complete|release|onboard|enqueue)(?:\/|$)/.test(path)) return response;
+  // A stored object is read by digest: never edited here.
+  if (/^\/q\/(?:object|compose|upload)(?:\/|$)/.test(path)) return response;
+  if (await isServerInfraAuthorized(request, env, env.HERMA_DB).catch(() => false)) return response;
+  if (!(response.headers.get("content-type") || "").includes("json")) return response;
+  const text0 = await response.text();
+  const text = text0.replace(/fencing_token=\d+/g, "fencing_token=<in your claim answer>");
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return new Response(text, response);
+  }
+  // A claim made through chat is the worker's own lease: it keeps its fence.
+  if (body && body.claimed_task === true) return new Response(text0, { status: response.status, statusText: response.statusText, headers: response.headers });
+  const clean = dropLeaseFields(body);
+  if (typeof clean.detail === "string") {
+    clean.detail = clean.detail.replace(/ \(expected=\d+\)/, "").replace(/is leased by '[^']*', not '[^']*'/, "is held by another worker");
+  }
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  return new Response(JSON.stringify(clean, null, 2), { status: response.status, statusText: response.statusText, headers });
+}
+
 // Public addresses and headers say the public names; every old header still works, and a client that asks with one
 // is told so. Callers with a key get the stored names. Bodies read by digest pass through unchanged.
 const KEY_HEADERS = ["authorization", "x-herma-api-key", "x-herma-key", "x-herma-infra-key", "x-herma-admin-token", "x-bootstrap-secret", "x-upstream-api-key"];
@@ -2456,10 +2494,11 @@ async function serveWithPublicNames(request, env, ctx) {
   }
   const inbound = new Request(request, { headers });
   const answer = await (agentStartAsset(inbound) || onboardingApplication.fetch(inbound, env, ctx));
-  const out = await withPublicNames(inbound, answer, {
-    skip: ["/q/object", "/q/compose", "/q/upload", "/kits/", "/assets/", "/agent-start", "/v1/chat/completions", "/v1/responses", "/v1/messages"],
+  const named = await withPublicNames(inbound, answer, {
+    skip: ["/q/object/", "/q/compose", "/q/upload", "/kits/", "/assets/", "/agent-start", "/v1/chat/completions", "/v1/responses", "/v1/messages"],
     keyHeaders: KEY_HEADERS,
   });
+  const out = await withoutLeaseDetails(inbound, named, env);
   const allow = out.headers.get("access-control-allow-headers");
   if (!allow) return out;
   const reply = new Headers(out.headers);

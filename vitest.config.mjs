@@ -24,6 +24,7 @@ export default defineConfig({
         // The tests call the Worker on the workers.dev address; the redirect to the canonical host has its own test.
         CANONICAL_REDIRECT: "off",
         PUBLIC_NAMES_FILTER: "off",
+        OPEN_WORK_LIMITS: "off",
         HERMA_CONVERSATION_ENABLED: "true",
         HERMA_CONVERSATION_DISABLED_PROVIDERS: "[]",
         HERMA_CONVERSATION_MAX_OUTPUT: "16384",
