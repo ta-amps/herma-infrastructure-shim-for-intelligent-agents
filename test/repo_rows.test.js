@@ -37,6 +37,7 @@ describe("GET /q/repos", () => {
   it("returns every owner of a bare name, one row per repository, low-star ones included", async () => {
     const [body] = await call("name=memfold");
     expect(body.rows.map((r) => r[0])).toEqual(["other/memfold", "acme/memfold"]);
+    expect((await call("name=memfold"))[0].other_owners_possible).toBe(true);
     const [both] = await call("name=both");
     expect(both.rows.length).toBe(1);
   });
@@ -69,6 +70,9 @@ describe("GET /q/repos", () => {
   it("tells a missing repository apart from a limit it could not get past", async () => {
     const [gone] = await call("repo=nobody/never-was-here", github(404, {}));
     expect(gone.miss).toBe("no_such_repo");
+    const [searched] = await call("name=never-seen-name", github(200, { total_count: 400, items: [] }));
+    expect(searched.miss).toBe("not_in_github_search");
+    expect(searched.note).toMatch(/may still exist/);
     const [limited] = await call("repo=nobody/limited-now", github(403, {}));
     expect(limited.miss).toBe("rate_limited");
     expect(limited.note).toMatch(/not a statement/);
@@ -93,30 +97,45 @@ describe("GET /q/repos", () => {
 
 describe("GET /q/repos?ask=", () => {
   const ask = (q, f) => call(`ask=${encodeURIComponent(q)}`, f);
-  it("answers directly when one row fits the question", async () => {
+  const search = (items, total) => github(200, { total_count: total ?? items.length, incomplete_results: false, items });
+  const item = (full, month) => ({ name: full.split("/")[1], full_name: full, created_at: `${month}-02T00:00:00Z`, stargazers_count: 0 });
+
+  it("answers directly when one row fits a plain question about one repository", async () => {
     const [lic] = await ask("What software licence does the GitHub repository acme/memfold use?");
     expect([lic.direct, lic.answer, lic.field]).toEqual([true, "MIT", "license"]);
     const [lang] = await ask("What is the primary programming language of the GitHub repository zed/kiln?");
     expect([lang.direct, lang.answer]).toEqual([true, "Rust"]);
-    const [own] = await ask('A public GitHub repository named "kiln" is new. Which GitHub account owns it?');
+  });
+
+  it("answers an owner question only once GitHub's search also shows every owner", async () => {
+    const [own] = await ask('A public GitHub repository named "kiln" is new. Which GitHub account or organization owns it?', search([item("zed/kiln", "2026-10")]));
     expect([own.direct, own.answer]).toEqual([true, "zed"]);
+    const [two] = await ask('A public GitHub repository named "kilnb" is new. Which GitHub account owns it?', search([item("zed/kilnb", "2026-10"), item("someone/kilnb", "2024-01")]));
+    expect(two.direct).toBe(false);
+    const [partial] = await ask('A repository named "kilnc". Which GitHub account owns it?', search([item("zed/kilnc", "2026-10")], 400));
+    expect(partial.direct).toBe(false);
+    const [limited] = await ask('A repository named "both". Which GitHub account owns it?', github(403, {}));
+    expect(limited.direct).toBe(false);
+    expect(limited.rows.length).toBe(1);
   });
 
   it("uses a month in the question to choose between owners, and does not guess without one", async () => {
-    const [month] = await ask('A repository named "memfold", created in 2026-10. Which GitHub account owns it?');
+    const both = search([item("acme/memfold", "2026-09"), item("other/memfold", "2026-10")]);
+    const [month] = await ask('A repository named "memfold", created in 2026-10. Which GitHub account owns it?', both);
     expect(month.answer).toBe("other");
-    const [none] = await ask('A repository named "memfold". Which GitHub account owns it?');
+    const [none] = await ask('A repository named "memfold". Which GitHub account owns it?', both);
     expect(none.direct).toBe(false);
     expect(none.answer).toBeUndefined();
     expect(none.rows.length).toBe(2);
   });
 
-  it("does not answer from an unknown value or a question it can't read", async () => {
-    const [lic] = await ask("What licence does zed/kiln use?");
-    expect(lic.direct).toBe(false);
-    const [other] = await ask("Is acme/memfold any good?");
-    expect(other.direct).toBe(false);
+  it("does not answer from an unknown value, or a question with more in it than one repository and one field", async () => {
+    expect((await ask("What licence does zed/kiln use?"))[0].direct).toBe(false);
+    expect((await ask("Is acme/memfold any good?"))[0].direct).toBe(false);
     expect((await ask("Name a good memory system"))[0].direct).toBe(false);
+    expect((await ask("What licence do acme/memfold and other/memfold use?"))[0].direct).toBe(false);
+    expect((await ask("What licence and language does acme/memfold use?"))[0].direct).toBe(false);
+    expect((await ask("What licence did acme/memfold have on 2026-10-15?"))[0].direct).toBe(false);
   });
 });
 

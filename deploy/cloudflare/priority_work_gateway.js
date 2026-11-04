@@ -2683,8 +2683,7 @@ function splitStrongAndNearby(ranked, rawQuery) {
 const SEARCH_HIT_SUMMARY_CHARS = 160;
 const SEARCH_NEARBY_SUMMARY_CHARS = 80;
 function compactSearchHit(r, summaryChars) {
-  const out = { artifact_kind: r.artifact_kind, id: r.id, category: r.category, state: r.state, title: r.title };
-  if (r.title === r.id) delete out.title;
+  const out = { artifact_kind: r.artifact_kind, id: r.id, tier: r.tier, category: r.category, state: r.state, title: r.title };
   out.summary = String(r.summary || "").slice(0, summaryChars);
   for (const k of ["quality_milli", "reuse_mode", "reuse_count", "used_by_count", "builds_on", "reuse_weighted_quality_milli", "payload", "payload_sha256_verified"]) {
     if (r[k] !== undefined && r[k] !== "" && !(Array.isArray(r[k]) && r[k].length === 0)) out[k] = r[k];

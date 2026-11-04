@@ -64,7 +64,8 @@ function cacheStore() {
   }
 }
 
-// Returns { rows, state } where state is found, no_such_repo, rate_limited or unavailable.
+// Returns { rows, state, complete }. state: found, no_such_repo (GitHub's own 404 for owner/name), not_in_github_search (a search
+// page without that exact name, which does not prove absence), rate_limited or unavailable. complete: every exact name is on this page.
 async function upstream({ repo, name }, fetchImpl) {
   const path = repo
     ? `/repos/${repo.split("/").map(encodeURIComponent).join("/")}`
@@ -92,7 +93,8 @@ async function upstream({ repo, name }, fetchImpl) {
     const body = await res.json().catch(() => null);
     if (!body) return { rows: [], state: "unavailable" };
     const items = repo ? [body] : (body.items || []).filter((g) => String(g.name).toLowerCase() === name.toLowerCase());
-    out = { rows: items.map(rowFromGithub), state: items.length ? "found" : "no_such_repo" };
+    const complete = repo ? true : !body.incomplete_results && Number(body.total_count || 0) <= (body.items || []).length;
+    out = { rows: items.map(rowFromGithub), state: items.length ? "found" : "not_in_github_search", complete };
   }
   if (cache) {
     const ttl = out.rows.length ? POSITIVE_TTL_S : NEGATIVE_TTL_S;
@@ -105,23 +107,34 @@ async function upstream({ repo, name }, fetchImpl) {
 
 async function exactLookup(db, target, fetchImpl) {
   const fromDb = await exactFromDb(db, target);
-  if (fromDb.length) return { rows: fromDb.map(rowFromDb), source: "feed", state: "found" };
+  if (fromDb.length) return { rows: fromDb.map(rowFromDb), source: "feed", state: "found", complete: Boolean(target.repo) };
   const up = await upstream(target, fetchImpl);
-  return { rows: up.rows, source: "github", state: up.state };
+  return { rows: up.rows, source: "github", state: up.state, complete: Boolean(up.complete) };
 }
 
+// For a question asked by bare name: every owner, or as many as can be known. The rows hold only what the scans saw, so GitHub is asked too.
+async function allOwners(db, name, fetchImpl) {
+  const fromDb = (await exactFromDb(db, { name })).map(rowFromDb);
+  const up = await upstream({ name }, fetchImpl);
+  const seen = new Set(fromDb.map((r) => String(r[0]).toLowerCase()));
+  const rows = [...fromDb, ...up.rows.filter((r) => !seen.has(String(r[0]).toLowerCase()))];
+  return { rows, source: fromDb.length ? "feed" : "github", state: rows.length ? "found" : up.state, complete: Boolean(up.complete) };
+}
+
+// A direct answer needs one repository and one plain field. Anything more complex goes to the caller's model.
 function parseAsk(ask) {
   const text = String(ask).slice(0, 600);
-  const field = /\blicen[cs]e\b/i.test(text) ? 1 : /\b(?:programming )?language\b/i.test(text) ? 2 : /\b(?:own(?:s|er|ed)|which (?:github )?(?:account|organi[sz]ation))\b/i.test(text) ? 0 : -1;
-  const full = text.match(/(?:^|[\s(`"'])([A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}?)(?=[\s)`"'?,:;]|\.(?:\s|$)|$)/);
-  const quoted = text.match(/["`]([A-Za-z0-9._-]{2,100})["`]/);
+  const asks = [/\blicen[cs]e\b/i.test(text) && 1, /\b(?:programming )?language\b/i.test(text) && 2, /\b(?:own(?:s|er|ed)|which (?:github )?(?:account|organi[sz]ation))\b/i.test(text) && 0].filter((x) => x !== false);
+  const fulls = [...text.matchAll(/(?:^|[\s(`"'])([A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}?)(?=[\s)`"'?,:;]|\.(?:\s|$)|$)/g)].map((m) => m[1]);
+  const quoted = [...text.matchAll(/["`]([A-Za-z0-9._-]{2,100})["`]/g)].map((m) => m[1]);
   const month = text.match(/\b(20\d\d-\d\d)\b/);
-  return { field, repo: full ? full[1] : null, name: !full && quoted ? quoted[1] : null, month: month ? month[1] : null };
+  const multi = fulls.length > 1 || quoted.length > 1 || (fulls.length === 1 && quoted.length === 1 && quoted[0] !== fulls[0]) || asks.length !== 1 || /\b20\d\d-\d\d-\d\d\b/.test(text) || /\b(?:and|or|versus|vs\.?|compare|previously|formerly|used to)\b/i.test(text.replace(/\borganization\b/gi, "").replace(/\baccount or\b/gi, "account"));
+  return { field: multi ? -1 : asks[0], repo: fulls[0] || null, name: !fulls.length && quoted.length ? quoted[0] : null, month: month ? month[1] : null };
 }
 
-function directAnswer(parsed, rows) {
-  if (parsed.field < 0) return null;
-  const fits = parsed.month ? rows.filter((r) => String(r[3] || "").startsWith(parsed.month)) : rows;
+function directAnswer(parsed, found) {
+  if (parsed.field < 0 || !found.complete) return null;
+  const fits = parsed.month ? found.rows.filter((r) => String(r[3] || "").startsWith(parsed.month)) : found.rows;
   if (fits.length !== 1) return null;
   const row = fits[0];
   if (parsed.field === 0) return { answer: String(row[0]).split("/")[0], field: "owner", repo: row[0] };
@@ -150,7 +163,8 @@ async function listRows(db, p) {
 }
 
 const missNote = {
-  no_such_repo: "GitHub has no public repository by that name.",
+  no_such_repo: "GitHub says there is no public repository at that address.",
+  not_in_github_search: "Not in the feed rows, and GitHub's search shows no repository with that exact name. It may still exist.",
   rate_limited: "Not in the feed rows. GitHub's public limit is used up for now, so this is not a statement that it does not exist.",
   unavailable: "Not in the feed rows. GitHub did not answer, so this is not a statement that it does not exist.",
 };
@@ -169,11 +183,12 @@ export async function repoRowsResponse(url, db, { fetchImpl = (...a) => fetch(..
     if (repo ? !FULL_NAME.test(repo) : !BARE_NAME.test(name)) {
       return [{ ok: false, code: "bad_name", detail: "Use repo=owner/name or name=repo-name." }, 400];
     }
-    const found = await exactLookup(db, repo ? { repo } : { name }, fetchImpl);
+    const found = parsed && name ? await allOwners(db, name, fetchImpl) : await exactLookup(db, repo ? { repo } : { name }, fetchImpl);
     const rows = found.rows.filter((r) => servable(String(r[0]))).slice(0, MAX_LIMIT);
     const body = { ...base, source: found.source, rows };
+    if (name && !found.complete && rows.length) body.other_owners_possible = true;
     if (parsed) {
-      const direct = directAnswer(parsed, rows);
+      const direct = directAnswer(parsed, { rows, complete: found.complete && rows.length === found.rows.length });
       if (direct) Object.assign(body, { direct: true }, direct);
       else body.direct = false;
     }
