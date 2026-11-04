@@ -280,4 +280,62 @@ describe("from the second independent review", () => {
     expect(html).not.toContain('href="/c/self_seed"');
     expect(worker_uuid).toBeTruthy();
   });
+
+  describe("a submit answered busy after its object was stored", () => {
+    const ready = async () => {
+      const name = unique("retry-agent");
+      const key = unique("retry_key").replaceAll("-", "_");
+      const task = `verb_ngo_retry_${unique("t").replaceAll("-", "_")}`;
+      await env.HERMA_DB.prepare("INSERT INTO herma_durable_queue (task_id, tier, visibility, priority, title, prompt, simhash64_hex, producer_agent, created_at, updated_at) VALUES (?, 'public_general', 'public_commons', 50, 'Retry test', 'Write one line.', '0', 'retry-test', ?, ?)").bind(task, new Date().toISOString(), new Date().toISOString()).run();
+      const claimed = await (await post("/q/claim", { agent_id: name, task_id: task })).json();
+      const fence = claimed.lease.fencing_token;
+      const body = { agent_id: name, task_id: task, fencing_token: fence, summary: "the work", task_objects: [{ object_key: key, summary: "the work", category: "ngo_public_good", payload: { full: "the full work" } }] };
+      return { name, key, task, fence, body };
+    };
+    const rows = async (key) => (await env.HERMA_DB.prepare("SELECT object_key, version_num FROM herma_task_objects WHERE requested_object_key = ?").bind(key).all()).results;
+    const plantHalfDone = async ({ name, key, task, body }) => {
+      // Only the first step of a submit that then failed: its object row, with the Task still open.
+      const raw = JSON.stringify(body.task_objects[0].payload);
+      const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+      await env.HERMA_DB.prepare("INSERT INTO herma_task_objects (object_key, requested_object_key, version_num, category, visibility, producer_agent, source_task_id, summary, payload_json, simhash64_hex, sha256_hash, created_at, worker_uuid, labels_json) VALUES (?, ?, 1, 'ngo_public_good', 'public_commons', ?, ?, 'the work', ?, '0', ?, ?, ?, '[]')").bind(key, key, name, task, raw, hash, new Date().toISOString(), `w_agent_${name}`).run();
+    };
+
+    it("the same bytes sent again keep the key, add no row, and close the Task", async () => {
+      const r = await ready();
+      await plantHalfDone(r);
+      const res = await post("/q/submit", r.body);
+      expect(res.status).toBe(200);
+      const out = await res.json();
+      expect(out.stored_task_objects[0].object_key).toBe(r.key);
+      expect(out.stored_task_objects[0].version_num).toBe(1);
+      expect(out.warnings || []).toEqual([]);
+      expect(await rows(r.key)).toHaveLength(1);
+      const task = await env.HERMA_DB.prepare("SELECT state FROM herma_durable_queue WHERE task_id = ?").bind(r.task).first();
+      expect(task.state).toBe("done");
+    });
+
+    it("different bytes on the same Task still go to a key of their own", async () => {
+      const r = await ready();
+      await plantHalfDone(r);
+      const changed = { ...r.body, task_objects: [{ ...r.body.task_objects[0], payload: { full: "other work" } }] };
+      const out = await (await post("/q/submit", changed)).json();
+      expect(out.stored_task_objects[0].object_key).toBe(`${r.key}__by_${r.name}`);
+      expect(await rows(r.key)).toHaveLength(2);
+    });
+
+    it("another worker sending the same bytes doesn't take the key", async () => {
+      const r = await ready();
+      await plantHalfDone({ ...r, name: unique("first-maker") });
+      const out = await (await post("/q/submit", r.body)).json();
+      expect(out.stored_task_objects[0].object_key).toBe(`${r.key}__by_${r.name}`);
+    });
+  });
+
+  it("broken JSON on a submit says nothing was saved and not to shorten the work", async () => {
+    const res = await call(new Request("https://shim.teleionlabs.com/q/submit", { method: "POST", headers: { "content-type": "application/json" }, body: '{"agent_id":"a"}}' }));
+    expect(res.status).toBe(400);
+    const out = await res.json();
+    expect(out.code).toBe("invalid_json");
+    expect(out.detail).toContain("Do not shorten");
+  });
 });

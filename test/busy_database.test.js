@@ -24,12 +24,29 @@ describe("a busy database", () => {
     expect(await response.text()).not.toContain("D1");
   });
 
-  it("a write, or a GET that writes, is never asked twice", async () => {
-    for (const request of [req("/q/submit", "POST"), req("/q/claim/some-agent"), req("/q/submit/a/b/c"), req("/q/heartbeat?agent_id=a")]) {
+  it("a write that isn't safe to repeat is never asked twice", async () => {
+    for (const request of [req("/q/submit", "POST"), req("/q/submit/a/b/fence-1--summary-x"), req("/q/heartbeat?agent_id=a"), req("/q/release/a/b/1"), req("/q/onboard", "POST"), req("/q/feedback", "POST")]) {
       const { response, calls } = await run(request, [busy, fine]);
       expect(calls()).toBe(1);
       expect(response.status).toBe(503);
     }
+  });
+
+  it("a claim is asked again, by GET or POST", async () => {
+    for (const request of [req("/q/claim/some-agent"), req("/q/claim", "POST")]) {
+      const { response, calls } = await run(request, [busy, fine]);
+      expect(calls()).toBe(2);
+      expect(response.status).toBe(200);
+    }
+  });
+
+  it("every try of a POST reads the whole body", async () => {
+    const request = new Request("https://shim.teleionlabs.com/q/claim", { method: "POST", body: "the full work" });
+    const seen = [];
+    let n = 0;
+    const response = await answerThroughBusyDatabase(request, async (asked) => { seen.push(await asked.text()); return n++ ? fine() : busy(); }, [1, 1]);
+    expect(response.status).toBe(200);
+    expect(seen).toEqual(["the full work", "the full work"]);
   });
 
   it("any other answer passes through untouched", async () => {

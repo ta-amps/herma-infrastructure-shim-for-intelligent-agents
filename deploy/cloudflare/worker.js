@@ -2441,28 +2441,36 @@ export default {
   async fetch(request, env, ctx) {
     // Herma's own pages carry the one thin agent banner (page_shell.js), so the older "Put your agent to work" block is
     // not injected into the home page any more; the /agent-start.* files stay available.
-    return answerThroughBusyDatabase(request, async () => {
-      if (env.PUBLIC_NAMES_FILTER !== "on") return agentStartAsset(request) || onboardingApplication.fetch(request, env, ctx);
-      return serveWithPublicNames(request, env, ctx);
+    return answerThroughBusyDatabase(request, async (asked) => {
+      if (env.PUBLIC_NAMES_FILTER !== "on") return agentStartAsset(asked) || onboardingApplication.fetch(asked, env, ctx);
+      return serveWithPublicNames(asked, env, ctx);
     });
   },
 };
 
-// D1 answers "overloaded" for a moment under a burst. A read is asked again, up to twice, after a short wait. A write isn't, since
-// it may have partly happened. If it's still busy the caller gets a 503 that says to try again, in place of a 500 and D1's own words.
+// D1 answers "overloaded" for a moment under a burst. A read is asked again, up to twice, after a short wait. So is a claim, which is
+// safe to repeat: the same worker's second claim gets its same lease, so a lease taken just before the failure isn't stranded. A
+// submit isn't: an evaluation in it is a plain insert and would count twice. Other writes aren't asked again either. If it's still
+// busy the caller gets a 503 that says to try again, in place of a 500 and D1's own words.
 const READ_ONLY_ROUTES = /^\/(?:c|w)\/|^\/dashboard\/?$|^\/q\/(?:object|search|tasks|task|pulse|network|repos|dashboard)(?:\/|$)/;
+const REPEATABLE_WRITE_ROUTES = /^\/q\/claim(?:\/|$)/;
 const BUSY_RETRY_WAITS_MS = [200, 600];
 const BUSY_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="only light"><title>One moment | Teleion Fabric</title></head><body style="margin:0;background:#f5f1e8;color:#1b2230;font:18px/1.5 system-ui,sans-serif;color-scheme:only light"><main style="max-width:36rem;margin:15vh auto;padding:0 20px"><h1 style="font-size:1.5rem">Busy for a moment</h1><p>Our database is handling a lot right now. Please try again in a few seconds.</p><p><a href="https://teleionlabs.com/status">See the status page</a></p></main></body></html>`;
 const isBusyDatabase = async (response) =>
   response.status === 500 && /D1 DB is overloaded/i.test(await response.clone().text().catch(() => ""));
 export async function answerThroughBusyDatabase(request, answer, waits = BUSY_RETRY_WAITS_MS) {
   const method = request.method.toUpperCase();
-  const canRetry = (method === "GET" || method === "HEAD") && READ_ONLY_ROUTES.test(new URL(request.url).pathname);
-  let response = await answer();
+  const path = new URL(request.url).pathname;
+  const isRead = (method === "GET" || method === "HEAD") && READ_ONLY_ROUTES.test(path);
+  const isRepeatableWrite = (method === "GET" || method === "POST") && REPEATABLE_WRITE_ROUTES.test(path);
+  const canRetry = isRead || isRepeatableWrite;
+  // A body can be read only once, so each try gets its own copy.
+  const ask = () => answer(canRetry && method === "POST" ? request.clone() : request);
+  let response = await ask();
   for (const wait of canRetry ? waits : []) {
     if (!(await isBusyDatabase(response))) return response;
     await new Promise((resolve) => setTimeout(resolve, wait + Math.random() * wait));
-    response = await answer();
+    response = await ask();
   }
   if (!(await isBusyDatabase(response))) return response;
   if ((request.headers.get("accept") || "").includes("text/html")) {
