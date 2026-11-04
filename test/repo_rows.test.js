@@ -148,7 +148,7 @@ describe("GET /q/repos?ask=", () => {
 
 describe("/q/search with an exact repository name", () => {
   it("names the repository and leaves plain word searches alone", async () => {
-    const res = await exports.default.fetch("https://herma.ta-amps.workers.dev/q/search?q=acme/memfold");
+    const res = await exports.default.fetch("https://herma.ta-amps.workers.dev/q/search?compact=1&q=acme/memfold");
     const body = await res.json();
     expect(body.match).toBe("exact_repo");
     expect(body.repo_matches.rows[0][0]).toBe("acme/memfold");
@@ -166,7 +166,8 @@ describe("/q/search with an exact repository name", () => {
 });
 
 describe("/q/search is honest about what matched", () => {
-  const search = async (q, extra = "") => (await exports.default.fetch(`https://herma.ta-amps.workers.dev/q/search?q=${encodeURIComponent(q)}${extra}`)).json();
+  const raw = async (q, extra = "") => (await exports.default.fetch(`https://herma.ta-amps.workers.dev/q/search?q=${encodeURIComponent(q)}${extra}`)).json();
+  const search = (q, extra = "") => raw(q, `&compact=1${extra}`);
   const objectKey = "exact_first_probe_object_v1";
 
   beforeAll(async () => {
@@ -222,9 +223,51 @@ describe("/q/search is honest about what matched", () => {
   });
 
   it("keeps the older reply behind full=1", async () => {
-    const body = await search("shelter intake", "&full=1");
+    const body = await raw("shelter intake", "&full=1");
     expect(body.schema).toBe("herma.priority_work_gateway.search.v2");
-    expect(body.query_analysis).toBeTruthy();
+    expect(body.query_analysis.query_simhash_bands).toBeTruthy();
     expect(body.nearby).toBeUndefined();
+    expect(body.match).toBeUndefined();
   });
+
+  it("gives an existing caller every old field by default, with the new ones beside them", async () => {
+    const body = await raw("shelter intake");
+    const old = await raw("shelter intake", "&full=1");
+    expect(body.schema).toBe(old.schema);
+    for (const key of Object.keys(old)) expect(body).toHaveProperty(key);
+    for (const key of Object.keys(old.query_analysis)) expect(body.query_analysis).toHaveProperty(key);
+    expect(body.total_matches).toBe(old.total_matches);
+    expect(body.results.map((r) => r.id)).toEqual([...new Set(old.results.map((r) => r.id))].slice(0, body.results.length));
+    for (const key of Object.keys(old.results[0])) expect(body.results[0]).toHaveProperty(key);
+    expect(body.match).toBe("words");
+    expect(body.results[0].match_quality).toBeTruthy();
+  });
+
+  it("by default keeps neighbours in results for old callers, marked, and says plainly there was no match", async () => {
+    const body = await raw("xyzzyplughqwertz");
+    const old = await raw("xyzzyplughqwertz", "&full=1");
+    expect(body.total_matches).toBe(old.total_matches);
+    expect(body.match).toBe("none");
+    expect(body.true_matches).toBe(0);
+    expect(body.note).toMatch(/No match/);
+    for (const r of body.results) expect(r.match_quality).toBe("nearby");
+  });
+
+  it("by default puts an exact ID at the top, in results and on its own", async () => {
+    const body = await raw(objectKey);
+    expect(body.match).toBe("exact_id");
+    expect(body.exact_match.id).toBe(body.results[0].id);
+    expect(body.results[0].match_quality).toBe("exact_id");
+  });
+
+  it("does not show a private task to the public through the exact path", async () => {
+    const hidden = await db().prepare("SELECT task_id, title FROM herma_durable_queue WHERE tier = 'infra_private' LIMIT 1").first();
+    expect(hidden).toBeTruthy();
+    for (const body of [await raw(hidden.task_id), await search(hidden.task_id)]) {
+      expect(JSON.stringify(body.results)).not.toContain(hidden.task_id);
+      expect(JSON.stringify(body.nearby)).not.toContain(hidden.task_id);
+      expect(body.match).not.toBe("exact_id");
+    }
+  });
+
 });
