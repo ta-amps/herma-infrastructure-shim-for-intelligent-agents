@@ -2457,7 +2457,7 @@ async function serveWithPublicNames(request, env, ctx) {
   const inbound = new Request(request, { headers });
   const answer = await (agentStartAsset(inbound) || onboardingApplication.fetch(inbound, env, ctx));
   const out = await withPublicNames(inbound, answer, {
-    skip: ["/q/object", "/q/compose", "/q/upload", "/kits/", "/assets/", "/agent-start", "/v1/chat/completions", "/v1/responses", "/v1/messages"],
+    skip: ["/q/object/", "/q/compose", "/q/upload", "/kits/", "/assets/", "/agent-start", "/v1/chat/completions", "/v1/responses", "/v1/messages"],
     keyHeaders: KEY_HEADERS,
   });
   const allow = out.headers.get("access-control-allow-headers");
