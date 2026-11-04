@@ -17,6 +17,7 @@
 //     trigrams, `O(1)` SymSpell 1..2-edit typo recovery, 4-band SimHash LSH, 64-bit semantic concept
 //     hyperplane sketches, and Weighted Reciprocal Rank Fusion (RRF) + Quality/Tombstone reranking.
 
+import { repoMatchesForSearch, repoRowsResponse } from "./repo_rows.js";
 import { computeTaskFingerprint, scrubSensitiveText } from "./bilateral_bridge.js";
 import { clientFamily } from "./client_family.js";
 import { contributorPrintout } from "./contributor_printout.js";
@@ -215,6 +216,7 @@ export const QUEUE_GATEWAY_GRID = Object.freeze({
   max_search_limit: 50,
   default_search_limit: 10,
   candidate_pool_cap: 60,
+  symspell_max_delete_keys: 95,
   sidecar_batch_stmt_limit: 1024,
   symspell_max_words_per_doc: 32,
   lease_ttl_ms: 900000,
@@ -2522,7 +2524,8 @@ async function resolveSymspellCorrections(db, rawTokens) {
       corrected.push(tok);
       continue;
     }
-    const delKeys = generateSymspellDeletes(tok);
+    // A long made-up word has hundreds of delete keys and D1 allows 100 bound values; this used to answer 500.
+    const delKeys = generateSymspellDeletes(tok).slice(0, QUEUE_GATEWAY_GRID.symspell_max_delete_keys);
     if (!delKeys.length) {
       corrected.push(tok);
       continue;
@@ -2648,6 +2651,48 @@ async function reassembleTaskObjectPayload(db, objRow) {
     json_valid: jsonValid,
     integrity_status: verified && jsonValid ? "verified" : jsonValid ? "hash_mismatch" : "invalid_json",
   };
+}
+
+const SEARCH_NEARBY_LIMIT = 5;
+const SEARCH_WORD_CHANNELS = new Set(["stem_bm25", "typo_symspell_stem", "label_exact", "worker_phrase_or_facet", "facet_partition", "io_port_shape"]);
+
+// A search result is a real match only if it matched on words. Everything fuzzier goes to `nearby`, because some agents want
+// neighbours and no one should mistake them for an answer. One row per ID, the exact ID first.
+function splitStrongAndNearby(ranked, rawQuery) {
+  const seen = new Map();
+  for (const r of ranked) {
+    const old = seen.get(r.id);
+    if (!old || (r.matched_channels.includes("exact_id") && !old.matched_channels.includes("exact_id"))) seen.set(r.id, r);
+  }
+  const unique = [...seen.values()];
+  const nameShaped = rawQuery && !/\s/.test(rawQuery) && /[-_/]/.test(rawQuery);
+  const parts = nameShaped ? rawQuery.toLowerCase().split(/[-_/.]+/).filter(Boolean) : [];
+  const isStrong = (r) => {
+    if (!rawQuery || r.matched_channels.includes("exact_id")) return true;
+    if (nameShaped) {
+      const hay = `${r.id} ${r.title || ""}`.toLowerCase();
+      return parts.every((p) => hay.includes(p));
+    }
+    return r.matched_channels.some((c) => SEARCH_WORD_CHANNELS.has(c));
+  };
+  const strong = unique.filter(isStrong);
+  strong.sort((a, b) => Number(b.matched_channels.includes("exact_id")) - Number(a.matched_channels.includes("exact_id")));
+  return { strong, nearby: unique.filter((r) => !isStrong(r)) };
+}
+
+const SEARCH_HIT_SUMMARY_CHARS = 160;
+const SEARCH_NEARBY_SUMMARY_CHARS = 80;
+function compactSearchHit(r, summaryChars) {
+  const out = { artifact_kind: r.artifact_kind, id: r.id, category: r.category, state: r.state, title: r.title };
+  if (r.title === r.id) delete out.title;
+  out.summary = String(r.summary || "").slice(0, summaryChars);
+  for (const k of ["quality_milli", "reuse_mode", "reuse_count", "used_by_count", "builds_on", "reuse_weighted_quality_milli", "payload", "payload_sha256_verified"]) {
+    if (r[k] !== undefined && r[k] !== "" && !(Array.isArray(r[k]) && r[k].length === 0)) out[k] = r[k];
+  }
+  out.object_url = r.object_url;
+  out.matched_channels = r.matched_channels;
+  if (r.matched_channels?.includes("exact_id")) out.exact = true;
+  return out;
 }
 
 async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https://shim.teleionlabs.com") {
@@ -2909,8 +2954,29 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
     return s;
   };
 
+  const appendShaPushdown = (binds, idColumn, append) => {
+    const shas = Array.isArray(pushedShas) ? pushedShas : null;
+    if (shas && !exactId) {
+      if (shas.length > 0) {
+        append(` AND content_sha256 IN (${shas.map(() => "?").join(",")})`);
+        binds.push(...shas);
+      }
+      return;
+    }
+    if (shas) {
+      // One candidate gives up its place for the exact ID: D1 allows 100 bound values and the pool cap plus LIMIT is at that edge.
+      const kept = shas.slice(0, QUEUE_GATEWAY_GRID.candidate_pool_cap - 1);
+      const inList = kept.length > 0 ? `content_sha256 IN (${kept.map(() => "?").join(",")}) OR ` : "";
+      append(` AND (${inList}LOWER(${idColumn}) = ?)`);
+      binds.push(...kept, exactId);
+    }
+  };
+
   const candidates = [];
-  const skipCandidateScan = Array.isArray(pushedShas) && pushedShas.length === 0;
+  // The shaped reply (/q/search) reads an exact ID through the same SELECT as the candidates, so visibility rules are the same.
+  const shaped = params.shaped === true;
+  const exactId = shaped ? rawQuery.toLowerCase() : "";
+  const skipCandidateScan = Array.isArray(pushedShas) && pushedShas.length === 0 && !exactId;
 
   if (!skipCandidateScan && (scope === "all" || scope === "tasks")) {
     let sql = `SELECT id AS row_id, 'durable_task' AS artifact_kind, task_id AS item_id, tier, visibility, priority, state,
@@ -2931,10 +2997,9 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
       binds.push(reqCategory);
     }
     sql = appendFacetClauses(sql, binds);
-    if (Array.isArray(pushedShas) && pushedShas.length > 0) {
-      sql += ` AND content_sha256 IN (${pushedShas.map(() => "?").join(",")})`;
-      binds.push(...pushedShas);
-    }
+    appendShaPushdown(binds, "task_id", (clause) => {
+      sql += clause;
+    });
     sql += " ORDER BY id DESC LIMIT ?";
     binds.push(QUEUE_GATEWAY_GRID.candidate_pool_cap * QUEUE_GATEWAY_GRID.band_hex_width);
     const tRows = await db.prepare(sql).bind(...binds).all();
@@ -2958,10 +3023,9 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
       binds.push(reqCategory);
     }
     sql = appendFacetClauses(sql, binds);
-    if (Array.isArray(pushedShas) && pushedShas.length > 0) {
-      sql += ` AND content_sha256 IN (${pushedShas.map(() => "?").join(",")})`;
-      binds.push(...pushedShas);
-    }
+    appendShaPushdown(binds, "object_key", (clause) => {
+      sql += clause;
+    });
     sql += " ORDER BY id DESC LIMIT ?";
     binds.push(QUEUE_GATEWAY_GRID.candidate_pool_cap * QUEUE_GATEWAY_GRID.band_hex_width);
     const oRows = await db.prepare(sql).bind(...binds).all();
@@ -2976,7 +3040,8 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
 
     const sha = String(item.content_sha256 || "");
     const baseRrf = (rrfScores.get(sha) || 0) * QUEUE_GATEWAY_GRID.rrf_scale;
-    if (rawQuery && baseRrf === 0 && !hasBroadStructuralFilter) {
+    const isExactId = Boolean(exactId) && String(item.item_id).toLowerCase() === exactId;
+    if (rawQuery && baseRrf === 0 && !hasBroadStructuralFilter && !isExactId) {
       continue;
     }
     const sMeta = sidecarMap.get(sha);
@@ -3013,6 +3078,7 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
     const channels = Array.from(shaChannels.get(sha) || []);
     if (portHit > 0) channels.push("io_port_shape");
     if (facetHit > 0 && !channels.includes("worker_phrase_or_facet")) channels.push("facet_partition");
+    if (isExactId) channels.unshift("exact_id");
 
     ranked.push({
       _rawRow: item,
@@ -3050,8 +3116,10 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
   }
 
   ranked.sort((a, b) => b.final_score - a.final_score);
-  const topSlice = ranked.slice(0, limit);
-  const topObjectKeys = topSlice.filter((x) => x.artifact_kind === "task_object").map((x) => String(x.id));
+  const { strong, nearby: nearbyRanked } = shaped ? splitStrongAndNearby(ranked, rawQuery) : { strong: ranked, nearby: [] };
+  const topSlice = strong.slice(0, limit);
+  const nearbySlice = nearbyRanked.slice(0, SEARCH_NEARBY_LIMIT);
+  const topObjectKeys = [...topSlice, ...nearbySlice].filter((x) => x.artifact_kind === "task_object").map((x) => String(x.id));
   const buildsOnMap = new Map();
   const usedByCntMap = new Map();
   if (topObjectKeys.length > 0) {
@@ -3079,7 +3147,9 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
   }
 
   const formattedResults = [];
-  for (const r of topSlice) {
+  const nearbyIds = new Set(nearbySlice.map((r) => r.id));
+  const formattedNearby = [];
+  for (const r of [...topSlice, ...nearbySlice]) {
     const rawRow = r._rawRow;
     delete r._rawRow;
     if (r.artifact_kind === "task_object") {
@@ -3098,7 +3168,7 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
       r.payload = assembled.payload;
       r.payload_sha256_verified = assembled.verified;
     }
-    formattedResults.push(r);
+    (nearbyIds.has(r.id) ? formattedNearby : formattedResults).push(r);
   }
 
   if (rawQuery && params.record_demand !== false && params.record_demand !== "0") {
@@ -3135,8 +3205,9 @@ async function executeHybridSearch(db, infraAllowed, params, publicUrl = "https:
       query_semantic_sketch_bands: qEmbBands,
       sql_pushdown_shas: Array.isArray(pushedShas) ? pushedShas.length : null,
     },
-    total_matches: ranked.length,
+    total_matches: strong.length,
     results: formattedResults,
+    ...(shaped ? { nearby: formattedNearby, nearby_count: nearbyRanked.length } : {}),
   };
 }
 
@@ -9706,7 +9777,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     }
     let searchAnswer = null;
     if (Object.keys(searchParams).length) {
-      searchAnswer = await executeHybridSearch(db, infraAllowed, { ...searchParams, limit: 12 }, publicUrl);
+      searchAnswer = await executeHybridSearch(db, infraAllowed, { ...searchParams, limit: 12, shaped: true }, publicUrl);
       if (searchAnswer.forbidden) searchAnswer = { results: [], total_matches: 0 };
     }
     if (url.searchParams.get("fragment") === "results") {
@@ -10135,6 +10206,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       prompts_hub_url: `${publicUrl}/prompts`,
       onboard_url: `${publicUrl}/q/onboard`,
       search_url: `${publicUrl}/q/search`,
+      repos_url: `${publicUrl}/q/repos`,
       routing_url: `${publicUrl}/q/routing`,
       affinity_url: `${publicUrl}/q/affinity`,
       schema_url: `${publicUrl}/q/schema`,
@@ -10193,6 +10265,15 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     return sendJson(await buildPulseSnapshot(db, env, infraAllowed));
   }
 
+  if (action === "repos") {
+    if (method !== "GET" && method !== "HEAD") {
+      return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+    }
+    const [repoBody, repoStatus] = await repoRowsResponse(url, db);
+    traceCtx.detail = { rows: repoBody.rows ? repoBody.rows.length : 0 };
+    return sendJson(repoBody, repoStatus);
+  }
+
   if (action === "search") {
     // A browser that opens /q/search (the header's Search link) gets the dashboard's search; agents and curl keep the JSON.
     if (method === "GET" && (request.headers.get("accept") || "").toLowerCase().includes("text/html") && !wantsJson) {
@@ -10210,7 +10291,9 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       return sendJson({ ok: false, error: "method_not_allowed" }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
     traceCtx.detail = { q: String(params.q || params.query || "").slice(0, QUEUE_GATEWAY_GRID.facet_max_len) };
-    const searchOut = await executeHybridSearch(db, infraAllowed, params, publicUrl);
+    // full=1 keeps the older, longer reply: every field, fuzzy neighbours mixed in, no exact-name step.
+    const fullReply = params.full === "1" || params.full === 1 || params.full === true;
+    const searchOut = await executeHybridSearch(db, infraAllowed, { ...params, shaped: !fullReply }, publicUrl);
     if (searchOut.forbidden) {
       return sendJson({ ok: false, code: "forbidden_tier", detail: searchOut.detail }, QUEUE_GATEWAY_GRID.http_forbidden);
     }
@@ -10225,7 +10308,26 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       });
     }
     traceCtx.detail.matches = searchOut.total_matches;
-    return sendJson(searchOut);
+    if (fullReply) return sendJson(searchOut);
+    const exactHit = searchOut.results.some((r) => r.matched_channels?.includes("exact_id"));
+    const repoMatches = exactHit ? null : await repoMatchesForSearch(db, params.q || params.query);
+    const match = exactHit ? "exact_id" : searchOut.results.length ? "words" : repoMatches ? "exact_repo" : "none";
+    const corrections = searchOut.query_analysis.typo_corrections;
+    return sendJson({
+      ok: searchOut.ok,
+      schema: "herma.priority_work_gateway.search.v3",
+      caller_role: searchOut.caller_role,
+      query: searchOut.query_analysis.raw_query,
+      match,
+      total_matches: searchOut.total_matches,
+      ...(repoMatches ? { repo_matches: repoMatches } : {}),
+      query_analysis: { typo_corrections: corrections, corrected_tokens: searchOut.query_analysis.corrected_tokens },
+      results: searchOut.results.map((r) => compactSearchHit(r, SEARCH_HIT_SUMMARY_CHARS)),
+      nearby: searchOut.nearby.map((r) => compactSearchHit(r, SEARCH_NEARBY_SUMMARY_CHARS)),
+      nearby_count: searchOut.nearby_count,
+      ...(match === "none" ? { note: "No match. nearby lists the closest items, which may not be related." } : {}),
+      more_detail: "Add full=1 for every field. Read one item at object_url.",
+    });
   }
 
   if (action === "release") {

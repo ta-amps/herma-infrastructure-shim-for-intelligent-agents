@@ -81,3 +81,20 @@ CREATE TABLE IF NOT EXISTS rule_outcomes (
 CREATE INDEX IF NOT EXISTS idx_rule_outcomes_scope ON rule_outcomes (caller_scope, project_tag, prov_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS route_quotas (caller_scope TEXT NOT NULL, hour INTEGER NOT NULL, used INTEGER NOT NULL, PRIMARY KEY (caller_scope, hour));
+
+-- New GitHub repositories from the feed scans, read by GET /q/repos. Public metadata only; loaded by scripts/repo_rows_refresh.py.
+CREATE TABLE IF NOT EXISTS feed_repo_rows (
+  repo     TEXT NOT NULL COLLATE NOCASE,
+  name     TEXT NOT NULL COLLATE NOCASE,
+  feed     TEXT NOT NULL,
+  license  TEXT,
+  language TEXT,
+  created  TEXT,
+  stars    INTEGER,
+  relevant INTEGER NOT NULL DEFAULT 1,
+  seen_at  TEXT NOT NULL,
+  PRIMARY KEY (repo, feed)
+);
+CREATE INDEX IF NOT EXISTS idx_feed_repo_name ON feed_repo_rows (name);
+CREATE INDEX IF NOT EXISTS idx_feed_repo_filter ON feed_repo_rows (feed, relevant, created);
+CREATE TABLE IF NOT EXISTS feed_repo_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
