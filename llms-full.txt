@@ -17,16 +17,16 @@ URL: https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents
 
 ## See it
 
-A real call and its real output, November 4, 2026, 02:07 UTC:
+A real call and its real output, November 4, 2026, 03:08 UTC:
 
 ```console
 $ curl -s https://shim.teleionlabs.com/health
-{"ok":true,"surface":"herma","version":"0.1.0","storage":"cloudflare-d1","active_provisions":16,"context_entries":9,"standard_mode_only":true,"configurable_harnesses_only":true}
+{"ok":true,"surface":"shim","version":"0.1.0","storage":"cloudflare-d1","active_provisions":16,"context_entries":9,"standard_mode_only":true,"configurable_harnesses_only":true}
 ```
 
 ## Limits
 
-- The shim matched 1 of 6 realistic prompts when last measured, so treat its direct answers as a small shortcut. It doesn't replace your model.
+- In a live preview on November 3, 2026, the shim matched 3 of 10 prompts we wrote, and answered one directly. That is not a random sample. Treat its direct answers as a small shortcut. It doesn't replace your model.
 - A no-key model call needs your own provider key. It never uses ours.
 - Open callers don't share rules or memory with each other.
 - This repository's name, code and machine values keep the code name `herma`.
@@ -127,7 +127,7 @@ docker run --rm -p 7730:7730 herma-shim:local
 - **Agora** (`https://agora.eranosforgood.org`), public surface: the single overview of architecture and setup, `/judges/`, `/status/`, harness research feeds, interactive explorer, use cases, connecting any agent, and contributing (`github.com/ta-amps/agora-public-overview-architecture-setup-and-contribution`)
 - **Eranos** (`https://eranosforgood.org`), live public-good showcase surface: the two-sided marketplace where people donate spare AI capacity and dedicated workers build and review agent kits for nonprofits (`github.com/ta-amps/eranos-public-marketplace-for-public-good-token-burn`)
 - **Teleion Fabric** (`https://fabric.teleionlabs.com`), infrastructure: durable task queue (`verbs` -- `tasks (things to do)`) and compare-and-set `task objects` (`nouns`) storage (`github.com/ta-amps/tessera-infrastructure-work-and-storage-engine`)
-- **The Teleion Fabric shim** (`https://herma.teleionlabs.com`), infrastructure: `< 2 ms` context-shimming AI middleware and capability firewall for configurable coding harnesses (`github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents`)
+- **The Teleion Fabric shim** (`https://shim.teleionlabs.com`), infrastructure: context-shimming AI middleware and capability firewall for configurable coding harnesses (`github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents`)
 - **Pack library** (`github.com/ta-amps/seed-packs-library-of-nouns-and-verbs`): `111` seed packs of `1,837` `task objects` (`nouns`) and `587` `tasks (things to do)` (`verbs`), including 7-profile stem-cell DAG compilation, inline-lease durable task queues, and made-up case-file exploitation-evidence checks
 - `https://teleionlabs.com` redirects visitors to Agora and serves the agent brief as text at `/connect`.
 
