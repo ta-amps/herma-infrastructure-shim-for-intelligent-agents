@@ -58,7 +58,7 @@ uses a dedicated namespace plus authenticated surface-only or allowlisted access
 and explicit grants to separate keys. A shared account, category or private tag
 does not grant a worker access. The Teleion Fabric shim's `hmk_` scope remains separate from Teleion Fabric
 authority, and shimming cannot create either permission. See the central
-[work routing contract](https://github.com/ta-amps/tessera-infrastructure-work-and-storage-engine/blob/main/docs/work-routing.md).
+[work routing contract](https://github.com/ta-amps/teleion-fabric-infrastructure-work-and-storage-engine/blob/main/docs/work-routing.md).
 
 ## Observations, not a reliability benchmark
 
