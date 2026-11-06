@@ -1,5 +1,6 @@
 // One canonical host for people (design contract of Nov 2, 2026): on any other host that reaches this Worker, a page navigation answers with a
-// redirect to herma.teleionlabs.com, keeping the path and the query: 301 for GET and HEAD, 308 for any other method sent to a page.
+// redirect to shim.teleionlabs.com (page_shell.json site.host), keeping the path and the query: 301 for GET and HEAD, 308 for any other method sent to a page.
+// herma.teleionlabs.com is a working alias that is served in place and does not redirect.
 //
 // Only page navigations redirect. A navigation is a GET or HEAD for one of the pages below whose Accept header asks for HTML (a browser, a crawler or a link
 // preview always does) and not for JSON (?format=json, or an Accept that names application/json). Everything machines read and write answers in place on the old
@@ -7,7 +8,7 @@
 // the scripts and the stylesheets. So does a plain curl or script request for a page ("Accept: */*"): /kits answers it with its JSON catalog, and a script that
 // does not follow redirects should not have to learn that. The live workers call this address with curl, which does not follow a redirect unless it is told to; an
 // MCP client does not follow a cross-origin one; a published agent pointer may still name the old address. Eranos made the same choice for its alias (8c3af96).
-// Every page names herma.teleionlabs.com as its canonical (rel=canonical), so a search engine loses nothing.
+// Every page names shim.teleionlabs.com as its canonical (rel=canonical), so a search engine loses nothing.
 //
 // It is switched on by the CANONICAL_REDIRECT variable ("on" in wrangler.jsonc). Unset, as in tests and local runs, nothing redirects.
 import SHELL from "../../herma/page_shell.json" with { type: "json" };

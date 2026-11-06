@@ -83,7 +83,7 @@ ACCESS_INFO: dict[str, object] = {
     "surface": "herma",
     "product": "Teleion Fabric",
     "canonical_url": "https://shim.teleionlabs.com",
-    "aliases": ["https://herma.teleionlabs.com", "https://tessera.teleionlabs.com"],
+    "aliases": ["https://herma.teleionlabs.com"],
     "authentication_required": False,
     "credentials_required": False,
     "session_required": False,

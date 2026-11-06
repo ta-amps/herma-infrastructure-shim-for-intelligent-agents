@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import worker from "../deploy/cloudflare/worker.js";
 import { canonicalRedirect, isPageNavigation } from "../deploy/cloudflare/canonical_host.js";
 
-// One canonical host for people: herma.teleionlabs.com. On another host only a page navigation redirects: a GET or HEAD for a page that asks for HTML gets a 301,
+// One canonical host for people: shim.teleionlabs.com (herma.teleionlabs.com is served in place). On another host only a page navigation redirects: a GET or HEAD for a page that asks for HTML gets a 301,
 // anything else sent to a page a 308, and the path and the query are kept. What machines read and write answers in place, so the live workers' curl calls to the
 // old address keep working (the same choice Eranos made in 8c3af96).
 const on = { CANONICAL_REDIRECT: "on" };
