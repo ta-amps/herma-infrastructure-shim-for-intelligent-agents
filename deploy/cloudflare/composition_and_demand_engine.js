@@ -39,6 +39,8 @@ export const COMPOSITION_DEMAND_GRID = Object.freeze({
   max_compose_objects: 16,
   max_demand_rows: 40,
   signal_key_max_len: 72,
+  // An edge names a Task Object key, which may be up to 128 characters (round 4: keys were cut to 72, so links gave 404).
+  edge_key_max_len: 128,
   query_sample_max_len: 160,
   min_signal_token_len: 3,
   max_signal_tokens: 6,
@@ -477,7 +479,7 @@ function normalizeEdgeTargetKey(rawKey) {
     .split("?")[0]
     .split("@")[0]
     .replace(/[^A-Za-z0-9_.:-]+/g, "_")
-    .slice(0, COMPOSITION_DEMAND_GRID.signal_key_max_len);
+    .slice(0, COMPOSITION_DEMAND_GRID.edge_key_max_len);
 }
 
 export async function extractAndPersistObjectEdges(

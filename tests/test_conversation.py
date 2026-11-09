@@ -317,6 +317,8 @@ def test_discovery_lists_only_the_current_providers(
         "anthropic",
         "openrouter",
     ]
+    assert discovery["work_conversations"]["operator_funded_providers"] == ["meta"]
+    assert "almost any model" in discovery["work_conversations"]["provider_note"]
 
 
 def test_api_requires_route_key_and_opt_in(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

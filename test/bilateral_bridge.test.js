@@ -100,7 +100,8 @@ describe("bilateral agent transport shim (/bridge/*)", () => {
 
   describe("reply on an ended lease", () => {
     const options = { withSecurity: (r) => r };
-    const openEnv = (fabric) => ({ TESSERA: fabric, FREE_OPEN_UNTIL_UTC: "2099-01-01T00:00:00Z" });
+    // The fake database answers every query with one row, so the claimed-name rule (its own tests) is off here.
+    const openEnv = (fabric) => ({ TESSERA: fabric, FREE_OPEN_UNTIL_UTC: "2099-01-01T00:00:00Z", AGENT_NAME_CLAIMS: "off" });
     function fakeDb(row) {
       const statement = {
         bind: () => statement,
@@ -182,6 +183,51 @@ describe("bilateral agent transport shim (/bridge/*)", () => {
       expect(body.submit_ok).toBe(false);
       expect(body.bilateral_status).toBe("DEGRADED_UNPERSISTED");
       expect(fabric.seen.submits).toBe(1);
+    });
+
+    it("hello answers before the Fabric claim, then the claim puts the Fabric Task on the session (hello speed)", async () => {
+      const fabric = fakeFabric({ submitStatuses: [] });
+      const waits = [];
+      const writes = [];
+      const statement = (sql) => {
+        const st = { sql, args: [], bind: (...a) => { st.args = a; return st; }, first: async () => null, run: async () => ({ success: true }), all: async () => ({ results: [] }) };
+        return st;
+      };
+      const db = { prepare: statement, batch: async (list) => { writes.push(list.map((x) => ({ sql: x.sql, args: x.args }))); return []; } };
+      const ctx = { waitUntil: (p) => waits.push(p) };
+      const res = await handleBilateralBridge(new Request("https://x.test/bridge/c7/hello/speed-test-a1b2c3?format=json", { headers: { accept: "application/json" } }), openEnv(fabric), db, "https://x.test", { ...options, ctx });
+      const body = await res.json();
+      expect(body.turn_seq).toBe(1);
+      expect(body.assigned_prompt).toBeTruthy();
+      expect(body.reply_url_template).toContain("/reply/speed-test-a1b2c3/t1/");
+      expect(body.claimed_task_id).toMatch(/^bridge_task_[0-9a-f]+$/);
+      expect(res.headers.get("server-timing")).toMatch(/fabric;dur=0/);
+      // The answer did not wait for Fabric: its Task id is the local one, and the claim is still a pending promise.
+      expect(waits).toHaveLength(1);
+      const claim = await waits[0];
+      expect(claim.taskId).toBe("task1");
+      expect(fabric.seen.sessions).toBe(1);
+      const update = writes.find((list) => /^\s*UPDATE herma_bridge_sessions/.test(list[0].sql));
+      expect(writes.some((list) => /INSERT INTO herma_bridge_sessions/.test(list[0].sql) && /INSERT INTO herma_bridge_turns/.test(list[1]?.sql || ""))).toBe(true);
+      expect(update[0].sql).toMatch(/UPDATE herma_bridge_sessions .* WHERE channel_id = \? AND agent_name = \? AND active_task_id = \? AND turn_seq = \?/s);
+      expect(update[0].args.slice(3, 6)).toEqual(["task1", 1, "demo.ping"]);
+      expect(update[0].args.slice(-2)).toEqual([body.claimed_task_id, 1]);
+      expect(update[1].sql).toMatch(/UPDATE herma_bridge_turns/);
+    });
+
+    it("a reply that comes before the background claim takes its own Fabric Task", async () => {
+      const fabric = fakeFabric({ submitStatuses: [] });
+      const pending = { tessera_token: null, active_task_id: "bridge_task_abc123", active_fence: 1, turn_seq: 1 };
+      const res = await handleBilateralBridge(post("c8", { agent: "quick", turn_tag: "t1", summary: "a fast answer" }), openEnv(fabric), fakeDb(pending), "https://x.test", options);
+      expect((await res.json()).submit_ok).toBe(true);
+      expect(fabric.seen.sessions).toBe(1);
+      expect(fabric.seen.submits).toBe(1);
+    });
+
+    it("without a ctx, hello claims before it answers, as before", async () => {
+      const fabric = fakeFabric({ submitStatuses: [] });
+      const res = await handleBilateralBridge(new Request("https://x.test/bridge/c9/hello/inline-a1b2c3?format=json", { headers: { accept: "application/json" } }), openEnv(fabric), fakeDb(null), "https://x.test", options);
+      expect((await res.json()).claimed_task_id).toBe("task1");
     });
 
     it("while open, a channel page asks for no challenge and any hello works", async () => {

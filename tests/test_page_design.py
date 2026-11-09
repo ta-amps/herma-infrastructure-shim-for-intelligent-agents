@@ -292,7 +292,12 @@ def test_every_existing_page_names_the_canonical_host(
     for name, page in pages.items():
         route = name.split(" ", 1)[1]
         links = re.findall(r'<link rel="canonical" href="([^"]+)">', page)
-        if route in ("/c/nothing_here", "/w/w_missing"):
+        if route in (
+            "/c/nothing_here",
+            "/w/w_missing",
+            "/c/agent/nobody-here",
+            "/c/task/nothing_here",
+        ):
             assert links == [], f"{name}: a page that was not found has no canonical address"
             continue
         assert len(links) == 1 and links[0].startswith("https://shim.teleionlabs.com/"), (

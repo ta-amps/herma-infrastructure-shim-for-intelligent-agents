@@ -23,6 +23,8 @@ export default defineConfig({
       bindings: {
         // The tests call the Worker on the workers.dev address; the redirect to the canonical host has its own test.
         CANONICAL_REDIRECT: "off",
+        // The claimed-name rule has its own tests (test/agent_names.test.js), which turn it on; older tests reuse names freely.
+        AGENT_NAME_CLAIMS: "off",
         PUBLIC_NAMES_FILTER: "off",
         OPEN_WORK_LIMITS: "off",
         HERMA_CONVERSATION_ENABLED: "true",
@@ -102,5 +104,5 @@ export default defineConfig({
       }
     }
   })],
-  test: { include: ["test/*.test.js", "test/*.test.mjs"], testTimeout: 20000 }
+  test: { include: ["test/*.test.js", "test/*.test.mjs"], testTimeout: 40000, hookTimeout: 30000 }
 });

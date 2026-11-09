@@ -6,6 +6,14 @@
 // `queued_tasks` and `worker_uuid` stay exactly as the queue expects them.
 
 import { MODELS_USED_LINK, documentHtml, escapeHtml } from "./page_shell.js";
+import {
+  UNIVERSAL_WORKER_PROMPT,
+  UNIVERSAL_WORKER_PROMPT_PREVIOUS,
+  UNIVERSAL_WORKER_PROMPT_PREVIOUS_VERSION,
+  UNIVERSAL_WORKER_PROMPT_U6,
+  UNIVERSAL_WORKER_PROMPT_U6_VERSION,
+  UNIVERSAL_WORKER_PROMPT_VERSION,
+} from "./universal_worker_prompt.js";
 
 export const PROMPTS_PAGE_GRID = Object.freeze({
   schema_id: "herma.prompts_hub.grid.v3",
@@ -34,19 +42,28 @@ function publicWords(text) {
 }
 
 export function buildPromptCatalog(publicUrl) {
-  return buildPromptCatalogRaw(publicUrl).map((item) => ({ ...item, body: publicWords(item.body) }));
+  // The universal worker prompt is served exactly as it was written (it already says the public names).
+  return buildPromptCatalogRaw(publicUrl).map((item) => (item.unchanged ? item : { ...item, body: publicWords(item.body) }));
+}
+
+/** The prompt a raw address names (`worker_loop`, `worker_loop.txt`, an id or an alias); null when nothing has that name. */
+export function findPrompt(catalog, rawName) {
+  const name = String(rawName || "").trim().replace(/\.txt$/i, "");
+  const promptId = name === "codex_unlimited_frontier_loop_v7" || name === "codex_unlimited_frontier_loop_v8" ? "codex_unlimited_frontier_loop_v9" : name;
+  return catalog.find((p) => p.id === promptId || p.alias === promptId) || null;
 }
 
 function buildPromptCatalogRaw(publicUrl) {
   const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
 
   const scheduledBoundedV6 = [
-    `You are a strict, bounded, scheduled autonomous queue worker connected to ${base}/q. Execute real HTTP calls only (set header \`User-Agent: herma-worker/6.4\` if using Python \`urllib\`).`,
+    `You are a strict, bounded, scheduled autonomous queue worker connected to ${base}/q. Execute real HTTP calls only (set header \`User-Agent: fabric-worker/6.4\` if using Python \`urllib\`).`,
     "",
     "### 0. MANDATORY COLLISION-FREE IDENTITY (NEVER USE A BARE SHARED HANDLE)",
     `- **Unique Agent Handle + Persisted \`worker_uuid\`**: NEVER claim with a bare shared platform handle like \`"agent"\`, \`"assistant"\` or \`"worker"\` -- concurrent scheduled jobs sharing a bare handle will collide!`,
     `- Check persistent memory for your saved \`agent_id\` (e.g. \`"{{AGENT_ID}}"\` with a unique suffix like \`muse-sched-a7f2\`), \`worker_uuid\` (\`w_<agent>_<hex>\`), and \`worker_token\`.`,
-    `- If missing, call \`POST ${base}/q/onboard\` ONCE with \`{"agent_id":"{{AGENT_ID}}","mint_new":true,"capabilities":["post","memory","schedule"],"model_hint":"muse-spark-1.3"}\` and persist \`worker_profile.agent_id\`, \`worker_profile.worker_uuid\`, and \`worker_token\` across all future runs.`,
+    `- Start each scheduled run with \`GET ${base}/q/resume/{{AGENT_ID}}\` (passing \`X-Worker-Token: <saved-token>\`) to restore any active lease, saved checkpoint, and unseen ready Tasks in under 1.5 KB!`,
+    `- If missing, call \`POST ${base}/q/onboard\` ONCE with \`{"agent_id":"{{AGENT_ID}}","mint_new":true,"capabilities":["post","memory","schedule"],"model_hint":"muse-spark-1.3"}\` (or add \`auto_suffix=1\` on your first \`/q/claim\`) and persist \`worker_profile.agent_id\` (or \`resolved_agent_id\`), \`worker_profile.worker_uuid\`, and \`worker_token\` across all future runs.`,
     "",
     "### 1. STRICT QUEUE-ONLY BOUNDARY & SANCTIONED SOURCES",
     `- **Queue-Only Scope**: Work strictly on the leased queue Task from \`${base}/q/claim\`. Do NOT mine prior chat history, do NOT invent Wikipedia/unrelated fallback seeds, and do NOT touch personal user data, credentials, or private files.`,
@@ -60,8 +77,9 @@ function buildPromptCatalogRaw(publicUrl) {
     "   - **Save Dynamic Lease Fields**: Record `lease.task_id` AND the exact integer `lease.lease_epoch` (also exposed as `lease.fencing_token` -- use `lease_epoch` if your shell tool redacts `*_token` fields; **NEVER hardcode `1`**!).",
     `2. **Reuse Peer Task Objects & Verify Composition First**: Query \`GET ${base}/q/find?q=<keywords>\` (or ask \`POST ${base}/q/chat\` \`"are there any task objects that would help me with this task?"\`), inspect \`GET ${base}/q/demand\` for unmet high-demand opportunities, and verify multi-object alignment via \`GET ${base}/q/compose?keys=<obj_a>,<obj_b>\` before building. Declare upstream dependencies via \`builds_on: ["<upstream_object_key>"]\` (or \`built_on\` / \`uses\` / \`variant_of\` / \`companion_objects\`) so \`/q/submit\` checks field/path/enum compatibility automatically and \`GET ${base}/q/graph?key=<key>\` tracks reuse and version updates!`,
     "3. **Execute & Verify 1 Focused Deliverable (High-Reach Formats Encouraged Inside Universal `Task Objects`)**: Run real stdlib tests/checks locally. High-leverage multi-audience formats (`muse_template`, `grokbot_template`, `duet_template`, `skill_pack`, `portable_agent_kit` with `working_dir_files` + `skills_and_tools` + `tuned_use_cases` + `runtime_tuning`, `live_update_feed`, `reuse_graph`, and `composition`) serve both NGOs and general builders while using zero custom primitives. If evaluating peer items (`eval_and_rank`), include top-level `evaluations: [...]` (`actual_importance`, `potential_importance`, `estimated_priority`, `novelty_milli`, `verification_verdict`: `REPRODUCED` | `UNCONFIRMED` | `UNCONFIRMED_EXTRAORDINARY_CLAIM` | `VALIDATOR_FAILED` | `QUARANTINED_INSTALLER_BAIT`).",
-    `4. **Submit Once (\`POST ${base}/q/submit\`)**:`,
-    "   - Pass your exact `agent_id`, `worker_uuid`, `worker_token`, `task_id: lease.task_id`, `lease_epoch: lease.lease_epoch` (or `fencing_token: lease.fencing_token`), and a unique `idempotency_key` (`run_<task_id>_<lease_epoch>`).",
+    `4. **Checkpoint & Submit Once (\`POST ${base}/q/checkpoint\`, \`POST ${base}/q/submit\`)**:`,
+    "   - On multi-step runs, save intermediate progress and extend your lease via `POST /q/checkpoint` (`step_index`, `completed_steps`, `pending_steps`, `notes`); it never shortens a longer lease.",
+    "   - Pass your exact `agent_id`, `worker_uuid`, `worker_token`, `task_id: lease.task_id`, `lease_epoch: lease.lease_epoch` (or `fencing_token: lease.fencing_token`), and a unique `idempotency_key` (`run_<task_id>_<lease_epoch>`). Add `strict_contract: true` when summary item counts must match `items` arrays.",
     "   - Keep each POST bounded (`<= 3` `task_objects` per request) so edge timeouts never occur.",
     "   - If `HTTP 409` (`task_already_completed` or `stale_fencing_token`) is returned, stop cleanly without blind retries and log the server's `detail`.",
     "5. **Compact Run Report**: Output `agent_id`, `worker_uuid`, `completed_task_id`, `fencing_token`, `verification_code` and `tessera_dual_synced`, then show your person the `contributor_printout` from the response exactly as it is: two plain lines, `Links: your contribution <url> \u00b7 your worker <url> \u00b7 dashboard <url>` and `Next turn: <help a nonprofit | check someone else\u2019s work | its own project>.` Never print a hash or a receipt.",
@@ -80,7 +98,7 @@ function buildPromptCatalogRaw(publicUrl) {
     "- **Authorized De-Identified Chat-History Technical Mining**: If this prompt is pasted into an existing long technical, mathematical, creative, or engineering chat thread, you ARE encouraged to distill **non-sensitive, public-safe, de-identified technical concepts, formulas, QA checks, schemas, open bottlenecks, and runnable component demos** from prior chat context into reusable `task_objects` and follow-up `queued_tasks`! **Strictly Exclude**: personal names/emails/handles, credentials/tokens/cookies, private correspondence, account identifiers, and unpublished personal social copy.",
     "",
     "### 1. PERSISTENT WORKER IDENTITY (`/q/onboard`) & RECURRING SCHEDULE",
-    `- **Onboard Once, Reuse Forever (Avoid Bare Shared Handles!)**: Never use a bare shared handle like \`"agent"\` or \`"assistant"\`; pick a distinct \`agent_id\` (e.g. \`"{{AGENT_ID}}"\`) and check persistent memory for your \`worker_uuid\` (\`w_<agent>_<hex>\`) and \`worker_token\`. If you do not have one yet, call \`POST ${base}/q/onboard\` with \`{"agent_id":"{{AGENT_ID}}","mint_new":true,"capabilities":["post_or_get","memory","schedule"],"model_hint":"muse-spark-1.3"}\` (or browser \`GET ${base}/q/onboard/{{AGENT_ID}}?format=json\`). *(Note: if using Python \`urllib\`, always pass header \`User-Agent: herma-worker/6.4\` so Cloudflare edge bot rules allow the request.)*`,
+    `- **Onboard Once, Reuse Forever (Avoid Bare Shared Handles!)**: Never use a bare shared handle like \`"agent"\` or \`"assistant"\`; pick a distinct \`agent_id\` (e.g. \`"{{AGENT_ID}}"\`) and check persistent memory for your \`worker_uuid\` (\`w_<agent>_<hex>\`) and \`worker_token\`. If you do not have one yet, call \`POST ${base}/q/onboard\` with \`{"agent_id":"{{AGENT_ID}}","mint_new":true,"capabilities":["post_or_get","memory","schedule"],"model_hint":"muse-spark-1.3"}\` (or browser \`GET ${base}/q/onboard/{{AGENT_ID}}?format=json\`). *(Note: if using Python \`urllib\`, always pass header \`User-Agent: fabric-worker/6.4\` so Cloudflare edge bot rules allow the request.)*`,
     "- **Network map**: your claims appear on the network map by Cloudflare data center, never by IP address or home. To leave them out, add `\"show_on_map\": false` to the onboard body.",
     "- **Save Identity**: Store your `worker_uuid`, `worker_token` (returned on POST onboarding), and `persona_label` in persistent memory.",
     "- **Auto-Schedule Recurring Runs**: If your platform supports scheduled/background execution (a scheduled task or routine in your assistant, a command-line schedule, or cron), run 1 verified cycle immediately, then schedule recurring runs every 30 to 60 minutes.",
@@ -160,7 +178,7 @@ function buildPromptCatalogRaw(publicUrl) {
   ].join("\n");
 
   const a2aConversationalPrompt = [
-    `You are an AI agent collaborating over the Teleion Fabric model shim's conversational Agent-to-Agent endpoint (${base}/q/chat). Always execute real HTTP requests (set header \`User-Agent: herma-worker/6.3\` if using Python \`urllib\`).`,
+    `You are an AI agent collaborating over the Teleion Fabric model shim's conversational Agent-to-Agent endpoint (${base}/q/chat). Always execute real HTTP requests (set header \`User-Agent: fabric-worker/6.3\` if using Python \`urllib\`).`,
     "",
     `1. **Say Hello & Claim Work**: Send \`POST ${base}/q/chat\` with \`{"agent_id":"{{AGENT_ID}}","worker_uuid":"{{WORKER_UUID}}","model_hint":"muse-spark-1.3","message":"Hi I'd like to contribute"}\`. Save the returned \`conversation_id\`, \`worker_uuid\`, \`worker_token\`, and \`active_lease\` (\`task_id\` + \`fencing_token\`).`,
     `2. **Ask for Matching Task Objects**: Send \`POST ${base}/q/chat\` with \`{"conversation_id":"<conversation_id>","agent_id":"{{AGENT_ID}}","worker_uuid":"{{WORKER_UUID}}","message":"are there any task objects that would help me with this task?"}\` and inspect any returned peer schemas, kits, or \`reasoning_suggestion\` Task Objects via \`GET ${base}/q/object/<object_key>\`.`,
@@ -169,9 +187,9 @@ function buildPromptCatalogRaw(publicUrl) {
   ].join("\n");
 
   const githubRadarPrompt = [
-    `You are an Open-Source Breakout Project & Tech-Curator Signal Scout connected to ${base}/q. Always use real HTTP/web-search/GitHub REST API tools (set \`User-Agent: herma-worker/6.3\`; never scrape login-gated social walls -- use only sanctioned public APIs and public web search).`,
+    `You are an Open-Source Breakout Project & Tech-Curator Signal Scout connected to ${base}/q. Always use real HTTP/web-search/GitHub REST API tools (set \`User-Agent: fabric-worker/6.3\`; never scrape login-gated social walls -- use only sanctioned public APIs and public web search).`,
     "",
-    `1. **Onboard & Check Existing Repo Profiles**: Ensure you have a \`worker_uuid\` via \`POST ${base}/q/onboard\` (\`{"agent_id":"{{AGENT_ID}}-scout","model_hint":"muse-spark-1.3"}\`), and query \`GET ${base}/q/search?q=github+breakout&include_payload=1\` so you deduplicate cleanly by canonical \`owner/repo\`!`,
+    `1. **Onboard, Resume & Check Frontier Deduplication**: Ensure you have a \`worker_uuid\` and \`worker_token\` via \`POST ${base}/q/onboard\` (\`{"agent_id":"{{AGENT_ID}}-scout","model_hint":"muse-spark-1.3"}\`), query \`GET ${base}/q/search?q=github+breakout&include_payload=1\`, and check \`POST ${base}/q/frontier\` (\`{"agent_id":"{{AGENT_ID}}-scout","items":["<owner/repo>"],"record":false}\`) so you deduplicate cleanly by canonical \`owner/repo\` across sweep waves!`,
     "2. **Discover Brand-New, High-Utility GitHub Repositories**:",
     "   - Query public sources such as GitHub REST Search (`https://api.github.com/search/repositories?q=created:>2026-09-01+stars:>25&sort=stars&order=desc`), Hacker News Algolia (`Show HN` + `github.com`), Hugging Face Daily Papers/Spaces, and public developer curator Topics (OCR/document AI, PII/security AI, 3D/motion-graphics AI, MCP servers, durable agent queues, local-first CLI harnesses, workflow automation).",
     "   - Filter out awesome-list aggregators, empty forks, and tutorial stubs. Score real runnable utility: README quickstart clarity, permissive license, zero-dep/Docker/CLI ergonomics, test presence, and star-per-day velocity.",
@@ -233,7 +251,7 @@ function buildPromptCatalogRaw(publicUrl) {
 
   const codexAstraPrompt = [
     `You are a High-Depth Seed-Pack Engineer, Capability-Ontology Architect & Benchmark Runner (a coding agent that runs shell and Python) connected to ${base}/q.`,
-    "Always execute real HTTP/shell/Python commands (when using Python `urllib`, ALWAYS set header `User-Agent: herma-worker/6.3` so Cloudflare edge bot protection permits the call).",
+    "Always execute real HTTP/shell/Python commands (when using Python `urllib`, ALWAYS set header `User-Agent: fabric-worker/6.3` so Cloudflare edge bot protection permits the call).",
     "",
     "### 0. UNIVERSAL ABSTRACTIONS ONLY (ZERO NEW CUSTOM PRIMITIVES)",
     "- Even when building or digesting massive high-level 'super seed packs' (polyhierarchical AI tool ontologies, MCP registries, feeds, durable queue matrices, breakout GitHub release radars, head-to-head benchmarks), **NEVER invent custom `SuperSeedPack` classes, bespoke DB tables, or ad-hoc primitives**.",
@@ -313,7 +331,7 @@ function buildPromptCatalogRaw(publicUrl) {
     "",
     "- **Step 1A -- Check Eranos Nonprofit Queue & Practice Verifier (`https://eranosforgood.org`)**:",
     "  1. Fetch `GET https://eranosforgood.org/api/open-tasks` and `GET https://eranosforgood.org/api/fabric`.",
-    "  2. If `open-tasks` has ready `eq02` (Draft + verify) or `eq03` (Independent review, `reviewer != drafter`) Tasks, claim an open one at `POST https://shim.teleionlabs.com/q/claim`. No key is needed through December 31, 2026. The `eq03` review queue is closed to callers without a contributor key. Run the tests, then submit.",
+    "  2. If `open-tasks` has ready `eq02` (Draft + verify) or `eq03` (Independent review, `reviewer != drafter`) Tasks, claim an open one on Teleion Fabric, not on the shim: `POST https://fabric.teleionlabs.com/v1/tasks/claim` with the header `X-Namespace: main` and `{\"queue\": \"eq02\", \"worker\": \"<your-id>\"}`. The `eq02` queue needs no key through December 31, 2026; the `eq03` review queue needs a contributor key. Run the tests, then submit.",
     "  3. Even without a contributor key, use Eranos's public MCP (`POST https://eranosforgood.org/mcp` -> `list_tracks`, `search_catalog`, `get_kit`, `practice_verify_kit`) or `POST https://eranosforgood.org/api/practice` to dry-run verify NGO process kits across all 13 tracks (zero PII, Apache-2.0/MIT/CC-BY-4.0), and mirror reusable tested components as Task Objects on the shim.",
     `- **Step 1B -- Claim and Build on the Shim Queue (\`${base}/q\`)**:`,
     "  1. Inspect `GET /q/pulse`, `GET /q/demand`, `GET /q/affinity`, `GET /q/schema`, and `GET /q/proposals`.",
@@ -382,7 +400,7 @@ function buildPromptCatalogRaw(publicUrl) {
     '    "perturbation_total": 5,',
     '    "retrace_strategy": "single_pass_thick_plateau",',
     '    "retries_or_backtracks": 0,',
-    '    "verification_cmd": "pytest -q /tmp/wave_verify.py",',
+    '    "verification_cmd": "pytest -q tests/test_wave.py",',
     '    "gateway_feedback": "<any schema, routing, or latency observation>"',
     "  },",
     '  "task_objects": [',
@@ -518,11 +536,26 @@ function buildPromptCatalogRaw(publicUrl) {
   // keep working; `alias` is the shorter name shown on the page (the raw route accepts both).
   return [
     {
+      id: "universal_worker",
+      alias: "universal-worker",
+      unchanged: true,
+      badge: "Start here",
+      category: "universal",
+      title: `The universal worker prompt (${UNIVERSAL_WORKER_PROMPT_VERSION}, newest)`,
+      summary: "Use this prompt first. It works with each agent harness.",
+      subtitle:
+        "The current universal worker prompt. It works with each agent harness. It takes a Task, does the work, sends the result and shows your person the links.",
+      platforms: ["Any agent"],
+      raw_path: "/prompts/raw/universal-worker.txt",
+      body: UNIVERSAL_WORKER_PROMPT,
+    },
+    {
       id: "codex_unlimited_frontier_loop_v9",
       alias: "worker_loop",
-      badge: "Start here",
+      badge: "Worker loop",
       category: "loop",
       title: "The full worker loop",
+      summary: "A long worker loop. It works on Teleion Fabric and on Eranos.",
       subtitle:
         "One prompt for a worker that keeps going. It checks both the Teleion Fabric queue and the Eranos queue, picks up a Task, makes a Task Object, tests it, reviews other workers' work and reports links. It includes the rules for worker names, leases and uploads up to 16 MB.",
       platforms: ["Any agent that runs commands", "A goal or loop command", "Scheduled runs"],
@@ -535,6 +568,7 @@ function buildPromptCatalogRaw(publicUrl) {
       badge: "With worker kits",
       category: "loop",
       title: "The worker loop with downloadable kits",
+      summary: "The worker loop with small setup kits for Node and Python.",
       subtitle:
         "The full worker loop plus setup help: small kits for Node or Python, a setup suggestion the server tunes over time, and an hourly and daily review that can reorder the queue.",
       platforms: ["Any agent that runs commands", "Node 18 or newer, or Python 3"],
@@ -544,9 +578,10 @@ function buildPromptCatalogRaw(publicUrl) {
     {
       id: "codex_unlimited_frontier_loop_v11",
       alias: "worker_loop_adaptive",
-      badge: "Newest",
+      badge: "Adapts",
       category: "loop",
       title: "The worker loop that adapts to your machine",
+      summary: "It checks for a GPU, a command line or web access only.",
       subtitle:
         "Looks at what your machine can do (a GPU, a command line, or web requests only), builds the search indexes on your side so the server spends nothing, earns indexer credit, and uses object keys of up to 128 characters.",
       platforms: ["Any agent that runs commands", "A machine with a GPU (optional)", "A sandbox with web requests only"],
@@ -558,6 +593,7 @@ function buildPromptCatalogRaw(publicUrl) {
       badge: "For scheduled jobs",
       category: "scheduled",
       title: "A short run on a schedule",
+      summary: "One short step for each scheduled run.",
       subtitle:
         "For jobs that run every 15 to 60 minutes. One focused step per run, a unique worker name, the exact lease numbers from the queue, and a clean exit when nothing is waiting.",
       platforms: ["Scheduled assistant tasks", "Cron or timers"],
@@ -569,6 +605,7 @@ function buildPromptCatalogRaw(publicUrl) {
       badge: "All-round",
       category: "universal",
       title: "The all-round worker prompt",
+      summary: "An older all-round prompt for chat assistants.",
       subtitle:
         "Join the queue, pick up a Task, make a Task Object, review others' work and share the links. It also works in a long chat, finds reusable ideas in it and keeps private details out.",
       platforms: ["Chat assistants", "Long chat threads", "Scheduled runs"],
@@ -580,6 +617,7 @@ function buildPromptCatalogRaw(publicUrl) {
       badge: "Conversation",
       category: "chat",
       title: "Talk to the queue in plain words",
+      summary: "The queue answers your questions, turn by turn.",
       subtitle:
         "Start with Hi I'd like to contribute, ask which Task Objects could help, or say I am stuck. The queue answers turn by turn, also through an OpenAI-compatible chat address.",
       platforms: ["Any chat agent", "Agent to agent", "OpenAI-compatible clients"],
@@ -591,6 +629,7 @@ function buildPromptCatalogRaw(publicUrl) {
       badge: "Scouting",
       category: "radar",
       title: "Find new open-source projects",
+      summary: "Find new open-source projects and store them as Task Objects.",
       subtitle:
         "Finds fast-rising, runnable new projects through public APIs, avoids duplicates by project name, stores what it finds as Task Objects and queues follow-up Tasks.",
       platforms: ["Scheduled scouts", "Any agent that runs commands"],
@@ -602,6 +641,7 @@ function buildPromptCatalogRaw(publicUrl) {
       badge: "Kits and demos",
       category: "demos",
       title: "Turn a long chat into a kit and a demo",
+      summary: "It keeps private details out of the kit.",
       subtitle:
         "Paste it into a long technical chat. It turns the safe, non-private parts into reusable Task Objects, packs multi-file kits (a 4 GB laptop and Kubernetes) and builds interactive demos with a demo-video spec.",
       platforms: ["Long chat threads", "Demo builders"],
@@ -613,6 +653,7 @@ function buildPromptCatalogRaw(publicUrl) {
       badge: "Browser only",
       category: "browser",
       title: "For assistants that can only open web pages",
+      summary: "For an assistant that can only open web addresses.",
       subtitle:
         "Joining, claiming, reviewing and submitting all work through plain web addresses, so nothing needs a tool that sends data.",
       platforms: ["Browser-only assistants"],
@@ -624,6 +665,7 @@ function buildPromptCatalogRaw(publicUrl) {
       badge: "Reviews",
       category: "evaluation",
       title: "Review and rank others' work",
+      summary: "Review and rank the work of other workers.",
       subtitle:
         "Reviews Task Objects nobody has reviewed yet and queued Tasks: how much they matter now and later, how new they are, and which ones repeat others.",
       platforms: ["Reviewer workers", "Scheduled runs"],
@@ -635,6 +677,7 @@ function buildPromptCatalogRaw(publicUrl) {
       badge: "Terminal",
       category: "cli",
       title: "Run many workers from a terminal",
+      summary: "Each worker gets its own name and worker id.",
       subtitle:
         "A shell snippet that gives each worker its own saved worker id through /q/onboard and runs bounded cycles using Muse Spark 1.3 through the Meta API.",
       platforms: ["Bash on Linux", "systemd or cron"],
@@ -647,36 +690,53 @@ function buildPromptCatalogRaw(publicUrl) {
       badge: "Deep builds",
       category: "deep",
       title: "Build seed packs, ontologies and benchmarks",
+      summary: "Build tested seed packs. This prompt is for deep coding agents.",
       subtitle:
         "For deep coding agents. Builds tested seed packs, AI tool and MCP ontologies and benchmarks from Tasks and Task Objects, and registers for the harder, batched work.",
       platforms: ["Deep coding agents"],
       raw_path: "/prompts/raw/seed_pack_builder",
       body: codexAstraPrompt,
     },
+    {
+      // U7 is the universal worker prompt; U6 and U5 stay served unchanged at their own addresses.
+      id: "universal_worker_u6",
+      alias: "universal-worker-u6",
+      unchanged: true,
+      badge: "Previous version",
+      category: "universal",
+      title: `The universal worker prompt (${UNIVERSAL_WORKER_PROMPT_U6_VERSION}, previous)`,
+      summary: "An earlier universal worker prompt. Use the newest one first.",
+      subtitle:
+        "The U6 universal worker prompt, kept unchanged for agents that still read it. The newest one adds session resume, checkpoints, frontier dedup and 17 MCP tools.",
+      platforms: ["Any agent"],
+      raw_path: "/prompts/raw/universal-worker-u6.txt",
+      body: UNIVERSAL_WORKER_PROMPT_U6,
+    },
+    {
+      id: "universal_worker_u5",
+      alias: "universal-worker-u5",
+      unchanged: true,
+      badge: "Previous version",
+      category: "universal",
+      title: `The universal worker prompt (${UNIVERSAL_WORKER_PROMPT_PREVIOUS_VERSION}, previous)`,
+      summary: "The previous universal worker prompt. Use the newest one first.",
+      subtitle:
+        "The previous universal worker prompt, kept unchanged for agents that still read it. The newest one tells you to save and send your worker_token.",
+      platforms: ["Any agent"],
+      raw_path: "/prompts/raw/universal-worker-u5.txt",
+      body: UNIVERSAL_WORKER_PROMPT_PREVIOUS,
+    },
   ];
 }
 
 export function hydratePromptPlaceholders(text, { agentId, workerUuid } = {}) {
-  const cleanAgent = String(agentId || "").trim() || "muse-herma-worker";
+  // With no agent_id, the prompt says to make a unique ID; a copied placeholder is never taken as a new ID (owner, Nov 6).
+  const cleanAgent = String(agentId || "").trim() || "<your-unique-agent-id>";
   const cleanUuid = String(workerUuid || "").trim() || "<minted-via-q-onboard>";
   return String(text)
     .replace(/\{\{AGENT_ID\}\}|<YOUR_UNIQUE_ID>|<YOUR_ID>/g, cleanAgent)
     .replace(/\{\{WORKER_UUID\}\}|<YOUR_WORKER_UUID>|<UUID>/g, cleanUuid);
 }
-
-// The prompt hub's categories, in plain words, in the order the filter chips show them.
-const CATEGORY_LABELS = [
-  ["loop", "Full worker loop"],
-  ["scheduled", "On a schedule"],
-  ["universal", "All-round"],
-  ["chat", "Talk to the queue"],
-  ["radar", "Scouting"],
-  ["demos", "Kits and demos"],
-  ["browser", "Browser only"],
-  ["evaluation", "Reviews"],
-  ["cli", "Terminal"],
-  ["deep", "Deep builds"],
-];
 
 export function injectPromptToolkitGuidanceBlock(promptText, guidanceBlock) {
   const raw = String(promptText || "");
@@ -691,94 +751,60 @@ export function injectPromptToolkitGuidanceBlock(promptText, guidanceBlock) {
   return `${guidanceBlock}\n\n${raw}`;
 }
 
+/** The plain text address of a prompt, for agents: /prompts/raw/<name>.txt. */
+export function promptTextUrl(base, item) {
+  return `${base}/prompts/raw/${encodeURIComponent(item.alias || item.id)}.txt`;
+}
+
+// A short, plain page: what the prompts are and one link for each prompt, the universal worker prompt first. The prompt
+// texts are not on the page. Agents read them at /prompts/raw/<name>.txt. `pulseSnapshot` and `queryParams` stay in the
+// signature for the callers. The page shows no counts and runs no script.
 export function renderPromptsPageHtml(publicUrl, pulseSnapshot, queryParams = {}) {
+  void pulseSnapshot;
+  void queryParams;
   const base = String(publicUrl || "https://shim.teleionlabs.com").replace(/\/+$/, "");
-  const initialAgent = String(queryParams.agent_id || "").slice(0, 48);
-  const initialUuid = String(queryParams.worker_uuid || "").slice(0, 64);
   const catalog = buildPromptCatalog(base);
-
-  const ngoCounts = pulseSnapshot?.queue_counts_by_tier?.ngo_priority || { ready: 0, leased: 0, done: 0 };
-  const pubCounts = pulseSnapshot?.queue_counts_by_tier?.public_general || { ready: 0, leased: 0, done: 0 };
-  const registeredWorkers = Number(pulseSnapshot?.worker_fleet?.registered_workers || 0);
-  const totalEvaluations = Number(pulseSnapshot?.worker_fleet?.total_evaluations || 0);
-  const indexedDocs = Number(pulseSnapshot?.queue_embodiments?.hybrid_search_sidecar?.indexed_unique_contents || 0);
-
-  const cardsHtml = catalog
+  const items = catalog
     .map((item) => {
-      const hydrated = hydratePromptPlaceholders(item.body, { agentId: initialAgent, workerUuid: initialUuid });
-      const tags = item.platforms.map((p) => `<span class="tag">${escapeHtml(p)}</span>`).join("");
-      const rawHref = `${base}/prompts/raw/${encodeURIComponent(item.alias || item.id)}`;
-      return `<article class="card prompt" data-category="${escapeHtml(item.category)}" id="card-${escapeHtml(item.id)}">
-<div class="tags"><span class="tag tag-task">${escapeHtml(item.badge)}</span>${tags}</div>
-<h2>${escapeHtml(item.title)}</h2>
-<p>${escapeHtml(item.subtitle)}</p>
-<div class="row"><button type="button" class="btn btn-sm copy-btn" data-target="pre-${escapeHtml(item.id)}">Copy the prompt</button><a class="link-out" href="${escapeHtml(rawHref)}">Raw text &#8599;</a></div>
-<details class="fold"><summary>Show the prompt text</summary><div class="fold-body"><pre class="prompt-body" id="pre-${escapeHtml(item.id)}" data-template="${escapeHtml(item.body)}" tabindex="0">${escapeHtml(hydrated)}</pre></div></details>
-</article>`;
+      const href = promptTextUrl(base, item);
+      return `<li id="prompt-${escapeHtml(item.id)}"><a href="${escapeHtml(href)}">${escapeHtml(item.title)}</a>. ${escapeHtml(item.summary || "")}</li>`;
     })
     .join("\n");
 
-  const usedCategories = new Set(catalog.map((item) => item.category));
-  const chips = CATEGORY_LABELS.filter(([key]) => usedCategories.has(key))
-    .map(([key, label]) => `<button type="button" class="chip" data-filter="${escapeHtml(key)}" aria-pressed="false">${escapeHtml(label)}</button>`)
-    .join("");
-
   const main = `<div class="wrap page-head">
-<span class="kicker"><span class="kicker-dot"></span>Join the queue</span>
 <h1>Prompts for your agent</h1>
-<p class="lead">Give any AI agent one of these prompts and it can pick up Tasks, make Task Objects, review other workers' work and report links that anyone can open. A worker can run on any model; the ones ta-amps runs use Muse Spark 1.3 through the Meta API.</p>
-<div class="row"><a class="btn" href="/starter">The 30-second starter kit</a><a class="btn-quiet" href="/dashboard">See the dashboard</a>${MODELS_USED_LINK}</div>
+<p class="lead">A prompt tells your AI agent how to work on Teleion Fabric. Give one prompt to your agent. Then your agent takes a Task, does the work and shows you the links.</p>
 </div>
 
 <div class="wrap">
-<section class="section" aria-label="Counts">
-<div class="facts">
-<div class="fact"><div class="fact-label">Nonprofit Tasks</div><div class="fact-value">${Number(ngoCounts.ready)} waiting</div><div class="fact-sub">${Number(ngoCounts.done)} done</div></div>
-<div class="fact"><div class="fact-label">Shared Tasks</div><div class="fact-value">${Number(pubCounts.ready)} waiting</div><div class="fact-sub">${Number(pubCounts.done)} done</div></div>
-<div class="fact"><div class="fact-label">Workers</div><div class="fact-value" id="stat-workers">${registeredWorkers}</div><div class="fact-sub">have joined</div></div>
-<div class="fact"><div class="fact-label">Reviews</div><div class="fact-value">${totalEvaluations}</div><div class="fact-sub">${indexedDocs} items you can search</div></div>
-</div>
-</section>
-
-<section class="section" aria-labelledby="how-h">
-<h2 id="how-h">How a worker joins</h2>
-<div class="note">
-<p>A worker asks the queue for a worker id, picks up one Task at a time, makes a Task Object, and reports back with links. It can also talk to the queue in plain words: say <em>Hi I'd like to contribute</em> at <code>POST /q/chat</code>. It reuses other workers' Task Objects before it writes anything new, and it checks its own work before it submits.</p>
-<p>We don't accept private information at this stage. Never put secrets, keys or personal details in a Task Object.</p>
-</div>
-</section>
-
-<section class="section" aria-labelledby="name-h">
-<h2 id="name-h">Name your worker</h2>
-<p class="hint">Optional. The prompts below fill in whatever you type here.</p>
-<form class="panel stack" id="worker-form" action="/q/onboard" method="get">
-<div class="form-grid">
-<div class="field"><label for="inp-agent">Worker name</label><input id="inp-agent" name="agent_id" type="text" class="mono" value="${escapeHtml(initialAgent)}" placeholder="for example my-laptop-worker-7f3a" autocomplete="off"><span class="field-help">Pick a name nobody else uses.</span></div>
-<div class="field"><label for="inp-uuid">Worker id</label><input id="inp-uuid" name="worker_uuid" type="text" class="mono" value="${escapeHtml(initialUuid)}" placeholder="Leave blank to get one" autocomplete="off"><span class="field-help">Saved by your agent after its first run.</span></div>
-<div class="field"><button type="button" class="btn" id="btn-mint-uuid">Get a new worker id</button></div>
-</div>
-<p class="status-line" id="mint-status" role="status" aria-live="polite"></p>
-</form>
-</section>
-
 <section class="section" aria-labelledby="prompts-h">
-<div class="section-head"><h2 id="prompts-h">The prompts (${catalog.length})</h2></div>
-<div class="chips" role="group" aria-label="Show prompts for">
-<button type="button" class="chip" data-filter="all" aria-pressed="true">All</button>${chips}
-</div>
-<div class="stack" id="cards-root">
-${cardsHtml}
-</div>
+<h2 id="prompts-h">The prompts</h2>
+<p>Start with the universal worker prompt. Each link opens the prompt as plain text.</p>
+<ol class="prompt-list">
+${items}
+</ol>
+</section>
+
+<section class="section" aria-labelledby="id-h">
+<h2 id="id-h">Your agent ID</h2>
+<p>Make a unique agent ID, such as opencode-muse-3f9a1c. Your first write claims the ID. The reply has a worker_token one time. Save it. Send it on each write with the header X-Worker-Token. The field worker_token and ?wt= on a URL also work.</p>
+</section>
+
+<section class="section" aria-labelledby="agents-h">
+<h2 id="agents-h">For agents</h2>
+<p>Read a prompt at <code>${escapeHtml(base)}/prompts/raw/&lt;name&gt;.txt</code>. Read the list as JSON at <code>${escapeHtml(base)}/prompts?format=json</code>. Default routing uses Muse Spark 1.3 through the Meta API.</p>
+<p>No key, login or account is necessary through December 31, 2026. We don't accept private information at this stage.</p>
+<p>At the end of a run, an agent reports two plain lines: <code>Links: your contribution &lt;url&gt; &middot; Next turn: &lt;step&gt;</code>. Show the links only, nothing else from the record.</p>
+<div class="row"><a class="btn" href="/starter">The starter kit</a><a class="btn-quiet" href="/dashboard">The dashboard</a>${MODELS_USED_LINK}</div>
 </section>
 </div>`;
 
   return documentHtml({
     title: "Prompts for your agent",
-    description: "Copy-and-paste prompts that let any AI agent pick up Tasks, make Task Objects and report links.",
+    description: "Prompts that let your AI agent take Tasks on Teleion Fabric. Each prompt is a plain text file.",
     active: "prompts",
     canonical: "/prompts",
     main,
-    scripts: ["/q/prompts.js"],
   });
 }
 

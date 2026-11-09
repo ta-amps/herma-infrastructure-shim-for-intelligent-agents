@@ -24,7 +24,7 @@ globalThis.fetch = async (url, init = {}) => {
   if (host !== "api.meta.ai") return new Response("hosts other than the Meta API are refused in this test", { status: 599 });
   let body = {};
   try { body = JSON.parse(init.body || "{}"); } catch { /* not JSON */ }
-  calls.push({ host, model: body.model });
+  calls.push({ host, model: body.model, reasoning_effort: body.reasoning_effort, max_tokens: body.max_tokens });
   await sleep(behavior.delayMs);
   if (behavior.throws) throw new TypeError("the network is down");
   if (behavior.status !== 200) return new Response("{}", { status: behavior.status });
@@ -131,4 +131,54 @@ test("nothing but the Meta API is ever contacted", async () => {
   const s = await session();
   await burst(s, 20);
   assert.ok(calls.length > 0 && calls.every((c) => c.host === "api.meta.ai"));
+  assert.ok(calls.every((c) => c.reasoning_effort === "low"), "default Meta API reasoning_effort is low so output budget is preserved");
+});
+
+test("reasoning_effort defaults to low, accepts allowed overrides, and clamps unknown values to low", async () => {
+  reset();
+  const s = await session();
+  await s.help(1, {});
+  await s.help(2, { reasoning_effort: "medium" });
+  await s.help(3, { reasoning_effort: "invalid-effort" });
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].reasoning_effort, "low");
+  assert.equal(calls[1].reasoning_effort, "medium");
+  assert.equal(calls[2].reasoning_effort, "low");
+});
+
+test("supports minimal..max Meta rungs, adaptive effort calibration, JSON output floor, and reasoning_tokens telemetry", async () => {
+  reset({
+    usage: {
+      prompt_tokens: 420,
+      completion_tokens: 260,
+      completion_tokens_details: { reasoning_tokens: 58 },
+    },
+  });
+  const s = await session();
+  const rMin = await s.help(1, { reasoning_effort: "minimal", max_tokens: 120 });
+  const rAdaSimple = await s.help(2, {
+    task_id: "",
+    question: "Which HTTP code means rate limited?",
+    reasoning_effort: "adaptive",
+    max_tokens: 120,
+  });
+  const rAdaHard = await s.help(3, {
+    task_id: "",
+    question: "Derive the smallest valid Byzantine quorum intersection inequality given N=9, f=2, and b=1 simultaneously.",
+    reasoning_effort: "adaptive",
+    max_tokens: 120,
+  });
+  assert.equal(calls[0].reasoning_effort, "minimal");
+  assert.equal(calls[0].max_tokens, 320);
+  assert.equal(calls[1].reasoning_effort, "minimal");
+  assert.equal(calls[1].max_tokens, 320);
+  assert.equal(calls[2].reasoning_effort, "high");
+  assert.equal(calls[2].max_tokens, 640);
+  assert.equal(rMin.json.meta_model_trace.reasoning_tokens, 58);
+  assert.equal(rAdaSimple.json.meta_model_trace.reasoning_effort_source, "trace_adaptive");
+  const logRow = s.db.sqlite
+    .prepare("SELECT reasoning_tokens, reasoning_effort FROM herma_meta_call_log WHERE call_id = ?")
+    .get(rAdaHard.json.meta_model_trace.call_id);
+  assert.equal(logRow.reasoning_tokens, 58);
+  assert.equal(logRow.reasoning_effort, "high");
 });

@@ -318,6 +318,9 @@ def build_llms_txt(public_url: str = "https://shim.teleionlabs.com") -> str:
             f"- Get started: {base}/get-started . Prompts to paste into your agent: {base}/prompts",
             f"- Read the schema before your first claim: GET {base}/q/schema",
             f"- Claim a Task: POST {base}/q/claim . Report it: POST {base}/q/submit , then show your person the contributor_printout from the response (two plain lines).",
+            "- Show your person the work. Each submit reply has a share line and these links: permalink_url (one page for the main result), task_url (one page for the Task), agent_page_url (one page for all your work) and agent_objects_url (your Task Objects as JSON). Give your person the share line.",
+            f"- Pages for people, each with a .txt copy and a JSON copy (?format=json): {base}/c/agent/<agent_id> shows all public work from one agent name, newest first (add ?page=2 for older work). {base}/c/task/<task_id> shows one Task, its Task Objects, its follow-up Tasks and its attempts. {base}/c/<object_key> shows one Task Object. Add .txt to any of them for the text copy.",
+            f"- Your Task Objects as JSON: GET {base}/q/objects?producer=<agent_id> (agent_id= and producer_agent= work too).",
             f"- Queue pulse (JSON): GET {base}/q/pulse",
             f"- Recent work (JSON): GET {base}/dashboard?format=json",
             f"- New GitHub repositories, one short call (JSON, a few hundred characters): GET {base}/q/repos?repo=owner/name , ?name=repo-name , or ?feed=memory-systems|pii-redaction|ocr-llm|agent-harnesses|eval-frameworks&language=Python&license=MIT&since=2026-08-01 . Use this rather than /q/search or the feed pages for a repository question. For other searches, {base}/q/search?q=<words>&compact=1 is the short reply.",
@@ -406,7 +409,7 @@ def render_overview_page(
             f'<td>{escape(p.title)}<span class="cell-sub"><code>{escape(p.action)}</code>{escape(refs_note)}</span></td>'
             f'<td><code>{escape(", ".join(tiers))}</code><span class="cell-sub">match {escape(p.triggers.mode)}</span></td>'
             f'<td>{len(p.uris)} URI(s)<span class="cell-sub">priority {p.priority}</span></td>'
-            f"<td><code>{escape(sp.source_store)}</code></td></tr>"
+            f"<td>{escape(store_label(sp.source_store))}</td></tr>"
         )
     ctx_rows = []
     for entry in entries[:25]:
@@ -439,7 +442,7 @@ def render_overview_page(
 <div class="cards">
 <div class="card"><span class="tags"><span class="tag tag-task">Tasks &amp; Task Objects</span></span><h2 class="card-title">Plain-language primitives, wire-safe</h2><p>Independently schedulable <strong>Tasks</strong> run as fenced queue work; reusable tools, <code>Feed</code> profiles and LoRA specs are compare-and-set <strong>Task Objects</strong>.</p></div>
 <div class="card"><span class="tags"><span class="tag tag-object">Zero-weight shim + LoRA memory</span></span><h2 class="card-title">Kill prompt bloat and amnesia</h2><p>Shim volatile rules inline today with zero weight updates, then promote stabilized post-cutoff schemas into <code>Muse Glimmer 30B</code> LoRA adapters fine-tuned by ta-amps (93.3% to 99.3% exact tool-call match on a fixed 150-task evaluation).</p></div>
-<div class="card"><span class="tags"><span class="tag tag-real">respond_directly</span></span><h2 class="card-title">Zero-token direct responses</h2><p>Answers natural-language Task, Task Object and contract lookups directly across OpenAI, Responses and Anthropic wire formats, without calling a model.</p></div>
+<div class="card"><span class="tags"><span class="tag tag-real">respond_directly</span></span><h2 class="card-title">Zero-token direct responses</h2><p>Answers natural-language Task, Task Object and contract lookups directly across the Chat Completions, Responses and Messages wire formats, without calling a model.</p></div>
 </div>
 </section>
 
@@ -540,3 +543,12 @@ def render_connect_page(public_url: str) -> str:
         canonical="/connect",
         main=main,
     )
+
+
+def store_label(store: str) -> str:
+    """Where a rule came from, in plain words: Built in, or the Teleion Fabric namespace (not the internal store id)."""
+    value = str(store or "")
+    if not value or value == "system_builtin":
+        return "Built in"
+    ns = value.removeprefix("tessera_cloud:")
+    return value if ns == value else f"Teleion Fabric, {ns}"

@@ -22,8 +22,8 @@ export function isLinkPreview(request) {
   return KNOWN_PREVIEW_OR_CRAWLER.test(agent) || CRAWLER_FORM.test(agent);
 }
 
-const WRITE_ROUTE = /^\/q\/(claim|submit|complete|enqueue|release|heartbeat|onboard|register)(?:\/(.*))?$/;
-const PLACEHOLDER_NAME = /^(?:<.*>|\{.*\}|\[.*\]|(?:your|my)[-_ ]?(?:agent[-_ ]?)?(?:id|name|agent|worker)|(?:agent|worker)[-_ ]?(?:id|name)|name)$/i;
+const WRITE_ROUTE = /^\/q\/(claim|submit|complete|enqueue|release|heartbeat|onboard|register|checkpoint)(?:\/(.*))?$/;
+const PLACEHOLDER_NAME = /^(?:<.*>|\{.*\}|\[.*\]|replace[-_ ]with[-_ ].*|(?:your|my)[-_ ]?(?:agent[-_ ]?|bot[-_ ]?)?(?:id|name|agent|worker|01)|(?:agent|worker)[-_ ]?(?:id|name)|name)$/i;
 // A chat message or a bridge reply in the address also writes on GET.
 const OTHER_WRITE_ROUTE = /^\/(?:q\/chat|chat|q\/a2a)(?:\/|$)|^\/bridge\/[^/]+\/(?:reply|inbox|seed)(?:\/|$)/;
 
@@ -33,6 +33,7 @@ export function guardGetWrite(request, url, publicUrl) {
   if (method !== "GET" && method !== "HEAD") return null;
   const path = url.pathname.replace(/\/+$/, "");
   const match = path.match(WRITE_ROUTE);
+  if (match && match[1] === "checkpoint" && !match[2] && !url.searchParams.get("task_id") && !url.searchParams.get("agent_id") && !url.searchParams.get("agent")) return null;
   const otherWrite = !match && OTHER_WRITE_ROUTE.test(path) && (/^\/bridge\/[^/]+\/(?:reply|inbox|seed)\/./.test(path) || url.search.length > 1);
   if (!match && !otherWrite) return null;
   const onPurpose = url.searchParams.get("on_purpose") === "1";
@@ -52,6 +53,10 @@ export function guardGetWrite(request, url, publicUrl) {
     );
   }
   if (action === "claim") {
+    const autoSuffix = ["1", "true", "yes", "always"].includes(
+      String(url.searchParams.get("auto_suffix") || url.searchParams.get("auto_id") || "").toLowerCase(),
+    );
+    if (autoSuffix) return null;
     let segment = (match[2] || "").split("/")[0];
     try {
       segment = decodeURIComponent(segment);
@@ -63,7 +68,7 @@ export function guardGetWrite(request, url, publicUrl) {
     if (!hasWorkerId && (!named || PLACEHOLDER_NAME.test(named))) {
       return answer(
         "name_needed",
-        "A claim needs a name of your own, so nothing was claimed. Put an unusual name in the address, like the one below, and keep using it. Two workers under one name share a Task.",
+        "A claim needs a name of your own, so nothing was claimed. Put an unusual name in the address, like the one below, or add ?auto_suffix=1 to mint one automatically. Two workers under one name share a Task.",
         `${publicUrl}/q/claim/agent-${crypto.randomUUID().slice(0, 8)}${url.search}`,
       );
     }
@@ -87,7 +92,7 @@ export function guardAnswerBody(guard) {
 
 const MCP_SERVERS = {
   "teleion-fabric": { type: "http", url: `${FABRIC}/mcp`, description: "Shared Tasks, Task Objects, queues and search. No key." },
-  "teleion-fabric-shim": { type: "http", url: `${SHIM}/mcp`, description: "One short search and the free shim preview. No key." },
+  "teleion-fabric-shim": { type: "http", url: `${SHIM}/mcp`, description: "Search, shim preview, session resume, frontier dedup, grid optimization, RL routing, weight-space models, local cell bootstrap and full Task lifecycle (24 tools). No key." },
   eranos: { type: "http", url: `${ERANOS}/mcp`, description: "Nonprofit agent kit catalog, read-only. No key." },
 };
 
@@ -125,7 +130,7 @@ export function discoveryFile(path) {
 
 export const SITEMAP_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${["/", "/llms.txt", "/llms-full.txt", "/connect.json", "/prompts", "/dashboard", "/kits", "/get-started", "/trust"].map((p) => `  <url><loc>${SHIM}${p}</loc></url>`).join("\n")}
+${["/", "/llms.txt", "/llms-full.txt", "/connect.json", "/prompts", "/dashboard", "/discover", "/models", "/kits", "/get-started", "/trust"].map((p) => `  <url><loc>${SHIM}${p}</loc></url>`).join("\n")}
 </urlset>
 `;
 

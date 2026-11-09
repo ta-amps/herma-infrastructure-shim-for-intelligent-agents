@@ -1044,8 +1044,10 @@ def create_app() -> FastAPI:
                 "credential": "hmk_",
                 "scope": "route",
                 "providers": ["meta", "openai", "anthropic", "openrouter"],
+                "operator_funded_providers": ["meta"],
+                "provider_note": "It works with almost any model and inference provider. Turns that we pay for use the Meta API only. Any other provider needs your own key in the `X-Upstream-Api-Key` header.",
                 "executed": False,
-                "context": "Caller-visible context entries containing typed work_contract schemas.",
+                "context": "Context entries that the caller can see, with typed work_contract schemas.",
                 "documentation": "https://github.com/ta-amps/herma-infrastructure-shim-for-intelligent-agents/blob/t/H15-work-conversation/docs/conversations.md",
             },
         }

@@ -194,9 +194,20 @@ describe("Herma v6.11 Downloadable Worker Kits, Prompt/Toolkit Evolutionary Band
     expect(pkgJson.name).toBe("herma-agent-kit");
     expect(pkgJson.bin["herma-kit"]).toBe("./bin/herma-kit.mjs");
     const cliSrc = tarEntries.find((e) => e.name === "package/bin/herma-kit.mjs").text;
-    for (const subcmd of ["status", "search", "describe", "claim", "use", "submit", "feedback"]) {
+    const libSrc = tarEntries.find((e) => e.name === "package/index.mjs").text;
+    for (const subcmd of ["status", "resume", "next", "discover", "frontier", "search", "describe", "claim", "checkpoint", "use", "submit", "feedback"]) {
       expect(cliSrc).toContain(`'${subcmd}'`);
     }
+    expect(cliSrc).toContain("saveIdentity");
+    expect(cliSrc).toContain("sameOrigin");
+    expect(cliSrc).toContain("clearLease");
+    expect(cliSrc).toContain("startsWith(destDir + path.sep)");
+    expect(libSrc).toContain("headers['x-worker-token'] = this.workerToken");
+    expect(libSrc).toContain("async resume()");
+    expect(libSrc).toContain("async checkpoint(");
+    expect(libSrc).toContain("async frontier(");
+    expect(libSrc).toContain("items: candidates, record");
+    expect(libSrc).toContain("const text = await resp.text()");
 
     const zipRes = await callGateway("/kits/herma-worker-kit.zip?arm=arm_skill_zip_first_v1");
     expect(zipRes.status).toBe(200);
@@ -215,10 +226,101 @@ describe("Herma v6.11 Downloadable Worker Kits, Prompt/Toolkit Evolutionary Band
       "hooks/claude_settings_example.json",
       "bootstrap.sh",
     ]);
-    expect(zipEntries.find((e) => e.name === "herma_shim.py").text).toContain("class HermaClient");
+    const pyShimSrc = zipEntries.find((e) => e.name === "herma_shim.py").text;
+    expect(pyShimSrc).toContain("class HermaClient");
+    expect(pyShimSrc).toContain("def _save_identity(");
+    expect(pyShimSrc).toContain("os.open(str(tmp_path)");
+    expect(pyShimSrc).toContain("urllib.error.HTTPError");
+    expect(pyShimSrc).toContain("is_relative_to(out_root)");
+    expect(pyShimSrc).toContain("'items': list(candidates or [])");
+    expect(pyShimSrc).toContain("headers['X-Worker-Token'] = self.worker_token");
+    expect(pyShimSrc).toContain("def resume(");
+    expect(pyShimSrc).toContain("def checkpoint(");
+    expect(pyShimSrc).toContain("def frontier(");
     expect(zipEntries.find((e) => e.name === "worker_distributed_indexer.py").text).toContain("dense_embedding_int8");
     expect(zipEntries.find((e) => e.name === "hooks/pretool_guard.py").text).toContain("sys.exit(2)");
     expect(zipEntries.find((e) => e.name === "SKILL.md").text).toContain("herma-worker-kit");
+
+    const cardDoc = await (await callGateway("/.well-known/agent-card.json")).json();
+    expect(cardDoc.capabilities.durable_session_resume).toBe(true);
+    expect(cardDoc.capabilities.monotonic_checkpoint).toBe(true);
+    expect(cardDoc.capabilities.frontier_dedup).toBe(true);
+    expect(cardDoc.endpoints.resume).toContain("/q/resume");
+    expect(cardDoc.endpoints.checkpoint).toContain("/q/checkpoint");
+    expect(cardDoc.endpoints.frontier).toContain("/q/frontier");
+    expect(cardDoc.skills.map((s) => s.id)).toEqual(
+      expect.arrayContaining(["resume_session", "checkpoint_task", "frontier_dedup", "claim_task", "submit_task"])
+    );
+
+    // Verify canonical + backwards-compatible wire fields on /q/frontier, /q/checkpoint, and /q/schema/validate?strict=1
+    const frCheck = await (
+      await callGateway("/q/frontier", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ agent_id: "kit-wire-tester-a1b2c3", items: ["org/repo-alpha"], record: false }),
+      })
+    ).json();
+    expect(frCheck.ok).toBe(true);
+    expect(frCheck.unseen).toContain("org/repo-alpha");
+
+    const frAliasAdd = await (
+      await callGateway("/q/frontier", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          agent_id: "kit-wire-tester-a1b2c3",
+          worker_token: frCheck.worker_token,
+          action: "add",
+          candidates: ["org/repo-alpha"],
+        }),
+      })
+    ).json();
+    expect(frAliasAdd.ok).toBe(true);
+    expect(frAliasAdd.newly_recorded).toBe(1);
+
+    const cpCanonical = await (
+      await callGateway("/q/checkpoint", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          agent_id: "kit-wire-tester-a1b2c3",
+          worker_token: frCheck.worker_token,
+          task_id: "task_wire_cp_01",
+          step_index: 2,
+          total_steps: 4,
+          completed_steps: ["init", "parse"],
+          pending_steps: ["test", "report"],
+          notes: "parsed clean",
+        }),
+      })
+    ).json();
+    expect(cpCanonical.ok).toBe(true);
+    expect(cpCanonical.checkpoint.step_index).toBe(2);
+    expect(cpCanonical.checkpoint.completed_steps).toEqual(["init", "parse"]);
+    expect(cpCanonical.checkpoint.notes).toBe("parsed clean");
+
+    const strictVal = await (
+      await callGateway("/q/schema/validate?strict=1", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          agent_id: "kit-wire-tester-a1b2c3",
+          task_id: "self_seed",
+          summary: "Found 5 qualifying items in sweep",
+          task_objects: [
+            {
+              object_key: "sweep_strict_probe_v1",
+              category: "dataset",
+              summary: "5 qualifying items",
+              payload: { item_count: 5, items: ["a", "b", "c"] },
+            },
+          ],
+        }),
+      })
+    ).json();
+    expect(strictVal.ok).toBe(true);
+    expect(strictVal.contract_clean).toBe(false);
+    expect(strictVal.valid_for_open_world_submit).toBe(false);
   });
 
   it("seeds agentic_cost_models_and_calibrated_composition_research_v1 and returns it across all 4 target search queries", async () => {

@@ -213,6 +213,7 @@ export async function attemptDistinctWorkerCoLease(
     effectiveLeaseTtlMs = CO_LEASE_ENSEMBLE_GRID.heartbeat_default_extend_ms,
     allowCoLeaseExplicit = null,
     scoreCandidateFn = null,
+    makerCheckFn = null,
     poolLimit = 20,
   } = {}
 ) {
@@ -310,6 +311,10 @@ export async function attemptDistinctWorkerCoLease(
     ) {
       continue;
     }
+
+    // maker != checker (producer_guard.js): a co-lease is never a way into a review of the caller's own work.
+    if (scoreCandidateFn && scoreCandidateFn(cand)?.excludedSelfReview) continue;
+    if (makerCheckFn && (await makerCheckFn(cand))) continue;
 
     // Check active holder count (counting primary lease if it predated co-lease table)
     const distinctActiveUuids = new Set(activeCoRows.map((r) => String(r.worker_uuid || r.agent_id)));

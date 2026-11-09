@@ -1963,6 +1963,21 @@ console.log(JSON.stringify({
         "list_builtin_provisions",
         "preview_shim",
         "extract_entities",
+        "next_tasks",
+        "resume_session",
+        "claim_task",
+        "heartbeat_task",
+        "checkpoint_task",
+        "submit_task",
+        "release_task",
+        "frontier_dedup",
+        "grid_optimize",
+        "rl_policy_step",
+        "compile_macro_dag",
+        "bootstrap_local_cell",
+        "list_weight_models",
+        "run_weight_model",
+        "register_weight_model",
     }
     assert cf["mcpExtracted"] >= 2
     assert cf["rcptCnt"] == 0

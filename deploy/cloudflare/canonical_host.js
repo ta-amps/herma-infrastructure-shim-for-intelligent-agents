@@ -17,7 +17,7 @@ const LOCAL_HOST = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\]|[^.]+\.localhost)$/i;
 const SERVED_HOSTS = new Set([SHELL.site.host, "herma.teleionlabs.com"]);
 
 // The pages people open in a browser: the paths the Worker answers with HTML (release gate: tests/fixtures/pages).
-const PAGE_PATHS = new Set(["/", "/shim", "/console", "/connect", "/starter", "/prompts", "/get-started", "/trust", "/dashboard", "/kits"]);
+const PAGE_PATHS = new Set(["/", "/shim", "/console", "/connect", "/starter", "/prompts", "/get-started", "/trust", "/dashboard", "/discover", "/kits"]);
 // A starter or dashboard sub-page, a contribution, a worker, a demo, a prompt page. /prompts/raw/* is plain text for agents, so it is not a page.
 const PAGE_PREFIXES = ["/starter/", "/dashboard/", "/prompts/", "/c/", "/w/", "/q/demo/"];
 const MACHINE_PREFIXES = ["/prompts/raw"];

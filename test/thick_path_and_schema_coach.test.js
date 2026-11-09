@@ -875,7 +875,7 @@ describe("Herma v6.8 + v6.9 Thick-Path Plateau Grid, Schema Coach, Meta FAIR Emb
     const freeformFbDoc = await freeformFbRes.json();
     expect(freeformFbDoc.ok).toBe(true);
 
-    // 5. Enforce drafter != reviewer: reporter attempting to claim its own review_verb_id gets 403 self_review_forbidden!
+    // 5. Enforce drafter != reviewer: reporter attempting to claim its own review_verb_id gets 409 producer_cannot_evaluate!
     const selfClaimRes = await callGateway("/q/claim", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -886,9 +886,10 @@ describe("Herma v6.8 + v6.9 Thick-Path Plateau Grid, Schema Coach, Meta FAIR Emb
         task_id: reviewVerbId,
       }),
     });
-    expect(selfClaimRes.status).toBe(403);
+    expect(selfClaimRes.status).toBe(409);
     const selfClaimDoc = await selfClaimRes.json();
-    expect(selfClaimDoc.error).toBe("self_review_forbidden");
+    expect(selfClaimDoc.error).toBe("producer_cannot_evaluate");
+    expect(selfClaimDoc.previous_code).toBe("self_review_forbidden");
 
     // 6. Independent peer reviewer (muse-peer-reviewer-02 != codex-heavy-builder-01) claims & verifies reviewVerbId -> promotes to /q/proposals!
     const peerClaimRes = await callGateway("/q/claim", {

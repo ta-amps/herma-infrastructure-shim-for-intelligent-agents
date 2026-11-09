@@ -257,6 +257,17 @@ export function buildPageScrubber(config) {
  */
 export const tidyText = buildTidy(BANNED);
 export const scrubBannedWords = buildBannedScrubber(BANNED);
+
+/** The same word rules for a JSON answer that shows contributed data: every string value and every key, at display time. */
+export function scrubBannedDeep(value, depth = 0) {
+  if (depth > 40) return value;
+  if (typeof value === "string") return scrubBannedWords(value);
+  if (Array.isArray(value)) return value.map((v) => scrubBannedDeep(v, depth + 1));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [scrubBannedWords(k), scrubBannedDeep(v, depth + 1)]));
+  }
+  return value;
+}
 export const scrubPageHtml = buildPageScrubber(BANNED);
 
 /** `runs_on_small_4gb_laptop` becomes "Runs on small 4gb laptop". */

@@ -116,6 +116,11 @@ function workerCredit(agentId, lower = false) {
   return `${escapeHtml(lower ? label.charAt(0).toLowerCase() + label.slice(1) : label)}${handle ? ` &middot; <code>${escapeHtml(handle)}</code>` : ""}`;
 }
 
+// A link to the page that lists all public work sent under one agent name (/c/agent/<agent_id>).
+function agentWorkLink(agentId, text = "All work from this agent") {
+  return agentId ? ` &middot; <a href="/c/agent/${href(agentId)}">${escapeHtml(text)}</a>` : "";
+}
+
 function bar(ngo, evl, own) {
   const total = Math.max(1, ngo + evl + own);
   const a = Math.round((ngo / total) * 100);
@@ -146,7 +151,7 @@ function workersTable(workers) {
         : `<span class="muted">Just joined</span>`;
       const tier = w.harness_tier ? `<div class="tags">${tag(tierLabel(w.harness_tier))}</div>` : "";
       return `<tr>
-<td><a href="/w/${href(w.worker_uuid)}"><strong>${escapeHtml(tidyText(w.persona_label, 90) || "Worker")}</strong></a><span class="cell-sub">${workerCredit(w.agent_id)}${sessions > 1 ? ` &middot; ${sessions} sessions` : ""}</span>${tier}</td>
+<td><a href="/w/${href(w.worker_uuid)}"><strong>${escapeHtml(tidyText(w.persona_label, 90) || "Worker")}</strong></a><span class="cell-sub">${workerCredit(w.agent_id)}${sessions > 1 ? ` &middot; ${sessions} sessions` : ""}${agentWorkLink(w.agent_id, "All its work")}</span>${tier}</td>
 <td>${escapeHtml(tidyText(w.specialty_lens, 150))}</td>
 <td><strong>${Number(w.iteration_count || 0)}</strong> runs<span class="cell-sub">${ngo} nonprofit &middot; ${evl} reviews &middot; ${own} general</span>${bar(ngo, evl, own)}</td>
 <td>${latest}</td>
@@ -306,7 +311,8 @@ function permalinkMain(base, data) {
 
   const facts = [
     `<dt>Status</dt><dd>${tag(state.text, state.tone)}</dd>`,
-    credit ? `<dt>Made by</dt><dd>${workerCredit(credit)}${workerId ? ` &middot; <a href="/w/${href(workerId)}">See this worker</a>` : ""}</dd>` : "",
+    credit ? `<dt>Made by</dt><dd>${workerCredit(credit)}${agentWorkLink(credit)}${workerId ? ` &middot; <a href="/w/${href(workerId)}">See this worker</a>` : ""}</dd>` : "",
+    t ? `<dt>Task page</dt><dd><a href="/c/task/${href(t.task_id)}">Open the Task</a></dd>` : "",
     when ? `<dt>${t ? (t.state !== "done" ? "Last change" : "Finished") : "Stored on"}</dt><dd>${escapeHtml(when)}</dd>` : "",
     t?.parent_task_id ? `<dt>Follows</dt><dd><a href="/c/${href(t.parent_task_id)}">The Task this came from</a></dd>` : "",
   ].join("\n");
@@ -348,7 +354,7 @@ function permalinkMain(base, data) {
 ${alone ? `<p class="muted"><code>${escapeHtml(tidyText(o.object_key, 90))}</code></p>` : `<h2>${escapeHtml(tidyText(humanize(o.object_key), 90))}</h2>
 <p class="muted"><code>${escapeHtml(tidyText(o.object_key, 90))}</code></p>
 <p>${escapeHtml(tidyText(o.summary, 500))}</p>
-${o.producer_agent ? `<p class="muted">Made by ${workerCredit(o.producer_agent, true)}${o.worker_uuid ? ` &middot; <a href="/w/${href(o.worker_uuid)}">See this worker</a>` : ""}</p>` : ""}`}
+${o.producer_agent ? `<p class="muted">Made by ${workerCredit(o.producer_agent, true)}${agentWorkLink(o.producer_agent)}${o.worker_uuid ? ` &middot; <a href="/w/${href(o.worker_uuid)}">See this worker</a>` : ""}</p>` : ""}`}
 </div>
 <div class="row">
 ${o.has_interactive_demo ? `<a class="btn" href="/q/demo/${href(o.object_key)}">Open the demo</a>` : ""}
@@ -383,7 +389,7 @@ ${children
 ${evals
         .map(
           (ev) =>
-            `<li><p><strong>${escapeHtml(workerLabel(ev.evaluator_agent_id))}</strong> <code>${escapeHtml(tidyText(ev.evaluator_agent_id, 48))}</code> rated it: worth ${Number(ev.actual_importance)} now, ${Number(ev.potential_importance)} later, priority ${Number(ev.estimated_priority)}, novelty ${Number(ev.novelty_milli)}${Number(ev.convergence_flag) ? ", close to something already there" : ""}.</p><p class="muted">${escapeHtml(tidyText(ev.rationale, 320))}</p></li>`
+            `<li><p><strong>${escapeHtml(workerLabel(ev.evaluator_agent_id))}</strong> <a href="/c/agent/${href(ev.evaluator_agent_id)}"><code>${escapeHtml(tidyText(ev.evaluator_agent_id, 48))}</code></a> rated it: worth ${Number(ev.actual_importance)} now, ${Number(ev.potential_importance)} later, priority ${Number(ev.estimated_priority)}, novelty ${Number(ev.novelty_milli)}${Number(ev.convergence_flag) ? ", close to something already there" : ""}.</p><p class="muted">${escapeHtml(tidyText(ev.rationale, 320))}</p></li>`
         )
         .join("\n")}
 </ul>
@@ -402,7 +408,7 @@ ${summary ? `<p class="lead">${escapeHtml(summary)}</p>` : ""}
 <section class="panel">
 <dl class="kv">
 ${facts}
-<dt>Full record</dt><dd><a class="link-out" href="${recordHref}">Record &#8599;</a></dd>
+<dt>Full record</dt><dd><a class="link-out" href="${recordHref}">Record &#8599;</a> &middot; <a href="/c/${href(data.lookup_id)}.txt">Text copy</a></dd>
 </dl>
 </section>
 <div class="section stack">
@@ -510,7 +516,7 @@ export function renderWorkerProfileHtml(publicUrl, data) {
 <span class="kicker"><span class="kicker-dot"></span>${escapeHtml(workerLabel(w.agent_id))}</span>
 <h1>${escapeHtml(tidyText(w.persona_label, 120) || "Worker")}</h1>
 <p class="lead">${escapeHtml(tidyText(w.specialty_lens, 320))}</p>
-<div class="row"><a class="btn" href="${promptHref}">Open its prompt</a><a class="link-out" href="/w/${href(w.worker_uuid)}?format=json">Record &#8599;</a></div>
+<div class="row"><a class="btn" href="/c/agent/${href(w.agent_id)}">All work from this agent name</a><a class="btn-quiet" href="${promptHref}">Open its prompt</a><a class="btn-quiet" href="/w/${href(w.worker_uuid)}.txt">Text copy</a><a class="link-out" href="/w/${href(w.worker_uuid)}?format=json">Record &#8599;</a></div>
 </div>
 <div class="wrap">
 <section class="section" aria-label="This worker in numbers">

@@ -29,7 +29,7 @@ import {
   FAVICON_SVG,
   HERMA_VERSION,
   HermaErr,
-  MCP_READ_TOOLS, MCP_TOOLS_SPEC,
+  MCP_LIFECYCLE_TOOLS, MCP_READ_TOOLS, MCP_TOOLS_SPEC,
   PREVIEW_JS,
   ROBOTS_TXT,
   SAFE_BUCKET_SEG_RE,
@@ -1436,6 +1436,187 @@ async function handleStatelessMcp(request, db, env) {
       return jsonResp({ jsonrpc: "2.0", id: reqId, result: { content: [{ type: "text", text }], isError: !answer.ok } });
     }
 
+    if (
+      toolName === "export_weight_model" ||
+      (toolName === "list_weight_models" && args.runtime !== undefined && args.runtime !== null && args.runtime !== "")
+    ) {
+      const allowedKeys =
+        toolName === "export_weight_model"
+          ? new Set(["model_id", "model", "runtime"])
+          : new Set(Object.keys(MCP_LIFECYCLE_TOOLS.list_weight_models.properties));
+      const badKey = Object.keys(args).find((k) => !allowedKeys.has(k));
+      if (badKey) {
+        return jsonResp({
+          jsonrpc: "2.0",
+          id: reqId,
+          error: { code: -32602, message: `Unknown argument '${badKey}' for ${toolName}` },
+        });
+      }
+      const targetModelId = String(args.model_id || args.model || "").trim();
+      const targetRuntime = String(args.runtime || "").trim();
+      if (!targetModelId || !targetRuntime) {
+        return jsonResp({
+          jsonrpc: "2.0",
+          id: reqId,
+          error: { code: -32602, message: `${toolName} requires model_id and runtime (js, python, sql, c99, rust, wasm, wat, wgsl, or glsl)` },
+        });
+      }
+      const exportUrl = new URL(
+        `https://shim.teleionlabs.com/q/models/${encodeURIComponent(targetModelId)}/export?runtime=${encodeURIComponent(targetRuntime)}`
+      );
+      const exportReq = new Request(exportUrl, { method: "GET", headers: { accept: "application/json,text/plain,*/*" } });
+      const rawAnswer = await handlePriorityWorkGateway(exportReq, env, db, "https://shim.teleionlabs.com", { withSecurity });
+      const answer = await withoutLeaseDetails(exportReq, rawAnswer, env);
+      const rawBuf = new Uint8Array(await answer.arrayBuffer());
+      const contentType = answer.headers.get("content-type") || "text/plain; charset=utf-8";
+      const disp = answer.headers.get("content-disposition") || "";
+      const fnMatch = disp.match(/filename="([^"]+)"/);
+      let structured;
+      if (!answer.ok) {
+        const rawBodyText = new TextDecoder().decode(rawBuf);
+        try {
+          structured = stripPiiDeep(JSON.parse(rawBodyText));
+        } catch {
+          structured = { ok: false, raw_text: stripPiiDeep(rawBodyText) };
+        }
+      } else if (contentType.toLowerCase().includes("application/wasm")) {
+        let bin = "";
+        for (let i = 0; i < rawBuf.length; i += 1) {
+          bin += String.fromCharCode(rawBuf[i]);
+        }
+        const cleanMeta = stripPiiDeep({
+          ok: true,
+          model_id: targetModelId,
+          runtime: targetRuntime.toLowerCase(),
+          content_type: contentType,
+          filename: fnMatch ? fnMatch[1] : `${targetModelId}.wasm`,
+          byte_length: rawBuf.byteLength,
+        });
+        structured = {
+          ...cleanMeta,
+          wasm_base64: btoa(bin),
+        };
+      } else {
+        const rawBodyText = new TextDecoder().decode(rawBuf);
+        structured = stripPiiDeep({
+          ok: true,
+          model_id: targetModelId,
+          runtime: targetRuntime.toLowerCase(),
+          content_type: contentType,
+          filename: fnMatch ? fnMatch[1] : `${targetModelId}.${targetRuntime.toLowerCase()}`,
+          code: rawBodyText,
+        });
+      }
+      const text = JSON.stringify(structured);
+      return jsonResp({
+        jsonrpc: "2.0",
+        id: reqId,
+        result: { content: [{ type: "text", text }], structuredContent: structured, isError: !answer.ok },
+      });
+    }
+
+    if (Object.hasOwn(MCP_LIFECYCLE_TOOLS, toolName)) {
+      const tool = MCP_LIFECYCLE_TOOLS[toolName];
+      const unknownKey = Object.keys(args).find((k) => !Object.hasOwn(tool.properties, k));
+      if (unknownKey) {
+        return jsonResp({
+          jsonrpc: "2.0",
+          id: reqId,
+          error: { code: -32602, message: `Unknown argument '${unknownKey}' for ${toolName}` },
+        });
+      }
+      const missing = tool.required.find((name) => args[name] === undefined || args[name] === null || args[name] === "");
+      if (missing) {
+        return jsonResp({ jsonrpc: "2.0", id: reqId, error: { code: -32602, message: `${toolName} needs ${missing}` } });
+      }
+      const effectiveMethod =
+        (toolName === "frontier_dedup" && args.record === false) ||
+        (toolName === "grid_optimize" && args.operation === "inspect")
+          ? "GET"
+          : tool.method;
+      const targetUrl = new URL(`https://shim.teleionlabs.com/q/${tool.route}`);
+      if (toolName === "register_weight_model" && String(args.operation || "").trim().toLowerCase() === "evaluate") {
+        targetUrl.pathname = "/q/models/evaluate";
+      } else if (toolName === "list_weight_models" && args.model_id && !args.runtime) {
+        targetUrl.pathname = `/q/models/${encodeURIComponent(String(args.model_id).trim())}`;
+      }
+      const tokenVal = String(
+        args.worker_token || request.headers.get("x-worker-token") || request.headers.get("x-herma-worker-token") || ""
+      ).trim();
+      const subHeaders = new Headers({ accept: "application/json" });
+      if (tokenVal) {
+        subHeaders.set("x-worker-token", tokenVal);
+        subHeaders.set("x-herma-worker-token", tokenVal);
+      }
+      let subReq;
+      if (effectiveMethod === "GET") {
+        if (tool.pathArg && args[tool.pathArg]) {
+          targetUrl.pathname += `/${encodeURIComponent(String(args[tool.pathArg]))}`;
+        }
+        for (const [name, value] of Object.entries(args)) {
+          if (name === tool.pathArg || name === "worker_token" || (toolName === "list_weight_models" && name === "model_id") || value === undefined || value === null) continue;
+          if (Array.isArray(value)) targetUrl.searchParams.set(name, value.map(String).join(","));
+          else if (typeof value === "boolean") targetUrl.searchParams.set(name, value ? "1" : "0");
+          else if (typeof value !== "object") targetUrl.searchParams.set(name, String(value));
+        }
+        subReq = new Request(targetUrl, { method: "GET", headers: subHeaders });
+      } else {
+        subHeaders.set("content-type", "application/json");
+        const payload = { ...args };
+        if (tokenVal && !payload.worker_token) payload.worker_token = tokenVal;
+        if (toolName === "compile_macro_dag") {
+          payload.operation = "compile_dag";
+        } else if (toolName === "rl_policy_step" && !payload.operation) {
+          payload.operation = Array.isArray(payload.trajectory) || payload.reward !== undefined ? "rl_update" : "rl_select";
+        } else if (toolName === "grid_optimize" && !payload.operation) {
+          payload.operation = Array.isArray(payload.observations) || (payload.params && payload.reward !== undefined) ? "observe" : "propose";
+        }
+        if ((toolName === "heartbeat_task" || toolName === "release_task") && payload.fencing_token !== undefined && payload.lease_epoch === undefined) {
+          payload.lease_epoch = payload.fencing_token;
+        }
+        subReq = new Request(targetUrl, { method: "POST", headers: subHeaders, body: JSON.stringify(payload) });
+      }
+      const rawAnswer = await handlePriorityWorkGateway(subReq, env, db, "https://shim.teleionlabs.com", { withSecurity });
+      const answer = await withoutLeaseDetails(subReq, rawAnswer, env);
+      const rawBodyText = await answer.text();
+      let parsed;
+      try {
+        parsed = JSON.parse(rawBodyText);
+      } catch {
+        parsed = { ok: answer.ok, raw_text: rawBodyText };
+      }
+      const canIssueOwnToken =
+        toolName === "claim_task" ||
+        toolName === "grid_optimize" ||
+        toolName === "rl_policy_step" ||
+        toolName === "register_weight_model";
+      const ownWorkerToken = canIssueOwnToken && typeof parsed?.worker_token === "string" ? parsed.worker_token : "";
+      const ownClaimToken = canIssueOwnToken && typeof parsed?.agent_claim?.worker_token === "string" ? parsed.agent_claim.worker_token : "";
+      const ownBilateralToken = toolName === "claim_task" && typeof parsed?.bilateral_guidance?.worker_profile?.worker_token === "string"
+        ? parsed.bilateral_guidance.worker_profile.worker_token
+        : "";
+      const ownProfileToken = toolName === "claim_task" && typeof parsed?.worker_profile?.worker_token === "string"
+        ? parsed.worker_profile.worker_token
+        : "";
+      const cleaned = stripPiiDeep(parsed);
+      if (ownWorkerToken) cleaned.worker_token = ownWorkerToken;
+      if (ownClaimToken && cleaned?.agent_claim && typeof cleaned.agent_claim === "object") {
+        cleaned.agent_claim.worker_token = ownClaimToken;
+      }
+      if (ownBilateralToken && cleaned?.bilateral_guidance?.worker_profile && typeof cleaned.bilateral_guidance.worker_profile === "object") {
+        cleaned.bilateral_guidance.worker_profile.worker_token = ownBilateralToken;
+      }
+      if (ownProfileToken && cleaned?.worker_profile && typeof cleaned.worker_profile === "object") {
+        cleaned.worker_profile.worker_token = ownProfileToken;
+      }
+      const text = JSON.stringify(cleaned);
+      return jsonResp({
+        jsonrpc: "2.0",
+        id: reqId,
+        result: { content: [{ type: "text", text }], structuredContent: cleaned, isError: !answer.ok },
+      });
+    }
+
     if (toolName === "find") {
       const findQ = typeof args.q === "string" ? args.q : "";
       if (!findQ.trim() || Object.keys(args).some((k) => k !== "q" && k !== "limit")) {
@@ -1751,6 +1932,7 @@ const application = {
               llms_txt: "https://shim.teleionlabs.com/llms.txt",
               chat_endpoint: "https://shim.teleionlabs.com/q/chat",
               dashboard_url: "https://shim.teleionlabs.com/dashboard",
+              models_url: "https://shim.teleionlabs.com/models",
               get_started_url: "https://shim.teleionlabs.com/get-started",
               authentication_required: false,
               free_until: "2026-12-31T23:59:59-05:00",
@@ -1828,6 +2010,11 @@ const application = {
         path === "/dashboard" ||
         path.startsWith("/dashboard/") ||
         path === "/dashboard.js" ||
+        path === "/discover" ||
+        path.startsWith("/discover/") ||
+        path === "/discover.js" ||
+        path === "/models" ||
+        path.startsWith("/models/") ||
         path.startsWith("/c/") ||
         path.startsWith("/w/") ||
         path.startsWith("/api/object/")
@@ -2502,23 +2689,76 @@ const onboardingApplication = {
   },
 };
 
-export default {
+const workerEntry = {
   ...onboardingApplication,
   async fetch(request, env, ctx) {
     // Herma's own pages carry the one thin agent banner (page_shell.js), so the older "Put your agent to work" block is
     // not injected into the home page any more; the /agent-start.* files stay available.
+    const textCopy = await pageTextCopy(request, env, ctx);
+    if (textCopy) return textCopy;
     return answerThroughBusyDatabase(request, async () => {
       if (env.PUBLIC_NAMES_FILTER !== "on") return agentStartAsset(request) || onboardingApplication.fetch(request, env, ctx);
       return serveWithPublicNames(request, env, ctx);
     });
   },
 };
+export default workerEntry;
+
+// Every page has a .txt copy (MUST-FOLLOW): /dashboard.txt, /get-started.txt and the others are the same page as plain text, made
+// from the page the Worker serves (so the same filters ran), with its agent line at the top and its footer at the end.
+export const TEXT_COPY_PAGES = Object.freeze(["/dashboard", "/get-started", "/trust", "/prompts", "/shim", "/connect", "/starter", "/discover", "/models"]);
+async function pageTextCopy(request, env, ctx) {
+  const url = new URL(request.url);
+  const method = request.method.toUpperCase();
+  if ((method !== "GET" && method !== "HEAD") || !url.pathname.endsWith(".txt")) return null;
+  const page = url.pathname.slice(0, -4);
+  if (!TEXT_COPY_PAGES.includes(page)) return null;
+  const inner = new URL(url);
+  inner.pathname = page;
+  const answer = await workerEntry.fetch(new Request(inner, { headers: { accept: "text/html", "user-agent": request.headers.get("user-agent") || "" } }), env, ctx);
+  if (!answer.ok || !(answer.headers.get("content-type") || "").includes("text/html")) return answer;
+  const text = htmlToText(await answer.text());
+  return new Response(method === "HEAD" ? null : text, { status: 200, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=60" } });
+}
+
+export function htmlToText(html) {
+  const decode = (t) =>
+    t
+      .replace(/&nbsp;/g, " ")
+      .replace(/&#8599;/g, "")
+      .replace(/&middot;/g, "·")
+      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&");
+  let body = String(html || "")
+    .replace(/<head[\s\S]*?<\/head>/i, "")
+    .replace(/<(script|style|template|svg|noscript)\b[\s\S]*?<\/\1>/gi, "")
+    .replace(/<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (_, link, label) => {
+      const words = label.replace(/<[^>]+>/g, "").trim();
+      return words && link && !link.startsWith("#") ? `${words} (${link})` : words;
+    })
+    .replace(/<(br|hr)\b[^>]*>/gi, "\n")
+    .replace(/<\/?(p|div|section|article|header|footer|nav|main|ul|ol|li|tr|table|thead|tbody|dl|dt|dd|h[1-6]|pre|blockquote|figure|form|details|summary)\b[^>]*>/gi, "\n")
+    .replace(/<li\b[^>]*>/gi, "\n- ")
+    .replace(/<\/t[dh]>/gi, " | ")
+    .replace(/<[^>]+>/g, "");
+  body = decode(body);
+  return `${body
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+/g, " ").replace(/\s*\|\s*$/, "").trim())
+    .filter((line, i, all) => line || (all[i - 1] || "").trim())
+    .join("\n")
+    .trim()}\n`;
+}
 
 // D1 answers "overloaded" for a moment under a burst. A read is asked again, up to twice, after a short wait. So is a GET claim that
 // reuses its lease (see claimReusesItsLease), so a lease taken just before the failure isn't stranded. Other claims would take new
 // leases, and a submit's evaluations would count twice, so no other write is asked again. If it's still busy the caller gets a 503
 // that says to try again, in place of a 500 and D1's own words.
-const READ_ONLY_ROUTES = /^\/(?:c|w)\/|^\/dashboard\/?$|^\/q\/(?:object|search|find|next|tasks|task|pulse|network|repos|dashboard)(?:\/|$)/;
+const READ_ONLY_ROUTES = /^\/(?:c|w)\/|^\/(?:dashboard|discover|models)\/?$|^\/q\/(?:object|blob|search|find|next|resume|frontier|optimize|cell|models|tasks|task|pulse|network|repos|dashboard|discover|feed(?:\.json)?|rss(?:\.xml)?|atom(?:\.xml)?)(?:\/|$)/;
 const BUSY_RETRY_WAITS_MS = [200, 600];
 const BUSY_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="only light"><title>One moment | Teleion Fabric</title></head><body style="margin:0;background:#f5f1e8;color:#1b2230;font:18px/1.5 system-ui,sans-serif;color-scheme:only light"><main style="max-width:36rem;margin:15vh auto;padding:0 20px"><h1 style="font-size:1.5rem">Busy for a moment</h1><p>Our database is handling a lot right now. Please try again in a few seconds.</p><p><a href="https://teleionlabs.com/status">See the status page</a></p></main></body></html>`;
 const isBusyDatabase = async (response) =>
@@ -2558,9 +2798,9 @@ export async function withoutLeaseDetails(request, response, env) {
   const path = new URL(request.url).pathname;
   if (!path.startsWith("/q/") && !path.startsWith("/c/") && !path.startsWith("/help") && !path.startsWith("/chat")) return response;
   // The worker's own lease answers keep its fence.
-  if (response.status !== 409 && /^\/q\/(?:claim|heartbeat|submit|complete|release|onboard|enqueue)(?:\/|$)/.test(path)) return response;
-  // A stored object is read by digest: never edited here.
-  if (/^\/q\/(?:object|compose|upload)(?:\/|$)/.test(path)) return response;
+  if (response.status !== 409 && /^\/q\/(?:claim|heartbeat|submit|complete|release|onboard|enqueue|checkpoint)(?:\/|$)/.test(path)) return response;
+  // A stored object or blob is read by digest: never edited here.
+  if (/^\/q\/(?:object|blob|compose|upload)(?:\/|$)/.test(path)) return response;
   if (await isServerInfraAuthorized(request, env, env.HERMA_DB).catch(() => false)) return response;
   if (!(response.headers.get("content-type") || "").includes("json")) return response;
   const text0 = await response.text();
@@ -2571,8 +2811,10 @@ export async function withoutLeaseDetails(request, response, env) {
   } catch {
     return new Response(text, response);
   }
-  // A claim made through chat is the worker's own lease: it keeps its fence.
-  if (body && body.claimed_task === true) return new Response(text0, { status: response.status, statusText: response.statusText, headers: response.headers });
+  // A claim made through chat, or a /q/resume call with a matched worker_token, keeps the worker's own fence.
+  if (body && (body.claimed_task === true || (/^\/q\/resume(?:\/|$)/.test(path) && body.token_matched === true))) {
+    return new Response(text0, { status: response.status, statusText: response.statusText, headers: response.headers });
+  }
   const clean = dropLeaseFields(body);
   if (typeof clean.detail === "string") {
     clean.detail = clean.detail.replace(/ \(expected=\d+\)/, "").replace(/fencing_token \(\d+\)/, "fencing_token").replace(/is leased by '[^']*', not '[^']*'/, "is held by another worker");
@@ -2587,7 +2829,7 @@ export async function withoutLeaseDetails(request, response, env) {
 const KEY_HEADERS = ["authorization", "x-herma-api-key", "x-herma-key", "x-herma-infra-key", "x-herma-admin-token", "x-bootstrap-secret", "x-upstream-api-key"];
 // Owner, Nov 4: what the public reads has common personal data stripped, by default on these paths. The skipped paths hand
 // a caller its own working tokens or serve files by digest. Our own server infrastructure reads stored text.
-const PERSONAL_PATHS = ["/q/", "/c/", "/w/", "/api/object/", "/dashboard", "/starter", "/help", "/status"];
+const PERSONAL_PATHS = ["/q/", "/c/", "/w/", "/api/object/", "/dashboard", "/discover", "/models", "/starter", "/help", "/status"];
 const PERSONAL_SKIP = ["/q/claim", "/q/complete", "/q/submit", "/q/register", "/q/onboard", "/q/heartbeat", "/q/release", "/q/upload", "/q/blob/", "/q/kits", "/q/prompts"];
 
 async function serveWithPublicNames(request, env, ctx) {
@@ -2599,7 +2841,7 @@ async function serveWithPublicNames(request, env, ctx) {
   const inbound = new Request(request, { headers });
   const answer = await (agentStartAsset(inbound) || onboardingApplication.fetch(inbound, env, ctx));
   const named = await withPublicNames(inbound, answer, {
-    skip: ["/q/object/", "/q/compose", "/q/upload", "/kits/", "/assets/", "/agent-start", "/v1/chat/completions", "/v1/responses", "/v1/messages"],
+    skip: ["/q/object/", "/q/blob/", "/q/compose", "/q/upload", "/kits/", "/assets/", "/agent-start", "/v1/chat/completions", "/v1/responses", "/v1/messages"],
     keyHeaders: KEY_HEADERS,
   });
   const out = await withoutPersonalData(inbound, await withoutLeaseDetails(inbound, named, env), {

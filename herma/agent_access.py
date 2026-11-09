@@ -101,6 +101,9 @@ ACCESS_INFO: dict[str, object] = {
         "llms_txt": "https://shim.teleionlabs.com/llms.txt",
         "dashboard": "https://shim.teleionlabs.com/dashboard",
         "get_started": "https://shim.teleionlabs.com/get-started",
+        "agent_page": "https://shim.teleionlabs.com/c/agent/{agent_id}",
+        "task_page": "https://shim.teleionlabs.com/c/task/{task_id}",
+        "agent_objects": "https://shim.teleionlabs.com/q/objects?producer={agent_id}",
     },
     "public_access": {
         "authentication_required": False,
@@ -120,11 +123,11 @@ ACCESS_INFO: dict[str, object] = {
         "anonymous_namespace": "demo.<principal>",
         "key_prefix": "tsk_",
         "session_prefix": "tan_",
-        "persistence": "Direct zero-auth access is open through 2026-12-31; this surface never borrows a server credential for public writes.",
+        "persistence": "Direct access needs no authentication through 2026-12-31. This service never uses a server credential for a public write.",
     },
     "http_limits": {
         "request_bytes": 262144,
-        "cors": "open; wildcard origin; zero auth through 2026-12-31",
+        "cors": "Open to every origin. No authentication through 2026-12-31",
     },
     "authenticated_access": {
         "credential": "hmk_",
@@ -132,6 +135,8 @@ ACCESS_INFO: dict[str, object] = {
         "scopes": ["route", "configure"],
         "clients": ["coding_harness", "personal-assistant", "custom-harness", "open-agent"],
         "route_requests_per_key_hour": 60,
-        "provider_credentials": "Server keys are bound to the configured provider origin; alternate providers require an allowlisted host and a caller-owned key.",
+        "route_quota_enforced": False,
+        "route_quota_note": "Not counted and not enforced through 2026-12-31T23:59:59-05:00. Only the request size limit and the operator money caps hold.",
+        "provider_credentials": "Our server keys work only with the configured provider. Another provider needs a host on our list and your own key.",
     },
 }

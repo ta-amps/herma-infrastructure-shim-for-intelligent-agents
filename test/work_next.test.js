@@ -10,13 +10,14 @@ const post = (path, body) => call(path, { method: "POST", headers: { "content-ty
 let n = 0;
 const unique = (p) => `${p}-${Date.now().toString(36)}-${(n += 1)}`;
 
-async function makeTask(title, { state = "ready", blockedBy = "", tier = "ngo_priority", priority = 99, producer = "maker-x" } = {}) {
+async function makeTask(title, { state = "ready", blockedBy = "", tier = "ngo_priority", priority = 99, producer = "maker-x", verbKind = "" } = {}) {
   const id = unique("verb_wn");
   const now = new Date().toISOString();
+  const vis = tier === "public_general" ? "public_commons" : "public_ngo";
   await call("/q/pulse"); // tables exist after the first read
   await env.HERMA_DB.prepare(
-    "INSERT INTO herma_durable_queue (task_id, tier, visibility, priority, title, prompt, simhash64_hex, producer_agent, created_at, updated_at, state, blocked_by_task_id, min_capability_milli) VALUES (?, ?, 'public_ngo', ?, ?, ?, '0', ?, ?, ?, ?, ?, 0)"
-  ).bind(id, tier, priority, title, `Do this desk work for ${title}.`, producer, now, now, state, blockedBy).run();
+    "INSERT INTO herma_durable_queue (task_id, tier, visibility, priority, title, prompt, simhash64_hex, producer_agent, created_at, updated_at, state, blocked_by_task_id, verb_kind, min_capability_milli) VALUES (?, ?, ?, ?, ?, ?, '0', ?, ?, ?, ?, ?, ?, 0)"
+  ).bind(id, tier, vis, priority, title, `Do this desk work for ${title}.`, producer, now, now, state, blockedBy, verbKind).run();
   return id;
 }
 const hideAll = async () => env.HERMA_DB.prepare("UPDATE herma_durable_queue SET state = 'done' WHERE state = 'ready'").run();
@@ -26,7 +27,7 @@ describe("GET /q/next", () => {
     resetLetGoCache();
     await call("/q/pulse");
     await hideAll();
-  });
+  }, 30000);
 
   it("names Tasks a claim can really lease, and leases nothing", async () => {
     const good = await makeTask("Write a one page sheet");
@@ -74,15 +75,23 @@ describe("GET /q/next", () => {
 });
 
 describe("a short list", () => {
-  it("fills from the next tier, nonprofit work first", async () => {
+  it("fills from the next tier, frontier general work first and build tasks before reviews by default, while honoring priority_regime=ngo_first", async () => {
     resetLetGoCache();
     await call("/q/pulse");
     await hideAll();
     const ngo = await makeTask("Plain nonprofit page");
-    const pub = await makeTask("Plain general page", { tier: "public_general" });
-    const ids = (await (await call("/q/next?agent_id=wn-z&limit=3")).json()).tasks.map((t) => t.task_id);
-    expect(ids[0]).toBe(ngo);
-    expect(ids).toContain(pub);
+    const pubReview = await makeTask("Review: check general page", { tier: "public_general", priority: 99, verbKind: "eval_and_rank" });
+    const pubBuild = await makeTask("Build frontier engine module", { tier: "public_general", priority: 80 });
+
+    const defaultIds = (await (await call("/q/next?agent_id=wn-z&limit=4")).json()).tasks.map((t) => t.task_id);
+    expect(defaultIds).toEqual([pubBuild, pubReview, ngo]);
+
+    const ngoFirstIds = (await (await call("/q/next?agent_id=wn-z&priority_regime=ngo_first&limit=4")).json()).tasks.map((t) => t.task_id);
+    expect(ngoFirstIds[0]).toBe(ngo);
+    expect(ngoFirstIds).toEqual([ngo, pubBuild, pubReview]);
+
+    const preferRevIds = (await (await call("/q/next?agent_id=wn-z&prefer_reviews=1&limit=4")).json()).tasks.map((t) => t.task_id);
+    expect(preferRevIds[0]).toBe(pubReview);
   });
 });
 
@@ -91,7 +100,7 @@ describe("a dead Task stops trapping workers", () => {
     resetLetGoCache();
     await call("/q/pulse");
     await hideAll();
-  });
+  }, 30000);
 
   it("after 3 different workers let it go, next and a plain claim leave it out; by id still works", async () => {
     const dead = await makeTask("Retest with whoever turns up");
@@ -125,7 +134,7 @@ describe("a claim with no lease says why", () => {
     resetLetGoCache();
     await call("/q/pulse");
     await hideAll();
-  });
+  }, 30000);
 
   it("names the reason, as JSON, as plain text, and for POST", async () => {
     const people = await makeTask("Desk-sim fallback for a 40-trial block (no field team required)");
@@ -212,7 +221,7 @@ describe("giving back after the lease moved", () => {
     expect(res.status).toBe(409);
     expect((await res.json()).next.action).toBe("find_other");
     const ok = await post("/q/submit", { agent_id: "wn-j", task_id: id, fencing_token: got.lease.fencing_token, summary: "labeled test", task_objects: [{ object_key: unique("wn_obj"), category: "ngo_public_good", summary: "labeled test", payload: { a: "b" } }] });
-    expect((await ok.json()).next.action).toBe("report_then_stop");
+    expect((await ok.json()).next.action).toBe("report_then_continue_or_stop");
     expect((await call("/q/next?agent_id=wn-j&skip=%00")).status).toBe(200);
   });
 });

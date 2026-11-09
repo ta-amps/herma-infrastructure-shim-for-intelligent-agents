@@ -17,6 +17,7 @@ check: lint types test worker-check public index-check architecture gate light-c
 worker-check: ## Worker runtime tests, generated category/prompt parity and the page asset versions
 	uv run python scripts/build_conversation_data.py --check
 	python3 scripts/build_page_assets.py --check
+	node scripts/sync_universal_prompt.mjs --check
 	npm run check
 
 lint: ## ruff lint and format check

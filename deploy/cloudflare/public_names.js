@@ -2,7 +2,7 @@
 // only for callers with no key: our own workers keep reading the stored values and names. It changes names, never
 // ids: lowercase ids an agent sends back (a Task id, an agent name, a kit file) are left alone, or a later call would
 // not find them. Bodies people verify by digest are not passed through it.
-const KEPT = /https?:\/\/github\.com\/ta-amps\/[\w.-]+(?:\/[^\s"'<>)]*)?|\/assets\/herma-[\w.?=-]+|\/kits\/herma[\w.-]*|data-herma-[\w-]+|herma-(?:pages|agent-kit)[\w.-]*|\bherma_shim\.py\b|\b(?:noun|verb|detail|n|v):(?:tessera|herma)\.[\w.]+/g;
+const KEPT = /https?:\/\/github\.com\/ta-amps\/[\w.-]+(?:\/[^\s"'<>)]*)?|\/assets\/herma-[\w.?=-]+|\/kits\/herma[\w.-]*|data-herma-[\w-]+|herma-(?:pages|agent-kit)[\w.-]*|\bherma_shim\.py\b|\b(?:noun|verb|detail|n|v):(?:tessera|herma)\.[\w.]+|(?:\\*")wasm_base64(?:\\*")\s*:\s*(?:\\*")[A-Za-z0-9+/=]*(?:\\*")/g;
 const EXACT_VALUES = new Map([
   ["tessera_durable_object_cas", "fabric_durable_object_cas"],
   ["d1_authoritative_with_tessera_summary_mirror", "d1_authoritative_with_fabric_summary_mirror"],

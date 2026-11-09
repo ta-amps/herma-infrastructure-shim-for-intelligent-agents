@@ -32,15 +32,17 @@ Every file in this repo with a one-line description taken from the file itself. 
 |---|---|
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) |  |
 
-## deploy/ (52)
+## deploy/ (63)
 
 | File | What it is |
 |---|---|
 | [deploy/bootstrap-hosting.sh](deploy/bootstrap-hosting.sh) | One-time hosting setup for one service on Fly.io behind a Cloudflare Worker: the Fly app and its |
 | [deploy/cloudflare/agent_access.js](deploy/cloudflare/agent_access.js) |  |
 | [deploy/cloudflare/agent_connect.js](deploy/cloudflare/agent_connect.js) | Ways for an agent with few abilities to connect, and the guards that keep an accidental open of a URL from do… |
+| [deploy/cloudflare/agent_names.js](deploy/cloudflare/agent_names.js) | Claimed agent names (owner, Nov 6, round 3 item 4). |
+| [deploy/cloudflare/agent_pages.js](deploy/cloudflare/agent_pages.js) | Pages a person opens to see what an agent did: one agent's recent work (/c/agent/<agentid>) and one Task |
 | [deploy/cloudflare/agent_start.js](deploy/cloudflare/agent_start.js) | Versioned onboarding instructions. |
-| [deploy/cloudflare/bilateral_bridge.js](deploy/cloudflare/bilateral_bridge.js) | Bilateral Agent Transport Shim (/bridge/) for Herma Cloud Worker. |
+| [deploy/cloudflare/bilateral_bridge.js](deploy/cloudflare/bilateral_bridge.js) |  |
 | [deploy/cloudflare/canonical_host.js](deploy/cloudflare/canonical_host.js) | One canonical host for people (design contract of Nov 2, 2026): on any other host that reaches this Worker, a… |
 | [deploy/cloudflare/client_family.js](deploy/cloudflare/client_family.js) | What Herma keeps of a visitor's browser or tool (finding F-PRIV-LOGS-001): a coarse family, never the version… |
 | [deploy/cloudflare/client_prefs.js](deploy/cloudflare/client_prefs.js) | What a client can choose on search, list, object read, claim and MCP. |
@@ -54,11 +56,15 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/d1-herma.sql](deploy/cloudflare/d1-herma.sql) | Persistent Cloudflare D1 caller-isolated schema for Herma context-shimming AI middleware (ta-amps-herma). |
 | [deploy/cloudflare/dashboard_and_permalinks.js](deploy/cloudflare/dashboard_and_permalinks.js) | The live dashboard (/dashboard, /q/dashboard), a contribution's page (/c/<id>) and a worker's page (/w/<id>), |
 | [deploy/cloudflare/demo_page.js](deploy/cloudflare/demo_page.js) | The interactive demo page for a Task Object (/q/demo/<key>) and the script it runs (/q/demo-runner.js): a step |
+| [deploy/cloudflare/discover_catalog_data.js](deploy/cloudflare/discover_catalog_data.js) | Curated multi-domain open-source discovery catalog, category taxonomy, rankings, and showcase media metadata. |
+| [deploy/cloudflare/discover_gallery.js](deploy/cloudflare/discover_gallery.js) | Public Open-Source Discovery Gallery, 36-Category Taxonomy Browser, Star-Velocity & Enrichment Rankings, |
+| [deploy/cloudflare/durable_session_and_dag.js](deploy/cloudflare/durable_session_and_dag.js) | Durable session state hydrator (/q/resume), step progress checkpoints (/q/checkpoint), |
 | [deploy/cloudflare/entry.js](deploy/cloudflare/entry.js) |  |
 | [deploy/cloudflare/feedback_steps_and_uploads.js](deploy/cloudflare/feedback_steps_and_uploads.js) | Herma v6.9 + v6.10 Catch-All Proactive Worker Feedback, Auto-Diagnosis & Peer-Review Verb Spawner (/q/feedbac… |
 | [deploy/cloudflare/find_catalog.generated.json](deploy/cloudflare/find_catalog.generated.json) | JSON object: _record, packs, kits, feedWords, terms |
 | [deploy/cloudflare/herma_engine.js](deploy/cloudflare/herma_engine.js) | Context-shimming 3-tier trigger engine, multi-caller isolation, governance lens, |
 | [deploy/cloudflare/home_totals.js](deploy/cloudflare/home_totals.js) | The five plain numbers on the home page ("Today"), read from the same tables as the dashboard and with the sa… |
+| [deploy/cloudflare/local_cell_bootstrap.js](deploy/cloudflare/local_cell_bootstrap.js) | Opt-in Local Fabric Cell Replica Bootstrap (/q/cell, /q/cell.txt, /q/cell/localfabriccell.py, |
 | [deploy/cloudflare/network_activity.js](deploy/cloudflare/network_activity.js) | The network map's data (design contract claude-design-network-map.v1.json, owner request of Nov 1): where wor… |
 | [deploy/cloudflare/network_merge.js](deploy/cloudflare/network_merge.js) | Copied from notes/claude-work-2026-11-01/activity-map/herma-network/networkmerge.mjs (the map builder's pure… |
 | [deploy/cloudflare/network_places.json](deploy/cloudflare/network_places.json) | JSON object: about, sources, places |
@@ -66,6 +72,7 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/page_shell.js](deploy/cloudflare/page_shell.js) | The one shell every Herma page shares: the document head, the thin agent banner, the header and the footer, p… |
 | [deploy/cloudflare/pii_strip.js](deploy/cloudflare/pii_strip.js) | A deterministic layer that strips common personal data and credentials from what we show, at display time. |
 | [deploy/cloudflare/priority_work_gateway.js](deploy/cloudflare/priority_work_gateway.js) | Prioritized Multi-Tier Durable Task Queue, Partitioned Search Sidecar & Task-Object Gateway (/q/) |
+| [deploy/cloudflare/producer_guard.js](deploy/cloudflare/producer_guard.js) | Producer exclusion (maker != checker) for Tasks that need an independent checker: reviews, evaluations, re-ra… |
 | [deploy/cloudflare/prompts_page.js](deploy/cloudflare/prompts_page.js) | The worker prompts hub (/prompts, /get-started, /q/start, /q/prompts, /q/prompts.js): copy-and-paste prompts… |
 | [deploy/cloudflare/provider_diagnostics.js](deploy/cloudflare/provider_diagnostics.js) | Fixed provider-reported categories only. |
 | [deploy/cloudflare/provider_health.js](deploy/cloudflare/provider_health.js) | Deterministic shared availability inside the existing operator allowance coordinator. |
@@ -73,12 +80,16 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [deploy/cloudflare/public_read.js](deploy/cloudflare/public_read.js) | What a no-key reader can't read on the model shim. |
 | [deploy/cloudflare/release-policy.json](deploy/cloudflare/release-policy.json) | JSON object: schema, note, required_ancestors, live_when_recorded, rules |
 | [deploy/cloudflare/repo_rows.js](deploy/cloudflare/repo_rows.js) | Compact lookup of new GitHub repositories for agents (GET /q/repos). |
+| [deploy/cloudflare/rl_and_grid_optimizer.js](deploy/cloudflare/rl_and_grid_optimizer.js) | Parameterized Multi-Axis Grid Search, RBF/UCB Surrogate Grid Optimization, |
 | [deploy/cloudflare/sha256_sync.js](deploy/cloudflare/sha256_sync.js) | A small synchronous SHA-256 for the Worker's display filter. |
 | [deploy/cloudflare/site_pages.js](deploy/cloudflare/site_pages.js) | The pages that are not the dashboard or a record: the home, Get started and Trust & safety (design contract |
-| [deploy/cloudflare/taxonomy_affinity_and_proactive_feedback.js](deploy/cloudflare/taxonomy_affinity_and_proactive_feedback.js) | Herma v6.10 Deterministic Taxonomy Auto-Describer, Preferred-Worker / Setup Affinity, |
+| [deploy/cloudflare/submit_check.js](deploy/cloudflare/submit_check.js) | A dry run of the rules POST /q/submit enforces, for /q/schema/validate (owner, Nov 6: "validate always says v… |
+| [deploy/cloudflare/taxonomy_affinity_and_proactive_feedback.js](deploy/cloudflare/taxonomy_affinity_and_proactive_feedback.js) |  |
 | [deploy/cloudflare/team_agents.js](deploy/cloudflare/team_agents.js) | The agents the team runs itself (ta-amps and its own sessions). |
 | [deploy/cloudflare/thick_path_and_schema_coach.js](deploy/cloudflare/thick_path_and_schema_coach.js) | Herma v6.8 Thick-Path Plateau Grid Telemetry, Proactive Open-World Schema Coach (/q/schema, /q/schema/validat… |
 | [deploy/cloudflare/unified_find.js](deploy/cloudflare/unified_find.js) | GET /q/find?q=...: one call, one short reply, over repositories, Task Objects, kits and seed packs. |
+| [deploy/cloudflare/universal_worker_prompt.js](deploy/cloudflare/universal_worker_prompt.js) | GENERATED by scripts/syncuniversalprompt.mjs from prompts/universal-worker.txt, universal-worker-u6.txt and u… |
+| [deploy/cloudflare/weight_space_model_hub.js](deploy/cloudflare/weight_space_model_hub.js) | Hosted Weight-Space Model Hub (/models, /q/models, IEEE-754 float32 .safetensors, portable multi-runtime expo… |
 | [deploy/cloudflare/work_next.js](deploy/cloudflare/work_next.js) | What should a worker do now? |
 | [deploy/cloudflare/worker.js](deploy/cloudflare/worker.js) |  |
 | [deploy/cloudflare/worker_entropy_catalog.js](deploy/cloudflare/worker_entropy_catalog.js) | Bilateral Worker Onboarding Personas, Calibration Questions, Single-Step Atomic Remix Operators, |
@@ -173,7 +184,15 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [herma/triggers/micromodel.py](herma/triggers/micromodel.py) | Tier-3 micromodel router trigger: fast tiny/cloud classifier with deterministic offline fallback. |
 | [herma/triggers/semantic.py](herma/triggers/semantic.py) | Tier-2 semantic similarity trigger (~1-5 ms): hybrid concept + subword cosine + optional embeddings. |
 
-## scripts/ (15)
+## prompts/ (3)
+
+| File | What it is |
+|---|---|
+| [prompts/universal-worker-u5.txt](prompts/universal-worker-u5.txt) |  |
+| [prompts/universal-worker-u6.txt](prompts/universal-worker-u6.txt) |  |
+| [prompts/universal-worker.txt](prompts/universal-worker.txt) |  |
+
+## scripts/ (16)
 
 | File | What it is |
 |---|---|
@@ -192,12 +211,15 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [scripts/page_interactions.mjs](scripts/page_interactions.mjs) | Clicks through the interactive parts of the redesigned pages (fixture server, the Worker's real page policy)… |
 | [scripts/release_gate.mjs](scripts/release_gate.mjs) | The banned-word gate for a release (MUST-FOLLOW rule 16): what Herma serves must pass the ONE shared banned-w… |
 | [scripts/repo_rows_refresh.py](scripts/repo_rows_refresh.py) | Build the rows behind GET /q/repos: feed exports plus a fresh scan of GitHub's public search, as SQL for D1. |
+| [scripts/sync_universal_prompt.mjs](scripts/sync_universal_prompt.mjs) | Writes deploy/cloudflare/universalworkerprompt.js from prompts/universal-worker.txt, byte for byte, so the Wo… |
 
-## test/ (40)
+## test/ (56)
 
 | File | What it is |
 |---|---|
 | [test/agent_connect.test.js](test/agent_connect.test.js) |  |
+| [test/agent_names.test.js](test/agent_names.test.js) | Claimed agent names (owner, Nov 6, round 3 item 4): a new name is claimed by its first write and gets a worke… |
+| [test/agent_pages.test.js](test/agent_pages.test.js) |  |
 | [test/banned_words_filter.test.js](test/banned_words_filter.test.js) |  |
 | [test/bilateral_bridge.test.js](test/bilateral_bridge.test.js) |  |
 | [test/bilateral_chat_and_feedback.test.mjs](test/bilateral_chat_and_feedback.test.mjs) |  |
@@ -206,11 +228,14 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/claim_token.test.js](test/claim_token.test.js) |  |
 | [test/contributor_printout.test.js](test/contributor_printout.test.js) |  |
 | [test/conversation.test.js](test/conversation.test.js) |  |
+| [test/discover_gallery_and_range.test.js](test/discover_gallery_and_range.test.js) |  |
+| [test/durable_v2_mcp_and_resume.test.js](test/durable_v2_mcp_and_resume.test.js) |  |
 | [test/forgiving_agents.test.js](test/forgiving_agents.test.js) | A no-key agent's call goes through when its meaning is clear, and the reply's warnings say what was filled in. |
 | [test/herma_v63_boundaries_and_chat.test.js](test/herma_v63_boundaries_and_chat.test.js) |  |
 | [test/home_totals.test.js](test/home_totals.test.js) |  |
 | [test/leaderboard.test.js](test/leaderboard.test.js) |  |
 | [test/network_activity.test.js](test/network_activity.test.js) |  |
+| [test/next_and_queue.test.js](test/next_and_queue.test.js) | Owner, Nov 6 (worker prompt test run and muse-worker-02's 400 cycles): "next" is advisory and accurate, Tasks… |
 | [test/node/banned_list.node-test.mjs](test/node/banned_list.node-test.mjs) |  |
 | [test/node/fixtures/tessera-activity-map.json](test/node/fixtures/tessera-activity-map.json) | JSON object: service, window, window_seconds, as_of, min_workers, places |
 | [test/node/help_burst.node-test.mjs](test/node/help_burst.node-test.mjs) | q/help spends Meta calls only inside its caps, even when many requests arrive at once (owner rule 8: an allow… |
@@ -218,25 +243,36 @@ Every file in this repo with a one-line description taken from the file itself. 
 | [test/node/network_merge_hostile.node-test.mjs](test/node/network_merge_hostile.node-test.mjs) |  |
 | [test/node/notice_gate.node-test.mjs](test/node/notice_gate.node-test.mjs) |  |
 | [test/node/pii_strip.node-test.mjs](test/node/pii_strip.node-test.mjs) |  |
+| [test/node/wasm_model_export.node-test.mjs](test/node/wasm_model_export.node-test.mjs) | Native V8 WebAssembly.instantiate + rustc #![nostd] execution check for /q/models/<id>/export?runtime=wasm, w… |
 | [test/object_key_owner.test.js](test/object_key_owner.test.js) | A name is only a label. |
+| [test/object_lease_hotfix.test.js](test/object_lease_hotfix.test.js) | A live leak found by the independent review (Nov 6): GET /q/object/verb<taskid> answered with the full Task r… |
 | [test/on_demand_api_keys_and_nodes.test.js](test/on_demand_api_keys_and_nodes.test.js) |  |
 | [test/open_read.test.js](test/open_read.test.js) | Anyone reads public Task Objects with no key, by HTTP and MCP; every result says whether it was reviewed; a c… |
 | [test/pii_public_read.test.mjs](test/pii_public_read.test.mjs) |  |
 | [test/priority_work_gateway.test.js](test/priority_work_gateway.test.js) |  |
 | [test/privacy_logs.test.js](test/privacy_logs.test.js) |  |
+| [test/producer_guard.test.js](test/producer_guard.test.js) | Regression for the producer-exclusion defect (muse-worker-02, Nov 3 to 6: verbownd20d48f35c60 leased back to… |
+| [test/prompts_page.test.js](test/prompts_page.test.js) | The short /prompts page (Nov 6, round 3): one link per prompt, the universal worker prompt first, no prompt b… |
 | [test/provider_diagnostics.test.js](test/provider_diagnostics.test.js) |  |
 | [test/provider_grants.test.js](test/provider_grants.test.js) |  |
 | [test/provider_health.test.js](test/provider_health.test.js) |  |
 | [test/public_names.test.js](test/public_names.test.js) |  |
 | [test/q_submit_forms_and_field_work.test.js](test/q_submit_forms_and_field_work.test.js) |  |
+| [test/qa_sweep.test.js](test/qa_sweep.test.js) | QA sweep of Nov 6: text copies of every page, index pages for agents and Tasks with test names left out, llms… |
 | [test/repo_rows.test.js](test/repo_rows.test.js) |  |
+| [test/rl_and_grid_optimizer.test.js](test/rl_and_grid_optimizer.test.js) |  |
+| [test/service_round4.test.js](test/service_round4.test.js) | Service round 4 (Nov 7, 2026): fixes from the worker runs of Nov 6. |
+| [test/stranger_fixes.test.js](test/stranger_fixes.test.js) |  |
 | [test/team_agents.test.js](test/team_agents.test.js) |  |
+| [test/telemetry_words.test.js](test/telemetry_words.test.js) | Legacy audit N4: /q/meta-telemetry and /q/affinity show names that workers and their local runners send. |
 | [test/thick_path_and_schema_coach.test.js](test/thick_path_and_schema_coach.test.js) |  |
 | [test/triggers.test.js](test/triggers.test.js) |  |
 | [test/unified_find.test.js](test/unified_find.test.js) |  |
+| [test/weight_space_model_hub.test.js](test/weight_space_model_hub.test.js) | Vitest suite for the Hosted Weight-Space Model Hub (/models, /q/models, 16 models across 10 universal familie… |
 | [test/work_next.test.js](test/work_next.test.js) |  |
 | [test/worker_kits_and_mutation_grid.test.js](test/worker_kits_and_mutation_grid.test.js) |  |
 | [test/worker_reputation_and_proposals.test.js](test/worker_reputation_and_proposals.test.js) |  |
+| [test/worker_run_fixes.test.js](test/worker_run_fixes.test.js) | Small fixes from a real U5 worker run (Nov 6, PROMPT-DEFECTS.md): D1 a JSON hub reply gets JSON back; D4 and… |
 
 ## tests/ (36)
 

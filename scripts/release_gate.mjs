@@ -167,6 +167,32 @@ function dirtyDashboard() {
   };
 }
 
+// The agent and Task pages, filled with worker text full of banned items. Ids carry hashes, as real ones do.
+function dirtyAgent(data, all) {
+  return {
+    found: true, agent_id: "dirty-1", page: 2, per_page: 20, next_page: 3, previous_page: 1,
+    counts: { task_objects: 1, tasks_submitted: 1, tasks_claimed: 1, tasks_started: 1, tasks_given_back: 1, evaluations_given: 1, hub_turns: 1, worker_sessions: 1 },
+    task_objects: data.recent_objects.map((o) => ({ object_key: o.object_key, version_num: 2, title: o.summary, type: o.category, summary: dirty("Object"), created_at: "2026-11-01T13:40:00.000Z", review_state: "failed" })),
+    tasks: data.recent_contributions.map((t) => ({ task_id: t.task_id, title: t.title, kind: "Shared Task", state: "done", updated_at: t.updated_at, label: "Submitted it" })),
+    tasks_given_back: data.recent_contributions.map((t) => ({ task_id: t.task_id, title: t.title, kind: "Shared Task", state: "ready", reason: all[0], detail: dirty("Reason"), given_back_at: t.updated_at })),
+    evaluations_given: [{ target_kind: "task", target_id: "verb_x_9f3a2b1c4d5e", target_title: all[0], worth_now: 1, worth_later: 2, priority: 3, novelty_milli: 4, rationale: dirty("Rationale"), created_at: "2026-11-01T13:40:00.000Z" }],
+    hub_turns: [{ channel_id: slug(all[0]), direction: all[0], summary: dirty("Turn"), created_at: "2026-11-01T13:40:00.000Z" }],
+    worker_sessions: [{ worker_uuid: "w_dirty_1_8ffbf268", label: all[0], runs: 1, updated_at: "2026-11-01T13:40:00.000Z" }],
+  };
+}
+function dirtyTask(data, all) {
+  const t = data.recent_contributions[0];
+  return {
+    found: true,
+    task: { task_id: t.task_id, title: all[0], kind: "Shared Task", state: "done", prompt: dirty("Prompt"), result_summary: dirty("Result"), started_by: "dirty-2", submitted_by: "dirty-1", created_at: t.updated_at, updated_at: t.updated_at },
+    follows: { task_id: "verb_x_9f3a2b1c4d5e", title: all[0] },
+    task_objects: data.recent_objects.map((o) => ({ object_key: o.object_key, version_num: 1, title: o.summary, type: o.category, summary: dirty("Object"), created_at: t.updated_at, review_state: "reviewed", made_by: o.producer_agent })),
+    follow_up_tasks: data.recent_contributions.map((c) => ({ task_id: c.task_id, title: c.title, kind: "Shared Task", state: "ready", updated_at: c.updated_at })),
+    attempts: [{ agent_id: "dirty-3", outcome_label: all[0], reason: all[0], detail: dirty("Attempt"), created_at: t.updated_at }],
+    reviews: [{ evaluator_agent_id: "dirty-3", worth_now: 1, worth_later: 2, priority: 3, novelty_milli: 4, rationale: dirty("Review"), created_at: t.updated_at }],
+  };
+}
+
 async function load(rel) {
   return import(pathToFileURL(path.join(ROOT, rel)).href);
 }
@@ -179,6 +205,9 @@ async function fixturePages() {
 
 async function dirtyPages() {
   const dash = await load("deploy/cloudflare/dashboard_and_permalinks.js");
+  const discover = await load("deploy/cloudflare/discover_gallery.js");
+  const modelsHub = await load("deploy/cloudflare/weight_space_model_hub.js");
+  const agentPages = await load("deploy/cloudflare/agent_pages.js");
   const help = await load("deploy/cloudflare/worker_help_and_starter.js");
   const demo = await load("deploy/cloudflare/demo_page.js");
   const engine = await load("deploy/cloudflare/herma_engine.js");
@@ -200,9 +229,35 @@ async function dirtyPages() {
     provision: { prov_id: `PROV-DIRTY-${i}`, title: sample, action: "shim_context", context_refs: [], triggers: { mode: "any", keyword: { terms: ["x"] } }, uris: [], priority: 5 },
   }));
   const entries = all.map((sample, i) => ({ entry_id: `detail:dirty.${i}`, kind: "detail", title: sample, summary: dirty("Summary"), source_uri: null }));
+  const dirtyDiscoverState = await discover.queryDiscoverCatalog(null, BASE, { q: all[0] }, { extraLiveObjects: data.recent_objects });
+  const baseModelsCat = await modelsHub.queryWeightModelCatalog(null, BASE, {});
+  const dirtyModelsCat = {
+    ...baseModelsCat,
+    total_models: baseModelsCat.models.length + all.length,
+    models: [
+      ...baseModelsCat.models,
+      ...all.map((sample, i) => ({
+        model_id: `dirty_model_${i}_9f3a2b1c4d5e6f7a`,
+        raw_model_id: `dirty_model_${i}_9f3a2b1c4d5e6f7a`,
+        family: "atomic_cartridge_bank",
+        family_label: sample,
+        title: sample,
+        summary: dirty("Model"),
+        lineage_role: sample,
+        held_out_score: 0.92,
+        direct_baseline_score: 0.85,
+        anchor_drift: 0.01,
+        status: sample,
+        canary_share: 0.1,
+        tensor_data_bytes: 256,
+      })),
+    ],
+  };
   return {
     "dirty /": engine.renderOverviewHtml(provisions, [], BASE, entries, null),
     "dirty /dashboard": dash.renderDashboardHtml(BASE, data),
+    "dirty /discover": discover.renderDiscoverHtml(BASE, dirtyDiscoverState),
+    "dirty /models": modelsHub.renderModelsHubHtml(BASE, dirtyModelsCat),
     "dirty /dashboard?q=": dash.renderDashboardHtml(BASE, data, { params: { q: "a search" }, answer: searchAnswer }),
     "dirty /dashboard?fragment=results": dash.renderSearchResultsHtml(searchAnswer),
     "dirty /c/<task>": dash.renderContributionPermalinkHtml(BASE, {
@@ -210,6 +265,8 @@ async function dirtyPages() {
       child_verbs: data.recent_contributions.slice(1), evaluations: [{ evaluator_agent_id: "dirty-3", actual_importance: 80, potential_importance: 90, estimated_priority: 85, novelty_milli: 800, convergence_flag: 0, rationale: dirty("Rationale") }],
     }),
     "dirty /w/<worker>": dash.renderWorkerProfileHtml(BASE, { worker_uuid: "w_dirty_1_8ffbf268", worker: data.workers[0], tasks: data.recent_contributions, objects: data.recent_objects, reputation: { total_cred_points: 3, unblock_bonus_points: 1, badge_details: [{ label: all[0], rule: dirty("Rule") }] } }),
+    "dirty /c/agent/<id>": agentPages.renderAgentPageHtml(BASE, dirtyAgent(data, all)),
+    "dirty /c/task/<id>": agentPages.renderTaskPageHtml(BASE, dirtyTask(data, all)),
     "dirty /starter": help.renderStarterHubHtml(BASE, catalog),
     // The name an ASCII mesh carries (first and last line) is contributed text too: it must come out of the page's data island clean.
     "dirty /q/demo/<key>": demo.renderInteractiveDemoPageHtml(BASE, {
@@ -232,9 +289,24 @@ function publicRoutes() {
     "/", "/connect", "/connect.json", "/healthz", "/llms.txt", "/llms-full.txt", "/.well-known/agent-card.json", "/api/conversation-schema",
     "/preview.js", "/robots.txt", "/favicon.svg", "/agent-start.json", "/agent-start.css", "/agent-start.js", "/starter", "/starter?format=json",
     "/prompts", "/prompts?format=json", "/get-started", "/dashboard", "/dashboard?format=json", "/dashboard.js", "/prompts.js", "/help", "/chat", "/status", "/health",
+    "/discover", "/discover.txt", "/discover.js", "/discover?format=json", "/discover?tab=categories", "/discover?tab=rankings", "/discover?tab=videos", "/discover?tab=feeds",
+    "/models", "/models.txt", "/models?format=json", "/q/models", "/q/models.txt", "/q/models/tf-embed-nullspace-24d-v1", "/q/models/infer?model=tf-scratch-effort-router-v1&text=plan+dag",
+    "/q/models/infer?model=tf-analyzer-generator-attribution-v1&text=measure+cadence",
+    "/q/models/infer?model=tf-verifier-sheaf-consistency-v1&text=check+mismatch",
+    "/q/models/infer?model=tf-calibrator-conformal-set-v1&text=calibrate+tier",
+    "/q/models/infer?model=tf-sae-matryoshka-residual-v1&text=decompose+residual+features",
+    "/q/models/infer?model=tf-probe-internal-truth-elk-v1&text=probe+internal+truth",
+    "/q/models/tf-embed-nullspace-24d-v1/export?runtime=js", "/q/models/tf-embed-nullspace-24d-v1/export?runtime=python",
+    "/q/models/tf-embed-nullspace-24d-v1/export?runtime=sql", "/q/models/tf-embed-nullspace-24d-v1/export?runtime=c99",
+    "/q/models/tf-embed-nullspace-24d-v1/export?runtime=rust",
+    "/q/models/tf-embed-nullspace-24d-v1/export?runtime=wasm", "/q/models/tf-embed-nullspace-24d-v1/export?runtime=wat",
+    "/q/models/tf-embed-nullspace-24d-v1/export?runtime=wgsl", "/q/models/tf-embed-nullspace-24d-v1/export?runtime=glsl",
+    "/q/discover", "/q/feed.json", "/q/rss.xml", "/q/atom.xml",
     "/dashboard?q=shelter&fragment=results", "/dashboard?q=shelter", "/dashboard?fragment=results", "/shim", "/trust",
     "/q/network", "/q/network?replay=1", "/q/network?kind=nonprofit",
     "/feedback", "/q", "/c/nothing_here", "/w/w_nothing_here", "/q/demo/nothing_here",
+    "/c/nothing_here.txt", "/w/w_nothing_here.txt", "/c/agent/nobody-here", "/c/agent/nobody-here.txt", "/c/agent/nobody-here?format=json",
+    "/c/task/nothing_here", "/c/task/nothing_here.txt", "/c/task/nothing_here?format=json", "/dashboard?agent=nobody-here",
     "/kits", "/kits?format=json", "/kits.js", "/kits/package.json", "/kits/mcp-manifest.json", "/kits/SKILL.md", "/kits/bootstrap.sh",
     "/kits/herma_shim.py", "/kits/worker_distributed_indexer.py", "/kits/pretool_guard.py", "/kits/herma-agent-kit.tgz", "/kits/herma-worker-kit.zip",
     "/experiments", "/reprioritize",

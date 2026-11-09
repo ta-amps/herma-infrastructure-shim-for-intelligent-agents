@@ -53,12 +53,14 @@ export const FEEDBACK_STEPS_UPLOADS_GRID = Object.freeze({
   build_tier12_penalty: -2.5,
   http_ok: 200,
   http_created: 201,
+  http_partial_content: 206,
   http_bad_request: 400,
   http_forbidden: 403,
   http_not_found: 404,
   http_method_not_allowed: 405,
   http_conflict: 409,
   http_payload_too_large: 413,
+  http_range_not_satisfiable: 416,
 });
 
 export const STEP_MODES = Object.freeze([
@@ -839,8 +841,11 @@ export async function handleWorkerFeedbackRequest(
     body: {
       ok: true,
       schema: FEEDBACK_STEPS_UPLOADS_GRID.feedback_schema_version,
-      truncated: false,
+      truncated: Boolean(ingestOut.truncated),
       accepted_bytes: ingestOut.accepted_bytes,
+      // D13 (round 4): the fields kept in extra_fields, and any left out, with the reason.
+      kept_extra_fields: ingestOut.kept_extra_fields || [],
+      ...(ingestOut.dropped_fields ? { dropped_fields: ingestOut.dropped_fields } : {}),
       accepted_envelope_bytes: rawRead.bytes.byteLength,
       max_field_bytes: bounds.feedback_field_max_bytes,
       max_envelope_bytes: bounds.feedback_envelope_max_bytes,
@@ -946,7 +951,7 @@ export async function handleListDurableTasksRequest(url, db, publicUrl, { infraA
     db
       .prepare(
         `SELECT task_id, tier, visibility, verb_kind, category, priority, state, title, prompt,
-                complexity_milli, generation_depth, owner_worker_uuid, blocked_by_task_id,
+                complexity_milli, generation_depth, owner_worker_uuid, blocked_by_task_id, producer_agent,
                 COALESCE(step_mode, '') AS step_mode, lsh_band_0, updated_at, created_at,
                 ${taskConfirmed} AS eval_count,
                 CASE WHEN ${taskFailed} THEN 'FAILED' WHEN ${taskConfirmed} THEN 'CONFIRMED' ELSE '' END AS verification_verdict
@@ -1012,7 +1017,10 @@ export async function handleListTaskObjectsRequest(url, db, publicUrl, { infraAl
   const categoryFilter = String(url.searchParams.get("category") || "").trim();
   const stepModeFilter = normalizeStepMode(url.searchParams.get("step_mode") || "");
   const reuseModeFilter = String(url.searchParams.get("reuse_mode") || "").trim().toLowerCase();
-  const producerFilter = String(url.searchParams.get("producer") || "").trim();
+  // producer_agent, agent_id and agent are other names for producer: an agent asks with the name it knows.
+  const producerFilter = String(
+    url.searchParams.get("producer") || url.searchParams.get("producer_agent") || url.searchParams.get("agent_id") || url.searchParams.get("agent") || ""
+  ).trim();
   const prefs = readClientPrefs(url.searchParams);
   const limit = Math.max(
     1,
@@ -1793,9 +1801,11 @@ export async function handleBlobDownloadRequest(
     };
   }
 
+  const totalBytes = Number(meta.total_bytes || 0);
   const headers = {
+    "accept-ranges": "bytes",
     "content-type": meta.content_type || "application/octet-stream",
-    "content-length": String(meta.total_bytes || 0),
+    "content-length": String(totalBytes),
     etag: `"${meta.sha256_hash}"`,
     "x-content-sha256": meta.sha256_hash,
     ...(meta.filename
@@ -1810,13 +1820,55 @@ export async function handleBlobDownloadRequest(
     };
   }
 
-  const totalBytes = Number(meta.total_bytes || 0);
+  let hasRange = false;
+  let rangeStart = 0;
+  let rangeEnd = totalBytes > 0 ? totalBytes - 1 : 0;
+  const rawRange = String(request.headers.get("range") || "").trim();
+  if (rawRange && /^bytes=/i.test(rawRange) && !rawRange.includes(",")) {
+    const m = /^bytes=(\d*)-(\d*)$/i.exec(rawRange);
+    const notSatisfiable = () => ({
+      isBinaryResponse: true,
+      response: new Response(null, {
+        status: FEEDBACK_STEPS_UPLOADS_GRID.http_range_not_satisfiable,
+        headers: {
+          "accept-ranges": "bytes",
+          "content-range": `bytes */${totalBytes}`,
+        },
+      }),
+    });
+    if (!m || totalBytes <= 0 || (m[1] === "" && m[2] === "")) {
+      return notSatisfiable();
+    }
+    if (m[1] === "") {
+      const suffixLen = Number(m[2]);
+      if (!Number.isInteger(suffixLen) || suffixLen <= 0) return notSatisfiable();
+      rangeStart = Math.max(0, totalBytes - suffixLen);
+      rangeEnd = totalBytes - 1;
+    } else {
+      const parsedStart = Number(m[1]);
+      const parsedEnd = m[2] === "" ? totalBytes - 1 : Number(m[2]);
+      if (
+        !Number.isInteger(parsedStart) ||
+        !Number.isInteger(parsedEnd) ||
+        parsedStart < 0 ||
+        parsedStart >= totalBytes ||
+        parsedEnd < parsedStart
+      ) {
+        return notSatisfiable();
+      }
+      rangeStart = parsedStart;
+      rangeEnd = Math.min(parsedEnd, totalBytes - 1);
+    }
+    hasRange = true;
+  }
+
   const chunkCount = Number(meta.chunk_count || 0);
+  const targetBytes = hasRange ? rangeEnd + 1 : totalBytes;
   const fullBytes = new Uint8Array(totalBytes);
   let writeOffset = 0;
   const pageSize = FEEDBACK_STEPS_UPLOADS_GRID.chunk_read_page_size;
 
-  for (let pageOffset = 0; pageOffset < chunkCount; pageOffset += pageSize) {
+  for (let pageOffset = 0; pageOffset < chunkCount && writeOffset < targetBytes; pageOffset += pageSize) {
     const pageRes = await db
       .prepare(
         "SELECT chunk_idx, chunk_b64 FROM herma_blob_chunks WHERE sha256_hash = ? ORDER BY chunk_idx ASC LIMIT ? OFFSET ?"
@@ -1829,7 +1881,23 @@ export async function handleBlobDownloadRequest(
       const slice = base64ToUint8(r.chunk_b64);
       fullBytes.set(slice, writeOffset);
       writeOffset += slice.byteLength;
+      if (writeOffset >= targetBytes) break;
     }
+  }
+
+  if (hasRange) {
+    const partialSlice = fullBytes.subarray(rangeStart, rangeEnd + 1);
+    return {
+      isBinaryResponse: true,
+      response: new Response(partialSlice, {
+        status: FEEDBACK_STEPS_UPLOADS_GRID.http_partial_content,
+        headers: {
+          ...headers,
+          "content-length": String(partialSlice.byteLength),
+          "content-range": `bytes ${rangeStart}-${rangeEnd}/${totalBytes}`,
+        },
+      }),
+    };
   }
 
   return {

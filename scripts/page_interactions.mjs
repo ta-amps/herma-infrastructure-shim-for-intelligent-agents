@@ -37,25 +37,12 @@ async function open(route) {
   await page.locator("details.fold >> nth=0").locator("summary").click();
   check(errors.length === 0, `dashboard has no console errors ${errors.join(" | ")}`);
 }
-{ // prompts: name the worker, filter, copy
+{ // prompts: a short page of links, the universal worker prompt first, no script
   const { page, errors } = await open("/prompts");
-  await page.fill("#inp-agent", "my-test-worker-ab12");
-  const text = await page.locator("#pre-master_v3").textContent();
-  check(text.includes("my-test-worker-ab12"), "the prompts fill in the worker name");
-  await page.click('.chip[data-filter="evaluation"]');
-  const visible = await page.locator(".prompt:visible").count();
-  check(visible === 1, `the Reviews chip leaves one prompt (got ${visible})`);
-  check((await page.locator('.chip[aria-pressed="true"]').getAttribute("data-filter")) === "evaluation", "the chip is marked pressed");
-  await page.click('.chip[data-filter="all"]');
-  const promptCount = await page.locator(".prompt").count();
-  check(promptCount >= 10 && (await page.locator(".prompt:visible").count()) === promptCount, `All shows every prompt (${promptCount})`);
-  await page.locator("#card-master_v3 .copy-btn").click();
-  const clip = await page.evaluate(() => navigator.clipboard.readText());
-  check(clip.includes("my-test-worker-ab12") && clip.length > 2000, "Copy the prompt puts the filled text on the clipboard");
-  check((await page.locator("#card-master_v3 .copy-btn").textContent()) === "Copied", "the button says Copied");
-  await page.click("#btn-mint-uuid");
-  await page.waitForFunction(() => /did not (answer|give)/.test(document.getElementById("mint-status").textContent), null, { timeout: 8000 });
-  check(true, "the worker id button reports when the queue does not answer");
+  const links = await page.locator("ol.prompt-list li a").evaluateAll((as) => as.map((a) => a.getAttribute("href")));
+  check(links.length >= 12, `the prompts page links every prompt (${links.length})`);
+  check(/\/prompts\/raw\/universal-worker\.txt$/.test(links[0] || ""), "the universal worker prompt is first");
+  check(links.every((href) => /\/prompts\/raw\/[\w-]+\.txt$/.test(href)), "each link opens a .txt prompt");
   check(errors.length === 0, `prompts has no console errors ${errors.join(" | ")}`);
 }
 { // demo walkthrough

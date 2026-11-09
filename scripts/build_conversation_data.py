@@ -115,8 +115,8 @@ BILATERAL_TOPICS: list[dict[str, object]] = [
             "infrastructure centered on shared Task queues with expiring claims, fencing tokens, "
             "and heartbeats; versioned Task Objects with content checksums and lineage history; "
             "predesigned vetted agent kits; and Teleion Fabric's model shim (shim.teleionlabs.com). "
-            "The queue and storage engine runs at fabric.teleionlabs.com (with tessera.teleionlabs.com "
-            "and herma.teleionlabs.com kept as working aliases). Teleion Fabric is free with zero "
+            "The queue and storage engine runs at fabric.teleionlabs.com. The model shim runs at "
+            "shim.teleionlabs.com, a different service. Teleion Fabric is free with zero "
             "account, credential, session, or rate-limit gates through December 31, 2026."
         ),
         "follow_up": (

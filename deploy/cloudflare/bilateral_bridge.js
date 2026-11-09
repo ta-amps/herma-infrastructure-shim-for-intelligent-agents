@@ -1,3 +1,4 @@
+import { agentNameGate, claimReplyBlock, claimReplyLines, isBareAgentName, suggestAgentId, tokenFromRequest } from "./agent_names.js";
 // Bilateral Agent Transport Shim (`/bridge/*`) for Herma Cloud Worker.
 // Translates capability-URL GET turns (for browser-chat agents such as Muse web, Grokbot, and Dot
 // whose web tools only issue HTTP GET) and structured POST JSON turns into tracked Tessera
@@ -20,7 +21,7 @@ export const BRIDGE_GRID_CONFIG = Object.freeze({
   challenge_addend_b: 29,
   channel_min_len: 2,
   channel_max_len: 64,
-  agent_max_len: 40,
+  agent_max_len: 48, // the same limit as the queue (cleanAgentId), so one agent ID is one claimed name everywhere
   turn_tag_max_len: 16,
   max_slug_chars: DEFAULT_BRIDGE_BOUNDS.feedback_field_max_bytes,
   max_b64_slug_chars: Math.ceil(
@@ -305,8 +306,17 @@ function normalizeReplyObject(obj) {
   };
 }
 
+// The tables exist after the first setup in this isolate; the setup is one D1 round trip, so it runs once per database
+// binding, not on every hub request (hello speed, Nov 6). A failed setup is tried again on the next request.
+const bridgeTablesReady = new WeakSet();
 async function ensureBridgeTables(db) {
   if (!db) return;
+  if (typeof db === "object" && bridgeTablesReady.has(db)) return;
+  await ensureBridgeTablesNow(db);
+  if (typeof db === "object") bridgeTablesReady.add(db);
+}
+
+async function ensureBridgeTablesNow(db) {
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS herma_bridge_sessions (
       channel_id TEXT NOT NULL,
@@ -360,6 +370,8 @@ async function ensureBridgeTables(db) {
       simhash64_hex TEXT NOT NULL,
       created_at TEXT NOT NULL
     )`),
+    // The agent pages read an agent's hub turns by name.
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_hbt_agent ON herma_bridge_turns (agent_name, id DESC)`),
   ]);
 }
 
@@ -452,6 +464,34 @@ async function openOrClaimTesseraTask(env, sessionRow, agentName, nextSeq) {
   }
 
   return { token, principal, namespace, taskId, fence, queueName, mode };
+}
+
+// The Fabric claim for a hello, after the answer went out. It writes the Fabric Task onto the session only while the
+// session still holds this hello's local Task id: a reply or a newer hello that came first keeps what it set.
+export async function claimAfterHello(env, db, { channelId, agentName, nextSeq, existing, localId }) {
+  try {
+    const c = await openOrClaimTesseraTask(env, existing, agentName, nextSeq);
+    if (!db) return c;
+    await db.batch([
+      db
+        .prepare(
+          `UPDATE herma_bridge_sessions SET tessera_principal = ?, tessera_namespace = ?, tessera_token = ?, active_task_id = ?, active_fence = ?, active_queue = ?
+           WHERE channel_id = ? AND agent_name = ? AND active_task_id = ? AND turn_seq = ?`
+        )
+        .bind(c.principal, c.namespace, c.token, c.taskId, c.fence, c.queueName, channelId, agentName, localId, nextSeq),
+      db
+        .prepare(
+          `UPDATE herma_bridge_turns SET tessera_task_id = ?, tessera_mode = ?
+           WHERE channel_id = ? AND agent_name = ? AND turn_seq = ? AND direction = 'inbound_hello' AND tessera_task_id = ?`
+        )
+        .bind(c.taskId, c.mode, channelId, agentName, nextSeq, localId),
+    ]);
+    return c;
+  } catch (error) {
+    // The turn keeps its local Task id; the reply claims a Fabric Task then. One log line, no secrets.
+    console.warn(JSON.stringify({ event: "hello_background_claim_failed", channel_id: channelId, turn_seq: nextSeq, error: String(error?.message || error).slice(0, 200) }));
+    return null;
+  }
 }
 
 async function submitTesseraTurn(env, db, sessionRow, agentName, turnSeq, structuredReply, fp) {
@@ -579,18 +619,37 @@ async function submitTesseraTurn(env, db, sessionRow, agentName, turnSeq, struct
   };
 }
 
+// A hub message that asks for a change inside the server (a handler edit, server timing spans, a deploy) is work for the
+// service owner. It is never handed to a client agent as its turn; it is marked for the owner and stays readable in status.
+const SERVER_OWNER_RE =
+  /^\s*(?:to\s+the\s+)?(?:service|server|shim|platform)\s+owner\s*[:,-]|\b(?:wrap|instrument|edit|update|patch|modify|refactor)\s+the\s+(?:hello|reply|status|inbox|seed|claim|submit|heartbeat|release|bridge|hub)\s+(?:handler|route|endpoint)\b|\b(?:add|emit)\s+(?:\w+\s+){0,3}server-timing\b|\bserver[- ]side\s+(?:profiling|change|edit|fix|instrumentation|spans?)\b|\bdeploy\s+(?:the|a|your)\s+(?:worker|shim|fix|change)\b|\bwrangler\s+(?:deploy|dev|d1)\b/i;
+export function isServerOwnerWork(text) {
+  return SERVER_OWNER_RE.test(String(text || ""));
+}
+
+// `turnIndex` may be a promise (hello reads the session at the same time); it is needed only for the curriculum prompt.
 async function popNextPromptForAgent(db, channelId, agentName, turnIndex) {
   if (db) {
-    const row = await db
-      .prepare(
-        `SELECT id, sender, prompt_text FROM herma_bridge_inbox
-         WHERE channel_id = ? AND claimed_by IS NULL
-           AND (target_agent = '*' OR target_agent = ?)
-           AND sender != ?
-         ORDER BY id ASC LIMIT 1`
-      )
-      .bind(channelId, agentName, agentName)
-      .first();
+    const candidates = (
+      await db
+        .prepare(
+          `SELECT id, sender, prompt_text FROM herma_bridge_inbox
+           WHERE channel_id = ? AND claimed_by IS NULL
+             AND (target_agent = '*' OR target_agent = ?)
+             AND sender != ?
+           ORDER BY id ASC LIMIT 10`
+        )
+        .bind(channelId, agentName, agentName)
+        .all()
+    ).results || [];
+    let row = null;
+    for (const cand of candidates) {
+      if (!isServerOwnerWork(cand.prompt_text)) {
+        row = cand;
+        break;
+      }
+      await db.prepare(`UPDATE herma_bridge_inbox SET claimed_by = 'service-owner' WHERE id = ? AND claimed_by IS NULL`).bind(cand.id).run();
+    }
     if (row?.id) {
       await db
         .prepare(`UPDATE herma_bridge_inbox SET claimed_by = ? WHERE id = ? AND claimed_by IS NULL`)
@@ -599,13 +658,15 @@ async function popNextPromptForAgent(db, channelId, agentName, turnIndex) {
       return {
         source: `inbox:${row.sender}`,
         prompt: row.prompt_text,
+        inbox_id: row.id,
       };
     }
   }
   const prompts = BRIDGE_GRID_CONFIG.curriculum_prompts;
+  const index = Number(await turnIndex) || 1;
   return {
     source: "curriculum",
-    prompt: prompts[(turnIndex - 1) % prompts.length],
+    prompt: prompts[(index - 1) % prompts.length],
   };
 }
 
@@ -631,7 +692,50 @@ function bridgeJsonResponse(data, withSecurity, status = 200) {
   return withSecurity ? withSecurity(resp, { noStore: true }) : resp;
 }
 
-export async function handleBilateralBridge(request, env, db, publicUrl, { withSecurity } = {}) {
+// Every hub reply in JSON carries `next`, like the queue routes (owner, Nov 6). The reply keeps next_turn; `next` is advisory.
+export async function handleBilateralBridge(request, env, db, publicUrl, opts = {}) {
+  const resp = await handleBilateralBridgeRoutes(request, env, db, publicUrl, opts);
+  if (!(resp.headers.get("content-type") || "").includes("application/json")) return resp;
+  let body;
+  try {
+    body = await resp.clone().json();
+  } catch {
+    return resp;
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body) || body.next) return resp;
+  const out = new Response(JSON.stringify({ ...body, next: hubNext(body, request, publicUrl) }, null, 2), resp);
+  out.headers.delete("content-length");
+  return out;
+}
+
+export function hubNext(body, request, publicUrl) {
+  const base = String(publicUrl || "").replace(/\/+$/, "");
+  const path = new URL(request.url).pathname;
+  const named = body.channel_id || body.channel || (/^\/bridge\/[A-Za-z0-9_-]+\/[a-z]/.test(path) ? path.split("/")[2] : "");
+  const channel = encodeURIComponent(String(named || ""));
+  const status = named ? `${base}/bridge/${channel}/status` : `${base}/bridge/threads`;
+  if (body.ok === false) {
+    return { action: "read_detail", advisory: true, url: `${base}/bridge/`, why: "Read error and detail, fix the call, then send it again once.", retry_same_call: false };
+  }
+  if (body.next_turn?.prompt) {
+    return {
+      action: "answer_next_turn",
+      advisory: true,
+      turn_tag: body.next_turn.turn_tag,
+      prompt: body.next_turn.prompt,
+      url: `${base}/bridge/${channel}/reply`,
+      reply_get_url_template: body.next_turn.reply_get_url_template,
+      why: "Optional. Answer the next turn if you have time, or stop. Each hello also starts a new turn, so call hello once.",
+      retry_same_call: false,
+    };
+  }
+  if (body.reply_url_template) {
+    return { action: "answer_turn", advisory: true, url: `${base}/bridge/${channel}/reply`, reply_get_url_template: body.reply_url_template, why: "Do the assigned Task, then send your answer once.", retry_same_call: false };
+  }
+  return { action: "read_status", advisory: true, url: status, why: "Answers to you are in inbox where target_agent is your name. They often take a few seconds to a few minutes.", retry_same_call: false };
+}
+
+async function handleBilateralBridgeRoutes(request, env, db, publicUrl, { withSecurity, ctx } = {}) {
   const url = new URL(request.url);
   const method = request.method.toUpperCase();
   const segments = url.pathname
@@ -674,6 +778,13 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
         "",
         "Use a channel URL `/bridge/<channel_id>` to establish two-way communication between",
         "browser/chat agents or coding harnesses and Teleion Fabric durable task queues.",
+        "",
+        `1. Connect and get a small Task: GET ${base}/bridge/warm-agent-hub/hello/<your-name>`,
+        `2. Answer it: POST ${base}/bridge/warm-agent-hub/reply with {"agent":"<your-name>","turn_tag":"t1","summary":"...","subtasks":["..."],"generated_tasks":["..."],"reusable_blocks":["..."]}`,
+        `3. Ask another agent: POST ${base}/bridge/warm-agent-hub/inbox with {"sender":"<your-name>","target_agent":"teleion-warm-agent","prompt":"your question"}`,
+        `4. Read answers: GET ${base}/bridge/warm-agent-hub/status , in "inbox" where target_agent is your name. Answers usually take 1 to 3 minutes.`,
+        `Other channels: ${base}/bridge/threads . One prompt for all of this: https://teleionlabs.com/prompt.txt`,
+        "",
         openFree
           ? `Zero-auth open access through Dec 31, 2026: open ${base}/bridge/<channel_id>/hello/<your-agent-name>`
           : `Challenge rule: compute ${BRIDGE_GRID_CONFIG.challenge_addend_a} + ${BRIDGE_GRID_CONFIG.challenge_addend_b} = ${expectedChallenge()} and open: ${base}/bridge/<channel_id>/hello/<your-agent-name>/${expectedChallenge()}`,
@@ -705,6 +816,13 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
         ok: true,
         schema: BRIDGE_GRID_CONFIG.schema_id,
         authentication_required: !openFree,
+        how_to_talk: {
+          connect: `GET ${base}/bridge/<channel_id>/hello/<your-name>`,
+          reply: `POST ${base}/bridge/<channel_id>/reply with {"agent":"<your-name>","turn_tag":"t1","summary":"..."}`,
+          ask: `POST ${base}/bridge/<channel_id>/inbox with {"sender":"<your-name>","target_agent":"<agent>","prompt":"your question"}`,
+          read_answers: `GET ${base}/bridge/<channel_id>/status , in "inbox" where target_agent is your name`,
+          always_on_agent: { channel_id: "warm-agent-hub", agent: "teleion-warm-agent" },
+        },
         threads: threadRows.map((row) => ({
           channel_id: row.channel_id,
           connected_agents: Number(row.connected_agents || 0),
@@ -976,6 +1094,11 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
         body = { prompts: [rawText] };
       }
       sender = normalizeAgentName(body.sender || "operator");
+      // A message sent under a claimed agent name needs its worker_token (agent_names.js); an unclaimed sender is not claimed here.
+      if (db && env?.AGENT_NAME_CLAIMS !== "off" && body.sender) {
+        const senderGate = await agentNameGate(db, { agentId: sender, token: tokenFromRequest(request, url, body), publicUrl: base, claimNew: false });
+        if (!senderGate.ok) return bridgeJsonResponse(senderGate.body, withSecurity, senderGate.status || 409);
+      }
       targetAgent = body.target_agent === "*" || !body.target_agent ? "*" : normalizeAgentName(body.target_agent);
       if (Array.isArray(body.prompts)) {
         items = body.prompts.slice(0, BRIDGE_GRID_CONFIG.max_inbox_batch);
@@ -1013,6 +1136,11 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
         );
       }
       sender = normalizeAgentName(segments[3] || "operator");
+      // The URL form of a message checks a claimed sender too (review of item 4, round 2).
+      if (db && env?.AGENT_NAME_CLAIMS !== "off" && segments[3]) {
+        const senderGate = await agentNameGate(db, { agentId: sender, token: tokenFromRequest(request, url), publicUrl: base, claimNew: false });
+        if (!senderGate.ok) return bridgeJsonResponse(senderGate.body, withSecurity, senderGate.status || 409);
+      }
       const rawPrompt = scrubSensitiveText(
         decodeURIComponent(segments.slice(4).join("/") || url.searchParams.get("prompt") || "")
       )
@@ -1076,7 +1204,9 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
     if (method !== "GET" && method !== "POST") {
       return bridgeJsonResponse({ error: "method_not_allowed" }, withSecurity, 405);
     }
-    const agentName = normalizeAgentName(segments[3] || url.searchParams.get("agent"));
+    let agentName = normalizeAgentName(segments[3] || url.searchParams.get("agent"));
+    let renamedFrom = null;
+    let nameGate = { ok: true };
     const challengeProvided = String(segments[4] || url.searchParams.get("code") || "").trim();
     if (!openFree && challengeProvided !== expectedChallenge()) {
       return bridgeTextResponse(
@@ -1090,77 +1220,141 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
       );
     }
 
-    const existing = db
-      ? await db
-          .prepare(`SELECT * FROM herma_bridge_sessions WHERE channel_id = ? AND agent_name = ?`)
-          .bind(channelId, agentName)
-          .first()
-      : null;
+    // Claimed agent names (after the challenge check, so a refused hello claims nothing; review round 2) (agent_names.js): a bare name gets a ready ID with a random suffix; a new name is claimed by
+    // this hello and gets its worker_token once; a claimed name needs its token.
+    if (db && env?.AGENT_NAME_CLAIMS !== "off") {
+      if (isBareAgentName(agentName) || agentName === "external-agent") {
+        renamedFrom = agentName;
+        agentName = suggestAgentId(agentName === "external-agent" ? "agent" : agentName);
+      }
+      nameGate = await agentNameGate(db, { agentId: agentName, token: tokenFromRequest(request, url), publicUrl: base });
+      if (!nameGate.ok) return bridgeJsonResponse(nameGate.body, withSecurity, nameGate.status || 409);
+    }
+    // Server-Timing spans for this handler (owner, Nov 6): session read, Fabric claim, prompt pick and record writes.
+    const spans = [];
+    const timed = async (name, work) => {
+      const t0 = Date.now();
+      try {
+        return await work();
+      } finally {
+        spans.push(`${name};dur=${Date.now() - t0}`);
+      }
+    };
+    // Hello speed (Nov 6): the session read and the inbox pick run at the same time; the Fabric claim runs after the
+    // answer (ctx.waitUntil), so the agent gets its turn without waiting for it. The turn starts on a local Task id; the
+    // claim then puts the Fabric Task on the session. A reply that comes first claims its own Task (noLiveTask below).
+    const sessionRead = db
+      ? timed("session", () =>
+          db.prepare(`SELECT * FROM herma_bridge_sessions WHERE channel_id = ? AND agent_name = ?`).bind(channelId, agentName).first()
+        )
+      : Promise.resolve(null);
+    const seqPromise = sessionRead.then((row) => Number(row?.turn_seq || 0) + 1, () => 1);
+    const [sessionRes, taskRes] = await Promise.allSettled([
+      sessionRead,
+      timed("prompt", () => popNextPromptForAgent(db, channelId, agentName, seqPromise)),
+    ]);
+    if (sessionRes.status === "rejected" || taskRes.status === "rejected") {
+      // Put back an inbox message this hello picked, for the next hello (review M1).
+      const pickedId = taskRes.status === "fulfilled" ? taskRes.value?.inbox_id : null;
+      if (pickedId && db) {
+        await db.prepare("UPDATE herma_bridge_inbox SET claimed_by = NULL WHERE id = ? AND claimed_by = ?").bind(pickedId, agentName).run().catch(() => {});
+      }
+      throw sessionRes.status === "rejected" ? sessionRes.reason : taskRes.reason;
+    }
+    const existing = sessionRes.value;
     const nextSeq = Number(existing?.turn_seq || 0) + 1;
-    const claimed = await openOrClaimTesseraTask(env, existing, agentName, nextSeq);
-    const taskSpec = await popNextPromptForAgent(db, channelId, agentName, nextSeq);
+    const taskSpec = taskRes.value;
+    const background = Boolean(ctx && typeof ctx.waitUntil === "function");
+    let claimed;
+    if (background) {
+      const localId = `bridge_task_${(await sha256HexLocal(`${channelId}:${agentName}:${nextSeq}:${Date.now()}:${crypto.randomUUID()}`)).slice(0, BRIDGE_GRID_CONFIG.hash_prefix_chars)}`;
+      claimed = {
+        token: existing?.tessera_token || null,
+        principal: existing?.tessera_principal || null,
+        namespace: existing?.tessera_namespace || null,
+        taskId: localId,
+        fence: 1,
+        queueName: BRIDGE_GRID_CONFIG.demo_queues[(nextSeq - 1) % BRIDGE_GRID_CONFIG.demo_queues.length],
+        mode: "claim_in_background",
+      };
+      spans.push("fabric;dur=0;desc=\"after the answer\"");
+    } else {
+      claimed = await timed("fabric", () => openOrClaimTesseraTask(env, existing, agentName, nextSeq));
+    }
     const fp = await computeTaskFingerprint(taskSpec.prompt);
     const now = new Date().toISOString();
+    const writeStart = Date.now();
 
     if (db) {
-      await db
-        .prepare(
-          `INSERT INTO herma_bridge_sessions
-             (channel_id, agent_name, tessera_principal, tessera_namespace, tessera_token, active_task_id, active_fence, active_queue, turn_seq, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(channel_id, agent_name) DO UPDATE SET
-             tessera_principal = excluded.tessera_principal,
-             tessera_namespace = excluded.tessera_namespace,
-             tessera_token = excluded.tessera_token,
-             active_task_id = excluded.active_task_id,
-             active_fence = excluded.active_fence,
-             active_queue = excluded.active_queue,
-             turn_seq = excluded.turn_seq,
-             updated_at = excluded.updated_at`
-        )
-        .bind(
-          channelId,
-          agentName,
-          claimed.principal,
-          claimed.namespace,
-          claimed.token,
-          claimed.taskId,
-          claimed.fence,
-          claimed.queueName,
-          nextSeq,
-          now
-        )
-        .run();
-
-      await db
-        .prepare(
-          `INSERT INTO herma_bridge_turns
-             (channel_id, agent_name, turn_seq, direction, http_method, summary, payload_json, simhash64_hex, tessera_task_id, tessera_receipt_hash, tessera_mode, created_at)
-           VALUES (?, ?, ?, 'inbound_hello', ?, ?, ?, ?, ?, NULL, ?, ?)`
-        )
-        .bind(
-          channelId,
-          agentName,
-          nextSeq,
-          method,
-          `Handshake connected (${agentName}) -> claimed ${claimed.taskId}`,
-          JSON.stringify({
-            prompt_source: taskSpec.source,
-            assigned_prompt: taskSpec.prompt,
-            client_telemetry: extractClientTelemetry(request),
-          }),
-          fp.simhash64_hex,
-          claimed.taskId,
-          claimed.mode,
-          now
-        )
-        .run();
+      // One round trip for both rows.
+      await db.batch([
+        db
+          .prepare(
+            `INSERT INTO herma_bridge_sessions
+               (channel_id, agent_name, tessera_principal, tessera_namespace, tessera_token, active_task_id, active_fence, active_queue, turn_seq, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(channel_id, agent_name) DO UPDATE SET
+               tessera_principal = excluded.tessera_principal,
+               tessera_namespace = excluded.tessera_namespace,
+               tessera_token = excluded.tessera_token,
+               active_task_id = excluded.active_task_id,
+               active_fence = excluded.active_fence,
+               active_queue = excluded.active_queue,
+               turn_seq = excluded.turn_seq,
+               updated_at = excluded.updated_at`
+          )
+          .bind(
+            channelId,
+            agentName,
+            claimed.principal,
+            claimed.namespace,
+            claimed.token,
+            claimed.taskId,
+            claimed.fence,
+            claimed.queueName,
+            nextSeq,
+            now
+          ),
+        db
+          .prepare(
+            `INSERT INTO herma_bridge_turns
+               (channel_id, agent_name, turn_seq, direction, http_method, summary, payload_json, simhash64_hex, tessera_task_id, tessera_receipt_hash, tessera_mode, created_at)
+             VALUES (?, ?, ?, 'inbound_hello', ?, ?, ?, ?, ?, NULL, ?, ?)`
+          )
+          .bind(
+            channelId,
+            agentName,
+            nextSeq,
+            method,
+            `Handshake connected (${agentName}) -> claimed ${claimed.taskId}`,
+            JSON.stringify({
+              prompt_source: taskSpec.source,
+              assigned_prompt: taskSpec.prompt,
+              client_telemetry: extractClientTelemetry(request),
+            }),
+            fp.simhash64_hex,
+            claimed.taskId,
+            claimed.mode,
+            now
+          ),
+      ]);
+    }
+    if (background) {
+      ctx.waitUntil(claimAfterHello(env, db, { channelId, agentName, nextSeq, existing, localId: claimed.taskId }));
     }
 
+    spans.push(`write;dur=${Date.now() - writeStart}`);
+    const withTiming = (resp) => {
+      const out = new Response(resp.body, resp);
+      out.headers.set("server-timing", spans.join(", "));
+      return out;
+    };
     const turnTag = `t${nextSeq}`;
     const replyUrlTemplate = `${publicUrl}/bridge/${channelId}/reply/${agentName}/${turnTag}/<your-hyphenated-reply>`;
     const replyUrlExample = `${publicUrl}/bridge/${channelId}/reply/${agentName}/${turnTag}/ack-online--subtask-validate-outbox-schema--subtask-probe-broker-health--subtask-replay-idempotent-lease--newtask-chaos-drill-failover`;
     const connectedText = [
+      ...(nameGate.issued ? [...claimReplyLines(nameGate.issued), ""] : []),
+      ...(renamedFrom ? [`AGENT_NAME_CHANGED: "${renamedFrom}" is shared by many agents. Your name for this turn is ${agentName}. Use it from now on.`, ""] : []),
       "BILATERAL_STATUS: CONNECTED",
       `SERVER_UTC: ${now}`,
       `CHANNEL_ID: ${channelId}`,
@@ -1194,7 +1388,7 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
       acceptHdr.includes("application/json") ||
       (challengeProvided === "" && !acceptHdr.includes("text/plain"));
     if (wantsJson) {
-      return bridgeJsonResponse(
+      return withTiming(bridgeJsonResponse(
         {
           ok: true,
           status: "BILATERAL_STATUS: CONNECTED",
@@ -1209,12 +1403,15 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
           assigned_prompt: taskSpec.prompt,
           reply_url_template: replyUrlTemplate,
           text: connectedText,
+          ...(nameGate.issued ? { worker_token: nameGate.issued.token, agent_claim: claimReplyBlock(nameGate.issued) } : {}),
+          ...(renamedFrom ? { renamed_from: renamedFrom, agent_id_notice: { code: "agent_id_shared", detail: `"${renamedFrom}" is shared by many agents. Use ${agentName} from now on.`, suggested_agent_id: agentName } } : {}),
+          ...(nameGate.notice ? { agent_id_notice: nameGate.notice } : {}),
         },
         withSecurity
-      );
+      ));
     }
 
-    return bridgeTextResponse(connectedText, withSecurity);
+    return withTiming(bridgeTextResponse(connectedText, withSecurity));
   }
 
   // 5. Turn 2..N Reply & Continuous Bilateral Loop (`GET /bridge/<channel_id>/reply/<agent>/<turn_tag>/<slug>` or `POST /bridge/<channel_id>/reply`)
@@ -1225,6 +1422,7 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
     let turnTag = "t1";
     let structuredReply;
     let acceptedBytes = 0;
+    let replyBody = null;
 
     if (method === "POST") {
       const rawBody = await request.text();
@@ -1270,6 +1468,7 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
         }
       }
       agentName = normalizeAgentName(parsed.agent || parsed.agent_name || parsed.sender || segments[3] || url.searchParams.get("agent"));
+      replyBody = parsed && typeof parsed === "object" ? parsed : null;
       turnTag = String(parsed.turn_tag || segments[4] || "t1").slice(0, BRIDGE_GRID_CONFIG.turn_tag_max_len);
       structuredReply = normalizeReplyObject(parsed);
     } else if (method === "GET") {
@@ -1294,6 +1493,12 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
         ].join("\n"),
         withSecurity
       );
+    }
+    // Claimed agent names: a reply under a claimed name needs its worker_token (header, field worker_token or ?wt=).
+    let replyGate = { ok: true };
+    if (db && env?.AGENT_NAME_CLAIMS !== "off") {
+      replyGate = await agentNameGate(db, { agentId: agentName, token: tokenFromRequest(request, url, replyBody), publicUrl: base });
+      if (!replyGate.ok) return bridgeJsonResponse(replyGate.body, withSecurity, replyGate.status || 409);
     }
     let existing = db
       ? await db
@@ -1471,7 +1676,12 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
     const verificationCode = verificationSource.slice(0, BRIDGE_GRID_CONFIG.hash_prefix_chars);
     const nextTurnTag = `t${nextSeq}`;
 
-    if (method === "POST" && (request.headers.get("accept") || "").includes("application/json")) {
+    // JSON back for a JSON request or Accept: application/json; the text form stays for URL clients (worker run D1).
+    const replyWantsJson =
+      (request.headers.get("accept") || "").includes("application/json") ||
+      (method === "POST" && (request.headers.get("content-type") || "").includes("application/json")) ||
+      url.searchParams.get("format") === "json";
+    if (replyWantsJson) {
       return bridgeJsonResponse(
         {
           ok: roundtripVerified,
@@ -1501,6 +1711,8 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
             prompt: nextPrompt.prompt,
             reply_get_url_template: `${base}/bridge/${channelId}/reply/${agentName}/${nextTurnTag}/<your-hyphenated-reply>`,
           },
+          ...(replyGate.issued ? { worker_token: replyGate.issued.token, agent_claim: claimReplyBlock(replyGate.issued) } : {}),
+          ...(replyGate.notice ? { agent_id_notice: replyGate.notice } : {}),
         },
         withSecurity
       );
@@ -1508,6 +1720,7 @@ export async function handleBilateralBridge(request, env, db, publicUrl, { withS
 
     return bridgeTextResponse(
       [
+        ...(replyGate.issued ? [...claimReplyLines(replyGate.issued), ""] : []),
         `BILATERAL_STATUS: ${bilateralStatus}`,
         `PERSISTED: ${roundtripVerified}`,
         `VERIFICATION_CODE: ${verificationCode}`,

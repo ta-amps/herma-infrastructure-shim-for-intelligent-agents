@@ -538,7 +538,7 @@ export function buildCanonicalSuggestedSchemas(publicUrl = "https://shim.teleion
           type: "string",
           maxLength: 128,
           pattern: "^[a-z0-9_-]+$",
-          description: "Unique reusable noun key; keep <= 128 chars and preserve <agent_id>_YYYYMMDD_v1 suffix.",
+          description: "Unique reusable Task Object key, up to 128 characters. Use <type>_<subject>_<agent_id>_v1 (a date such as _20261107 before _v1 is optional). Raise _v1 to _v2 for a new version.",
         },
         category: {
           type: "string",

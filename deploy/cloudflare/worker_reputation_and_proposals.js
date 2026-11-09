@@ -261,6 +261,8 @@ export async function ensureReputationAndProposalsSchema(db) {
       created_at TEXT NOT NULL
     )`,
     `CREATE INDEX IF NOT EXISTS idx_herma_attempt_task ON herma_task_attempt_ledger(task_id, outcome)`,
+    // The agent pages read an agent's give-backs by name.
+    `CREATE INDEX IF NOT EXISTS idx_herma_attempt_agent ON herma_task_attempt_ledger (agent_id, id DESC)`,
     `CREATE TABLE IF NOT EXISTS herma_worker_cred_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       event_key TEXT NOT NULL UNIQUE,

@@ -8,7 +8,7 @@ async function callGateway(path, init = {}) {
 }
 
 describe("prioritized durable task queue gateway (/q/*)", () => {
-  it("hides infra_private tasks from public workers while prioritizing ngo_priority first", async () => {
+  it("hides infra_private tasks from public workers while prioritizing public_general frontier tasks by default and honoring priority_regime=ngo_first", async () => {
     const pulseRes = await callGateway("/q/pulse");
     expect(pulseRes.status).toBe(200);
     const pulse = await pulseRes.json();
@@ -24,13 +24,21 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     const forbidRes = await callGateway("/q/claim/muse?tier=infra_private&format=json");
     expect(forbidRes.status).toBe(403);
 
-    // Public worker claiming default receives highest-priority NGO task first
+    // Public worker claiming default receives highest-priority public_general frontier task first (non-review)
     const claimRes = await callGateway("/q/claim/muse?format=json");
     expect(claimRes.status).toBe(200);
     const claimJson = await claimRes.json();
-    expect(claimJson.lease.tier).toBe("ngo_priority");
-    expect(claimJson.lease.visibility).toBe("public_ngo");
-  });
+    expect(claimJson.lease.tier).toBe("public_general");
+    expect(claimJson.lease.visibility).toBe("public_commons");
+    expect(String(claimJson.lease.title || "").toLowerCase().startsWith("review:")).toBe(false);
+
+    // Explicit priority_regime=ngo_first still claims highest-priority NGO task first
+    const ngoClaimRes = await callGateway("/q/claim/muse?priority_regime=ngo_first&format=json");
+    expect(ngoClaimRes.status).toBe(200);
+    const ngoClaimJson = await ngoClaimRes.json();
+    expect(ngoClaimJson.lease.tier).toBe("ngo_priority");
+    expect(ngoClaimJson.lease.visibility).toBe("public_ngo");
+  }, 60000);
 
   it("persists task_objects and enqueues deferred branch verbs over both GET and POST while blocking public infra writes", async () => {
     const claimFirstRes = await callGateway("/q/claim/muse?format=json");
@@ -272,7 +280,7 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     expect(promptsPageRes.headers.get("content-security-policy")).toContain("script-src 'self'");
     const promptsHtml = await promptsPageRes.text();
     expect(promptsHtml).toContain("<h1>Prompts for your agent</h1>");
-    expect(promptsHtml).toContain('<script src="/q/prompts.js" defer></script>');
+    expect(promptsHtml).toContain("/prompts/raw/universal-worker.txt"); // the short page has links only, and no script
 
     const promptsJsRes = await callGateway("/q/prompts.js");
     expect(promptsJsRes.status).toBe(200);
@@ -751,7 +759,7 @@ describe("prioritized durable task queue gateway (/q/*)", () => {
     expect(codexCardRes.status).toBe(200);
     const codexCardTxt = await codexCardRes.text();
     expect(codexCardTxt).toContain("codex-gpt-astra-09");
-    expect(codexCardTxt).toContain("herma-worker/6.3");
+    expect(codexCardTxt).toContain("fabric-worker/6.3");
     expect(codexCardTxt).toContain("batch_size");
   });
 });

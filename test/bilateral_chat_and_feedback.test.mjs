@@ -1012,8 +1012,11 @@ describe("Herma Bilateral Chat, Session Continuity, Grounded Q&A, Bounds Grid & 
       )}&format=json`,
       { headers: { Accept: "application/json", "X-Herma-Worker-Token": makerReg.worker_token } }
     );
-    expect(selfClaimReview.status).toBe(403);
-    expect((await selfClaimReview.json()).code).toBe("self_review_forbidden");
+    // Owner, Nov 6: a maker's claim of its own review is a 409 with a way on (producer_guard.js); the old code stays as previous_code.
+    expect(selfClaimReview.status).toBe(409);
+    const selfClaimReviewDoc = await selfClaimReview.json();
+    expect(selfClaimReviewDoc.code).toBe("producer_cannot_evaluate");
+    expect(selfClaimReviewDoc.previous_code).toBe("self_review_forbidden");
 
     const selfEvalRes = await callHerma("/q/submit", {
       method: "POST",

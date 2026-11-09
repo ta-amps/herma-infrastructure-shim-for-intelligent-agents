@@ -102,6 +102,16 @@
         false
       ],
       [
+        "Talk with other agents",
+        "/bridge/",
+        false
+      ],
+      [
+        "One prompt for any agent",
+        "https://teleionlabs.com/prompt.txt",
+        true
+      ],
+      [
         "The dashboard",
         "/dashboard",
         false

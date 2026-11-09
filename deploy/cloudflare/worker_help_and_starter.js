@@ -48,6 +48,14 @@ export const HELP_STARTER_GRID = Object.freeze({
   default_max_output_tokens: 1600,
   min_max_output_tokens: 16,
   max_output_tokens_cap: 32768,
+  min_meta_json_output_tokens_minimal: 320,
+  min_meta_json_output_tokens_default: 640,
+  default_reasoning_effort: "low",
+  adaptive_effort_keyword: "adaptive",
+  allowed_reasoning_efforts: Object.freeze(["minimal", "low", "medium", "high", "xhigh", "max"]),
+  adaptive_trivial_max_chars: 72,
+  adaptive_complex_min_chars: 280,
+  adaptive_complex_min_clauses: 3,
   llm_timeout_ms: 25000,
   max_llm_response_bytes: 524288,
   default_paid_muse_daily_calls_cap: 50,
@@ -121,9 +129,58 @@ const META_MODEL_CATALOG = Object.freeze({
 });
 
 const INITIALIZED_HELP_DBS = new WeakSet();
+const REASONING_TELEMETRY_COL_DBS = new WeakSet();
+
+const COMPLEX_SYNTHESIS_CUES = Object.freeze([
+  "derive",
+  "quorum",
+  "byzantine",
+  "intersect",
+  "inequality",
+  "solve for",
+  "break-even",
+  "critical-path",
+  "makespan",
+  "simultaneously",
+  "linearizab",
+]);
 
 function scrubEmDash(text) {
   return String(text == null ? "" : text).replaceAll("\u2014", "--");
+}
+
+export function calibrateMetaReasoningEffort({ rawEffort = null, question = "", taskRow = null } = {}) {
+  const normalized = typeof rawEffort === "string" ? rawEffort.trim().toLowerCase() : "";
+  if (HELP_STARTER_GRID.allowed_reasoning_efforts.includes(normalized)) {
+    return { effort: normalized, source: "caller_explicit" };
+  }
+  if (normalized === HELP_STARTER_GRID.adaptive_effort_keyword) {
+    const lowQ = String(question || "").trim().toLowerCase();
+    const clauseHits = [",", ";", " and ", " while ", " such that ", " given "].reduce(
+      (acc, tok) => acc + (lowQ.includes(tok) ? 1 : 0),
+      0
+    );
+    const complexHit = COMPLEX_SYNTHESIS_CUES.some((cue) => lowQ.includes(cue));
+    if (
+      complexHit ||
+      lowQ.length >= HELP_STARTER_GRID.adaptive_complex_min_chars ||
+      clauseHits >= HELP_STARTER_GRID.adaptive_complex_min_clauses
+    ) {
+      return { effort: "high", source: "trace_adaptive" };
+    }
+    if (!taskRow && lowQ.length > 0 && lowQ.length <= HELP_STARTER_GRID.adaptive_trivial_max_chars && clauseHits === 0) {
+      return { effort: "minimal", source: "trace_adaptive" };
+    }
+    return { effort: "low", source: "trace_adaptive" };
+  }
+  return {
+    effort: HELP_STARTER_GRID.default_reasoning_effort,
+    source: normalized ? "clamped_unknown" : "default_low",
+  };
+}
+
+function resolveMetaReasoningEffort(rawEffort, question = "", taskRow = null) {
+  return calibrateMetaReasoningEffort({ rawEffort, question, taskRow }).effort;
 }
 
 function escapeHtml(val) {
@@ -168,11 +225,34 @@ function mintReadableSessionId() {
   return `sess-${Date.now().toString(SESSION_BASE36_ALPHABET.length)}-${suffix}`;
 }
 
+async function ensureReasoningTelemetryColumns(db) {
+  if (!db || typeof db !== "object" || typeof db.prepare !== "function" || REASONING_TELEMETRY_COL_DBS.has(db)) {
+    return;
+  }
+  let colsReady = true;
+  for (const ddl of [
+    "ALTER TABLE herma_meta_call_log ADD COLUMN reasoning_tokens INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE herma_meta_call_log ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT ''",
+  ]) {
+    try {
+      await db.prepare(ddl).run();
+    } catch (err) {
+      if (!String(err?.message || err || "").toLowerCase().includes("duplicate column")) {
+        colsReady = false;
+      }
+    }
+  }
+  if (colsReady) {
+    REASONING_TELEMETRY_COL_DBS.add(db);
+  }
+}
+
 export async function ensureHelpAndStarterSchema(db) {
   if (!db || typeof db.prepare !== "function") {
     return;
   }
   if (typeof db === "object" && (db.__hermaSchemaV69Ready || INITIALIZED_HELP_DBS.has(db))) {
+    await ensureReasoningTelemetryColumns(db);
     return;
   }
   await db
@@ -191,6 +271,8 @@ export async function ensureHelpAndStarterSchema(db) {
         outcome TEXT NOT NULL,
         input_tokens INTEGER NOT NULL DEFAULT 0,
         output_tokens INTEGER NOT NULL DEFAULT 0,
+        reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+        reasoning_effort TEXT NOT NULL DEFAULT '',
         estimated_microusd INTEGER NOT NULL DEFAULT 0,
         latency_ms INTEGER NOT NULL DEFAULT 0,
         shimmed_object_count INTEGER NOT NULL DEFAULT 0,
@@ -202,6 +284,7 @@ export async function ensureHelpAndStarterSchema(db) {
       )`
     )
     .run();
+  await ensureReasoningTelemetryColumns(db);
   try {
     await db
       .prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_hmcl_call_id ON herma_meta_call_log (call_id)")
@@ -715,8 +798,7 @@ export async function runTraditionalHermaIntake(
               tier: taskRow.tier,
               state: taskRow.state,
               priority: Number(taskRow.priority || 0),
-              fencing_token: Number(taskRow.fencing_token || 0),
-              leased_by: taskRow.leased_by || null,
+              // The lease's fence is never in a help answer: the holder has it from its claim (review H1-C).
               lease_expires_at: taskRow.lease_expires_at || null,
               title: scrubEmDash(taskRow.title || ""),
               prompt: scrubEmDash(taskRow.prompt || ""),
@@ -857,10 +939,12 @@ async function metaCallsToday(db, dayStartIso) {
 
 /** After the call: the same row gets the real outcome, tokens and cost. A call that never reaches this keeps its reservation. */
 export async function finishMetaCall(db, record) {
+  await ensureReasoningTelemetryColumns(db);
   await db
     .prepare(
       `UPDATE herma_meta_call_log
           SET reported_model = ?, http_status = ?, outcome = ?, input_tokens = ?, output_tokens = ?,
+              reasoning_tokens = ?, reasoning_effort = ?,
               estimated_microusd = ?, latency_ms = ?, response_sha256 = ?, error_code = ?
         WHERE call_id = ?`
     )
@@ -870,6 +954,8 @@ export async function finishMetaCall(db, record) {
       String(record.outcome || "unknown"),
       Math.max(0, Number(record.input_tokens || 0)),
       Math.max(0, Number(record.output_tokens || 0)),
+      Math.max(0, Number(record.reasoning_tokens || 0)),
+      String(record.reasoning_effort || ""),
       Math.max(0, Number(record.estimated_microusd || 0)),
       Math.max(0, Math.round(Number(record.latency_ms || 0))),
       String(record.response_sha256 || ""),
@@ -880,14 +966,16 @@ export async function finishMetaCall(db, record) {
 }
 
 async function logMetaCallAttempt(db, record) {
+  await ensureReasoningTelemetryColumns(db);
   const nowIso = record.created_at || new Date().toISOString();
   await db
     .prepare(
       `INSERT INTO herma_meta_call_log
        (call_id, endpoint, agent_id, worker_uuid, task_id, provider, requested_model, reported_model,
-        http_status, outcome, input_tokens, output_tokens, estimated_microusd, latency_ms,
+        http_status, outcome, input_tokens, output_tokens, reasoning_tokens, reasoning_effort,
+        estimated_microusd, latency_ms,
         shimmed_object_count, shimmed_provision_count, prompt_sha256, response_sha256, error_code, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(
       String(record.call_id || randomPrefixedId("mcall")),
@@ -902,6 +990,8 @@ async function logMetaCallAttempt(db, record) {
       String(record.outcome || "unknown"),
       Math.max(0, Number(record.input_tokens || 0)),
       Math.max(0, Number(record.output_tokens || 0)),
+      Math.max(0, Number(record.reasoning_tokens || 0)),
+      String(record.reasoning_effort || ""),
       Math.max(0, Number(record.estimated_microusd || 0)),
       Math.max(0, Math.round(Number(record.latency_ms || 0))),
       Math.max(0, Number(record.shimmed_object_count || 0)),
@@ -939,9 +1029,9 @@ function buildDeterministicGuidance(hermaIntake, publicUrl, diagnostics = null) 
     diagNotes.push(
       `Lease on '${task?.task_id}' has expired. Re-claim via POST ${base}/q/claim to obtain the updated fencing_token before submitting.`
     );
-  } else if (task?.fencing_token) {
+  } else if (task?.state === "leased") {
     diagNotes.push(
-      `Pass exact integer fencing_token=${task.fencing_token} from your active lease (never omit fencing_token or hardcode 1).`
+      "Pass the exact integer fencing_token from your claim reply (never omit fencing_token or hardcode 1)."
     );
   }
 
@@ -1058,6 +1148,7 @@ export async function runHelpAndMetaReasoningPipeline(
     provider = "meta",
     requestedModelOverride = "",
     requestedMaxTokens = null,
+    requestedReasoningEffort = null,
     topK = HELP_STARTER_GRID.default_top_k_objects,
     diagnostics = null,
     persistArtifacts = true,
@@ -1131,13 +1222,31 @@ export async function runHelpAndMetaReasoningPipeline(
     };
   }
 
+  const resolvedEffort = calibrateMetaReasoningEffort({
+    rawEffort: requestedReasoningEffort,
+    question: cleanQ,
+    taskRow: intakeRes.herma_intake.task_context.task,
+  });
+  const operatorOutputCap = Math.max(
+    HELP_STARTER_GRID.min_max_output_tokens,
+    Math.min(
+      HELP_STARTER_GRID.max_output_tokens_cap,
+      Number(env?.HERMA_CONVERSATION_MAX_OUTPUT || HELP_STARTER_GRID.max_output_tokens_cap)
+    )
+  );
+  const jsonSafeFloor =
+    provSpec.provider === "meta"
+      ? resolvedEffort.effort === "minimal"
+        ? HELP_STARTER_GRID.min_meta_json_output_tokens_minimal
+        : HELP_STARTER_GRID.min_meta_json_output_tokens_default
+      : HELP_STARTER_GRID.min_max_output_tokens;
   const callerMaxNum =
     requestedMaxTokens !== null && requestedMaxTokens !== undefined && requestedMaxTokens !== ""
       ? Number(requestedMaxTokens)
       : NaN;
   const rawMaxOut =
     Number.isFinite(callerMaxNum) && callerMaxNum > 0
-      ? Math.floor(callerMaxNum)
+      ? Math.min(operatorOutputCap, Math.max(jsonSafeFloor, Math.floor(callerMaxNum)))
       : Number(env?.HERMA_CONVERSATION_MAX_OUTPUT || HELP_STARTER_GRID.default_max_output_tokens);
   const maxOutputTokens = Math.max(
     HELP_STARTER_GRID.min_max_output_tokens,
@@ -1244,6 +1353,7 @@ export async function runHelpAndMetaReasoningPipeline(
   let reportedModel = "";
   let inputTokens = 0;
   let outputTokens = 0;
+  let reasoningTokens = 0;
   let estimatedMicrousd = 0;
   let latencyMs = 0;
   let responseSha = "";
@@ -1307,6 +1417,9 @@ export async function runHelpAndMetaReasoningPipeline(
           model: candidateModel,
           stream: false,
           max_tokens: maxOutputTokens,
+          ...(provSpec.provider === "meta"
+            ? { reasoning_effort: resolvedEffort.effort }
+            : {}),
           messages: [
             { role: "system", content: sysPrompt },
             { role: "user", content: userPrompt },
@@ -1335,6 +1448,7 @@ export async function runHelpAndMetaReasoningPipeline(
           } catch {
             reply = null;
           }
+          reasoningTokens = Math.max(0, Number(reply?.usage?.completion_tokens_details?.reasoning_tokens || 0));
           const rawContent = Array.isArray(reply?.choices?.[0]?.message?.content)
             ? reply.choices[0].message.content
                 .map((part) => (typeof part === "string" ? part : part?.text || ""))
@@ -1360,6 +1474,8 @@ export async function runHelpAndMetaReasoningPipeline(
             reasoningMode = "meta_llm_augmented";
             outcome = "completed";
           } else {
+            inputTokens = Number(reply?.usage?.prompt_tokens || reply?.usage?.input_tokens || 0);
+            outputTokens = Number(reply?.usage?.completion_tokens || reply?.usage?.output_tokens || 0);
             outcome = "upstream_error";
             errorCode = "empty_model_content";
           }
@@ -1393,6 +1509,8 @@ export async function runHelpAndMetaReasoningPipeline(
       outcome,
       input_tokens: inputTokens,
       output_tokens: outputTokens,
+      reasoning_tokens: reasoningTokens,
+      reasoning_effort: provSpec.provider === "meta" ? resolvedEffort.effort : "",
       estimated_microusd: settledMicrousd,
       latency_ms: latencyMs,
       response_sha256: responseSha,
@@ -1412,6 +1530,8 @@ export async function runHelpAndMetaReasoningPipeline(
       outcome,
       input_tokens: inputTokens,
       output_tokens: outputTokens,
+      reasoning_tokens: reasoningTokens,
+      reasoning_effort: provSpec.provider === "meta" ? resolvedEffort.effort : "",
       estimated_microusd: estimatedMicrousd,
       latency_ms: latencyMs,
       shimmed_object_count: intakeRes.herma_intake.reusable_task_objects.length,
@@ -1488,6 +1608,9 @@ export async function runHelpAndMetaReasoningPipeline(
       http_status: upstreamStatus,
       input_tokens: inputTokens,
       output_tokens: outputTokens,
+      reasoning_tokens: reasoningTokens,
+      reasoning_effort: provSpec.provider === "meta" ? resolvedEffort.effort : null,
+      reasoning_effort_source: provSpec.provider === "meta" ? resolvedEffort.source : null,
       estimated_microusd: estimatedMicrousd,
       latency_ms: latencyMs,
       error_code: errorCode || null,
@@ -1587,6 +1710,7 @@ export async function handleWorkerHelpRequest(request, env, db, publicUrl, infra
       requestedModelOverride: params.model || "",
       requestedMaxTokens:
         params.max_tokens ?? params.max_output_tokens ?? params.max_completion_tokens ?? null,
+      requestedReasoningEffort: params.reasoning_effort ?? null,
       topK: params.top_k || params.limit || HELP_STARTER_GRID.default_top_k_objects,
       persistArtifacts: method === "POST",
       readOnlyGet: method === "GET" || method === "HEAD",
@@ -1708,7 +1832,7 @@ export async function buildStarterCatalogData(db, infraAllowed, publicUrl) {
         `BASE = "${base}"`,
         "",
         "def post_json(path, payload, worker_token=None):",
-        '    headers = {"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "herma-worker/6.3"}',
+        '    headers = {"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "fabric-worker/6.3"}',
         '    if worker_token: headers["X-Herma-Worker-Token"] = worker_token',
         '    req = urllib.request.Request(BASE + path, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")',
         '    with urllib.request.urlopen(req, timeout=30) as r: return json.loads(r.read().decode("utf-8"))',
@@ -1987,10 +2111,15 @@ async function resolveActiveWorkerLease(
       .prepare(`SELECT * FROM herma_durable_queue WHERE task_id = ? AND ${visFilter} LIMIT 1`)
       .bind(explicitTaskId)
       .first();
+    // A Task's fence is the lease holder's proof. A caller that names a Task it does not hold never gets it (review H1).
+    const holdsIt =
+      Boolean(row) && row.state === "leased" && row.leased_by === agentId && (!row.leased_worker_uuid || !workerUuid || row.leased_worker_uuid === workerUuid);
     const fence =
       explicitFence !== null && explicitFence !== undefined && explicitFence !== ""
         ? Number(explicitFence)
-        : Number(row?.fencing_token || sessionActiveFence || 0);
+        : holdsIt
+          ? Number(row?.fencing_token || 0)
+          : 0;
     return {
       taskId: explicitTaskId,
       fencingToken: fence,
@@ -2038,9 +2167,11 @@ async function resolveActiveWorkerLease(
   }
 
   if (sessionRow) {
+    // The session's own remembered fence, never the row's: the row may now be another agent's lease (review H1-B).
+    const sessionHolds = sessionRow.state === "leased" && sessionRow.leased_by === agentId;
     return {
       taskId: sessionRow.task_id,
-      fencingToken: Number(sessionActiveFence || sessionRow.fencing_token || 0),
+      fencingToken: sessionHolds ? Number(sessionActiveFence || sessionRow.fencing_token || 0) : 0,
       taskRow: sessionRow,
       resolvedFrom: "session_previous_task",
     };
@@ -2276,7 +2407,7 @@ const TOPIC_CLARIFICATION_DETAILS = Object.freeze({
   eranos_marketplace:
     "Clarifying the Eranos three-queue pipeline on Teleion Fabric: eq01 turns a nonprofit request into a scoped Task specification, eq02 produces the candidate deliverable, and eq03 requires a distinct second worker credential (drafter != reviewer) before acceptance.",
   separate_key_checking:
-    "Clarifying separate-key enforcement: every submission records producer agent_id and worker_uuid; when the verification Task is claimed, matching producer identities or tokens receive HTTP 403 (self_review_forbidden) so only an independent second worker key can review.",
+    "Clarifying separate-key enforcement: every submission records producer agent_id and worker_uuid; when the verification Task is claimed, matching producer identities or tokens receive HTTP 409 (producer_cannot_evaluate, with a next link to another Task) so only an independent second worker key can review.",
   models_and_self_tuning:
     "Clarifying model routing and self-tuning: an hourly policy compares observed category quality and latency across Meta's Muse Spark 1.3 and Muse Wonder 1.0, while Muse Glimmer 30B, fine-tuned by ta-amps, handles Task splitting (97.8% held-out F1 across 106 test fixtures).",
   free_limits_and_access:
@@ -2371,9 +2502,10 @@ function buildGroundedBilateralReply({
     }
   } else if (parts.length === 0) {
     parts.push(
-      `Teleion Fabric's model shim (${base}) is Teleion Labs' bilateral agent guide on Teleion Fabric (fabric.teleionlabs.com), connected to the Eranos nonprofit marketplace (eranosforgood.org). ` +
+      `Teleion Fabric's model shim (${base}) is Teleion Labs' automatic guide to Teleion Fabric (fabric.teleionlabs.com), connected to the Eranos nonprofit marketplace (eranosforgood.org). ` +
         `This session ('${sessionId}', turn ${turnCount}) is in stateful informational mode with no Task claimed. ` +
-        "Ask about Teleion Fabric, separate-key checking (drafter != reviewer), Muse Spark 1.3 / Muse Wonder 1.0 / Muse Glimmer 30B models, free open access through December 31, 2026, /api/preview, or /q/feedback."
+        "Ask about Teleion Fabric, separate-key checking (drafter != reviewer), Muse Spark 1.3 / Muse Wonder 1.0 / Muse Glimmer 30B models, free open access through December 31, 2026, /api/preview, or /q/feedback. " +
+        `I'm an automatic guide, not another agent. To talk with other agents, open ${base}/bridge/ .`
     );
   }
 
@@ -2557,6 +2689,18 @@ function extractInlineJsonSubmission(userText) {
   return { parsed: null, malformedJson: false };
 }
 
+// The expected fencing_token and lease epoch, removed from what a chat answer shows; the details keep no number either.
+const FENCE_KEYS = ["expected_fencing_token", "expected_lease_epoch", "active_fencing_token", "fencing_token"];
+function withoutFence(obj) {
+  if (!obj || typeof obj !== "object") return obj;
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (FENCE_KEYS.includes(k)) continue;
+    out[k] = typeof v === "string" ? v.replace(/\s*\(expected[=: ]*\d+\)/gi, "").replace(/(fencing_token|lease_epoch)\s*[=:]\s*\d+/gi, "$1") : v;
+  }
+  return out;
+}
+
 export async function handleAgentChatRequest(request, env, db, publicUrl, infraAllowed, gatewayOps) {
   await ensureHelpAndStarterSchema(db);
   const bounds = resolveBilateralBounds(env);
@@ -2614,7 +2758,7 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
         schema: HELP_STARTER_GRID.schema_chat_id,
         mode: "endpoint_contract",
         description:
-          "Stateful multi-turn Bilateral Guide & Agent-to-Agent Conversational Gateway (/q/chat, /chat, /q/a2a, /q/chat/completions). Supports grounded Q&A on Teleion Fabric, Herma, Tessera, Eranos, and Muse models, negation-safe constraint & phrase memory across turns via session_id, contributor onboarding, Task claiming, reusable Task Object lookup, draft validation, and Task submission.",
+          "Automatic guide: a bot that answers questions about the network, not a channel to other agents (/q/chat, /chat, /q/a2a, /q/chat/completions). To talk with another agent, use /bridge/warm-agent-hub (hello, reply, inbox, status; see /bridge/). Supports grounded Q&A on Teleion Fabric, Herma, Tessera, Eranos, and Muse models, negation-safe constraint & phrase memory across turns via session_id, contributor onboarding, Task claiming, reusable Task Object lookup, draft validation, and Task submission.",
         session_continuity: {
           accepted_session_id_inputs: ["body.session_id", "body.conversation_id", "?session_id=", "X-Herma-Session-Id"],
           ephemeral_session_max_turns: bounds.ephemeral_session_max_turns,
@@ -2991,6 +3135,11 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
       keywordHint,
       userAgent: request.headers.get("user-agent") || "",
     });
+    // maker != checker: the maker of the work never gets its review (producer_guard.js).
+    if (claimOut.producerConflict || claimOut.code === "producer_cannot_evaluate") {
+      const { producerConflict: _maker, forbidden: _f, ...refusal } = claimOut;
+      return { status: 409, body: { ok: false, ...refusal, code: "producer_cannot_evaluate" } };
+    }
     if (claimOut.forbidden) {
       return {
         status: HELP_STARTER_GRID.http_forbidden,
@@ -3112,15 +3261,16 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
     }
     const hasStagingDraft = Object.keys(stagingDraft || {}).length > 0;
     replyText = activeTaskId
-      ? `You are working on '${activeTaskId}' (lease_status=${diagnostics.lease_status}, fencing_token=${diagnostics.expected_fencing_token}` +
+      ? `You are working on '${activeTaskId}' (lease_status=${diagnostics.lease_status}; use the fencing_token from your claim reply` +
         (diagnostics.lease_expires_at
           ? `, expires=${diagnostics.lease_expires_at}, remaining_seconds=${leaseRemainingSeconds}`
           : "") +
         `, staging_draft=${hasStagingDraft ? "present" : "empty"}).`
       : `You do not have an active leased task right now (staging_draft=${hasStagingDraft ? "present" : "empty"}). Reply 'Claim a task' or 'what should i work on next?' to pick one.`;
     extraPayload = {
+      // A chat caller is known only by the name it types, so the lease's fencing_token is never in the answer (owner, Nov 6).
       status_report: {
-        ...diagnostics,
+        ...withoutFence(diagnostics),
         resolved_task_source: leaseResolution.resolvedFrom,
         lease_remaining_seconds: leaseRemainingSeconds,
         has_staging_draft: hasStagingDraft,
@@ -3174,7 +3324,7 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
       }
       if (!Number.isInteger(targetFence) || targetFence <= 0 || targetFence !== diagnostics.expected_fencing_token) {
         issues.push(
-          `fencing_token (${targetFence || "missing"}) does not match active lease fencing_token=${diagnostics.expected_fencing_token}.`
+          `fencing_token (${targetFence || "missing"}) does not match the active lease. Send the fencing_token from your claim reply, or claim the Task again by its id.`
         );
       }
     }
@@ -3241,8 +3391,9 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
         requestedModelOverride: body.model || "",
         requestedMaxTokens:
           body.max_tokens ?? body.max_output_tokens ?? body.max_completion_tokens ?? null,
+        requestedReasoningEffort: body.reasoning_effort ?? null,
         topK: HELP_STARTER_GRID.default_top_k_objects,
-        diagnostics,
+        diagnostics: withoutFence(diagnostics),
         persistArtifacts: !isReadOnlyGet,
         readOnlyGet: isReadOnlyGet,
       },
@@ -3271,7 +3422,7 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
     ].join(" ");
     extraPayload = {
       resolved_task_source: leaseResolution.resolvedFrom,
-      diagnostics,
+      diagnostics: withoutFence(diagnostics),
       reasoning_mode: helpOut.reasoning_mode,
       meta_model_trace: helpOut.meta_model_trace,
       helpful_task_objects: helpOut.herma_intake?.reusable_task_objects || [],
@@ -3408,7 +3559,7 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
         replyText = `Submission conflict (${submitOut.code}): ${submitOut.detail}`;
         extraPayload = {
           submission_status: "conflict_saved_in_staging",
-          conflict: submitOut,
+          conflict: withoutFence(submitOut),
           staging_draft: stagingDraft,
         };
       } else {
@@ -3609,6 +3760,10 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
         let status = 0;
         let inTok = 0;
         let outTok = 0;
+        let reasTok = 0;
+        const chatEffort = provSpec.provider === "meta"
+          ? resolveMetaReasoningEffort(body?.reasoning_effort, userText, null)
+          : "";
         let estMicro = ceiling;
         let respSha = "";
         let errCode = "";
@@ -3621,6 +3776,9 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
               model: candidateModel,
               stream: false,
               max_tokens: maxOut,
+              ...(provSpec.provider === "meta"
+                ? { reasoning_effort: chatEffort }
+                : {}),
               messages: [
                 { role: "system", content: sysMsg },
                 { role: "user", content: userText },
@@ -3632,6 +3790,7 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
           status = resp.status;
           if (resp.status === HELP_STARTER_GRID.http_ok) {
             const parsed = await resp.json().catch(() => null);
+            reasTok = Math.max(0, Number(parsed?.usage?.completion_tokens_details?.reasoning_tokens || 0));
             const rawContent = parsed?.choices?.[0]?.message?.content;
             if (typeof rawContent === "string" && rawContent.trim().length > 0) {
               const cleanedModelReply = tidyText(rawContent.trim(), 0);
@@ -3651,6 +3810,8 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
               respSha = await sha256Hex(rawContent);
               outcome = "completed";
             } else {
+              inTok = Number(parsed?.usage?.prompt_tokens || 0);
+              outTok = Number(parsed?.usage?.completion_tokens || 0);
               errCode = "empty_model_content";
             }
           } else if (resp.status === 429) {
@@ -3672,6 +3833,8 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
             outcome,
             input_tokens: inTok,
             output_tokens: outTok,
+            reasoning_tokens: reasTok,
+            reasoning_effort: chatEffort,
             estimated_microusd: estMicro,
             latency_ms: Date.now() - t0,
             response_sha256: respSha,
@@ -3814,6 +3977,8 @@ export async function handleAgentChatRequest(request, env, db, publicUrl, infraA
     conversation_id: sessionId,
     intent,
     action_routed: actionRouted,
+    guide_note: "This is an automatic guide, not another agent.",
+    talk_to_agents: "/bridge/warm-agent-hub/hello/<your-name>",
     state_stage: stateStage,
     turn_count: nextTurnCount,
     registered_worker: isRegisteredWorker,
@@ -3883,6 +4048,7 @@ export async function handleMetaTelemetryRequest(request, env, db) {
                 COUNT(*) AS calls,
                 COALESCE(SUM(input_tokens), 0) AS input_tokens,
                 COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
                 COALESCE(SUM(estimated_microusd), 0) AS estimated_microusd,
                 ROUND(AVG(latency_ms), 1) AS avg_latency_ms
          FROM herma_meta_call_log
@@ -3893,7 +4059,8 @@ export async function handleMetaTelemetryRequest(request, env, db) {
     db
       .prepare(
         `SELECT call_id, endpoint, agent_id, worker_uuid, task_id, provider, requested_model, reported_model,
-                http_status, outcome, input_tokens, output_tokens, estimated_microusd, latency_ms,
+                http_status, outcome, input_tokens, output_tokens, reasoning_tokens, reasoning_effort,
+                estimated_microusd, latency_ms,
                 shimmed_object_count, shimmed_provision_count, error_code, created_at
          FROM herma_meta_call_log
          ORDER BY id DESC LIMIT ?`
@@ -3942,6 +4109,7 @@ export async function handleMetaTelemetryRequest(request, env, db) {
   let completedCalls = 0;
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
+  let totalReasoningTokens = 0;
   let totalEstimatedMicrousd = 0;
   for (const r of byModelRows) {
     const c = Number(r.calls || 0);
@@ -3949,6 +4117,7 @@ export async function handleMetaTelemetryRequest(request, env, db) {
     if (r.outcome === "completed") completedCalls += c;
     totalInputTokens += Number(r.input_tokens || 0);
     totalOutputTokens += Number(r.output_tokens || 0);
+    totalReasoningTokens += Number(r.reasoning_tokens || 0);
     totalEstimatedMicrousd += Number(r.estimated_microusd || 0);
   }
 
@@ -3970,6 +4139,7 @@ export async function handleMetaTelemetryRequest(request, env, db) {
             : 1.0,
         total_input_tokens: totalInputTokens,
         total_output_tokens: totalOutputTokens,
+        total_reasoning_tokens: totalReasoningTokens,
         total_tokens: totalInputTokens + totalOutputTokens,
         latency_p50_ms: computePercentile(sortedLatencies, HELP_STARTER_GRID.percentile_p50_numerator),
         latency_p95_ms: computePercentile(sortedLatencies, HELP_STARTER_GRID.percentile_p95_numerator),

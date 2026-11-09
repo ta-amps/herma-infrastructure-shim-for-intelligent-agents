@@ -55,6 +55,8 @@ describe("typed conversation in the Workers runtime", () => {
     const access = await (await http("/connect.json")).json();
     expect(access.work_conversations.enabled).toBe(true);
     expect(access.work_conversations.providers).toEqual(["meta", "openai", "anthropic", "openrouter"]);
+    expect(access.work_conversations.operator_funded_providers).toEqual(["meta"]);
+    expect(access.work_conversations.provider_note).toContain("almost any model");
     expect(access.work_conversations.schema_endpoint).toBe("/api/conversation-schema");
   });
   it("refuses a retired or unknown provider id like any other invalid turn", async () => {

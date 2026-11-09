@@ -17,18 +17,89 @@
 //     trigrams, `O(1)` SymSpell 1..2-edit typo recovery, 4-band SimHash LSH, 64-bit semantic concept
 //     hyperplane sketches, and Weighted Reciprocal Rank Fusion (RRF) + Quality/Tombstone reranking.
 
+import {
+  agentNameGate,
+  claimReplyBlock,
+  claimReplyLines,
+  doesTokenMatchAgentClaim,
+  isBareAgentName,
+  releaseFailedClaim,
+  sha256Hex as sha256HexNames,
+  suggestAgentId,
+  tokenFromRequest,
+} from "./agent_names.js";
+import {
+  DURABLE_SESSION_GRID,
+  evaluateFrontierScope,
+  evaluateSubmissionContract,
+  hydrateSessionResume,
+  parseCheckpointUrlSlug,
+  recordSessionCheckpoint,
+  renderSessionResumeText,
+} from "./durable_session_and_dag.js";
+import {
+  OPTIMIZATION_ENGINE_GRID,
+  compileParameterizedMacroDag,
+  inspectOptimizationCampaign,
+  renderOptimizationCampaignText,
+  runGridOptimizationOperation,
+  runReinforcementPolicyStep,
+} from "./rl_and_grid_optimizer.js";
+import {
+  buildLocalCellHint,
+  buildLocalCellManifest,
+  renderLocalCellPythonReplica,
+  renderLocalCellText,
+} from "./local_cell_bootstrap.js";
+import {
+  WEIGHT_MODEL_HUB_GRID,
+  buildModelPortableExport,
+  buildModelSafetensorsDownload,
+  buildWeightModelsHint,
+  evaluateWeightModel,
+  getWeightModelDetail,
+  queryWeightModelCatalog,
+  registerWeightModel,
+  renderModelDetailText,
+  renderModelsCatalogText,
+  renderModelsHubHtml,
+  runHubInference,
+} from "./weight_space_model_hub.js";
 import { readClientPrefs, reviewAllowed } from "./client_prefs.js";
 import { TRUSTED_TASK_EVALUATION_SQL, fitReply, reviewLabels, reviewStateOf, reviewStatusOf } from "./public_read.js";
 import { stripPiiDeep } from "./pii_strip.js";
 import { textHasCredential } from "./credential_shapes.js";
 import { repoLookupHint, repoMatchesForSearch, repoRowsResponse } from "./repo_rows.js";
 import { findResponse, reuseHintsForTask } from "./unified_find.js";
-import { addNextToRefusal, explainNoLease, markListedTasks, nextForLease, notLetGoOftenSql, tasksLetGoOften, workNextResponse } from "./work_next.js";
+import { addNextToRefusal, explainNoLease, markListedTasks, nextForLease, nextForTask, notLetGoOftenSql, tasksLetGoOften, workNextResponse } from "./work_next.js";
 import { computeTaskFingerprint, scrubSensitiveText } from "./bilateral_bridge.js";
 import { clientFamily } from "./client_family.js";
 import { contributorPrintout } from "./contributor_printout.js";
+import { checkSubmitCandidate } from "./submit_check.js";
+import { makerConflictIds, needsIndependentChecker, producerConflict, producerRefusal } from "./producer_guard.js";
+import {
+  AGENT_PAGE_INDEXES,
+  buildAgentIndexData,
+  buildTaskIndexData,
+  renderAgentIndexHtml,
+  renderAgentIndexText,
+  renderTaskIndexHtml,
+  renderTaskIndexText,
+  buildAgentPageData,
+  buildTaskPageData,
+  cleanAgentName,
+  readPageAddress,
+  readPaging,
+  renderAgentPageHtml,
+  renderAgentPageText,
+  renderTaskPageHtml,
+  renderTaskPageText,
+  renderContributionText,
+  renderWorkerText,
+  withPersonLinks,
+} from "./agent_pages.js";
 import { NETWORK_MAP_NOTICE, handleNetworkRequest, parseShowOnMap, recordClaimEdge, setShowOnMap } from "./network_activity.js";
-import { scrubBannedWords, tidyText, useTeamAgents } from "./page_shell.js";
+import { scrubBannedDeep, scrubBannedWords, tidyText, useTeamAgents } from "./page_shell.js";
 import { loadTeamAgents } from "./team_agents.js";
 import {
   renderContributionPermalinkHtml,
@@ -38,9 +109,19 @@ import {
   renderWorkerProfileHtml,
 } from "./dashboard_and_permalinks.js";
 import { renderInteractiveDemoPageHtml, renderInteractiveDemoRunnerJs } from "./demo_page.js";
+import {
+  handleDiscoverApi,
+  handleDiscoverAtomXml,
+  handleDiscoverJsonFeed,
+  handleDiscoverRssXml,
+  queryDiscoverCatalog,
+  renderDiscoverHtml,
+  renderDiscoverJs,
+} from "./discover_gallery.js";
 import { isAdminRequest, isOpenFreeWindow } from "./herma_engine.js";
 import {
-   buildPromptCatalog,
+  buildPromptCatalog,
+  findPrompt,
   hydratePromptPlaceholders,
   injectPromptToolkitGuidanceBlock,
   renderPromptsPageHtml,
@@ -175,6 +256,7 @@ export const QUEUE_GATEWAY_GRID = Object.freeze({
   worker_uuid_max_len: 64,
   worker_uuid_hex_bytes: 4,
   task_id_max_len: 160,
+  min_completion_summary_chars: 12,
   title_max_len: 180,
   prompt_max_len: 4000,
   payload_max_len: 262144,
@@ -209,6 +291,8 @@ export const QUEUE_GATEWAY_GRID = Object.freeze({
   beat_ngo_slot: 0,
   beat_eval_slot: 1,
   beat_own_slot: 2,
+  default_priority_regime: "public_frontier_first",
+  review_priority_demotion: 35,
   default_cadence_min: 45,
   eval_blend_old: 3,
   eval_blend_new: 2,
@@ -339,6 +423,7 @@ export const QUEUE_GATEWAY_GRID = Object.freeze({
   http_method_not_allowed: 405,
   http_conflict: 409,
   http_payload_too_large: 413,
+  http_unprocessable: 422,
   http_too_many_requests: 429,
   http_not_implemented: 501,
   http_bad_gateway: 502,
@@ -481,6 +566,66 @@ const GENERIC_EPHEMERAL_AGENTS = new Set([
   "gemini",
   "assistant",
 ]);
+// Writes the agent name rule covers (agent_names.js), and the ones that take the name as /q/<action>/<name>.
+const NAME_GATED_ACTIONS = new Set(["claim", "submit", "complete", "release", "heartbeat", "checkpoint", "frontier", "optimize", "models", "onboard", "register", "objects", "object", "upload", "enqueue", "chat", "feedback", "issues", "report", "reprioritize"]);
+// Write routes that also work as a GET (the URL forms).
+const NAME_GATED_GETS = new Set(["claim", "submit", "complete", "enqueue", "onboard", "register", "heartbeat", "release", "checkpoint"]);
+// Every field a write route reads its agent name from (independent review of item 4, H1). A worker_uuid sent here is
+// resolved to the name it belongs to.
+const NAME_FIELDS = ["agent_id", "agent", "worker", "worker_id", "user", "actor_agent_id", "sender", "evaluator_agent_id", "evaluator_agent", "producer_agent"];
+// On feedback, producer_agent names the agent the report is about, not the sender (review round 3).
+const NAME_FIELDS_ABOUT_OTHERS = new Set(["feedback", "issues", "report"]);
+const MAX_NAMES_PER_WRITE = 6;
+const NAME_IN_PATH_ACTIONS = new Set(["claim", "submit", "complete", "enqueue", "onboard", "register", "release", "checkpoint"]);
+function safeDecode(segment) {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return String(segment || "");
+  }
+}
+
+// The body of a write as its handler would read it: JSON, gzip JSON (Content-Encoding: gzip) or a form. Null when none.
+async function peekWriteBody(request) {
+  try {
+    const type = (request.headers.get("content-type") || "").toLowerCase();
+    const gz = /gzip/i.test(request.headers.get("content-encoding") || "") || /gzip/.test(type);
+    let bytes = new Uint8Array(await request.clone().arrayBuffer());
+    if (gz) bytes = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer());
+    const text = new TextDecoder().decode(bytes);
+    if (type.includes("application/x-www-form-urlencoded")) return Object.fromEntries(new URLSearchParams(text));
+    const parsed = JSON.parse(text || "null");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+// A reply to a write: the claim block (token shown once) when this write claimed the name, and the name advice.
+async function withNameGate(db, gate, obj, status) {
+  if (!gate || !obj || typeof obj !== "object" || Array.isArray(obj)) return obj;
+  const autoMeta = gate.auto_assigned_agent_id
+    ? { auto_assigned_agent_id: true, resolved_agent_id: gate.resolved_agent_id }
+    : {};
+  if (gate.issued && status < 400) {
+    let issued = gate.issued;
+    // A reply that already hands out a new worker_token: that token claims the name, so there is one token, not two.
+    if (typeof obj.worker_token === "string" && obj.worker_token.startsWith("wt_") && obj.worker_token !== issued.token) {
+      try {
+        await db.prepare("UPDATE herma_agent_claims SET token_sha256 = ? WHERE agent_id = ? AND token_sha256 = ?").bind(await sha256HexNames(obj.worker_token), issued.agent_id, await sha256HexNames(issued.token)).run();
+        issued = { ...issued, token: obj.worker_token };
+      } catch {
+        // keep the claim token
+      }
+    }
+    gate.issued = issued;
+    return { ...obj, ...autoMeta, worker_token: obj.worker_token || issued.token, agent_claim: claimReplyBlock(issued) };
+  }
+  if (gate.notice && status < 400) return { ...obj, ...autoMeta, agent_id_notice: gate.notice };
+  if (gate.auto_assigned_agent_id && status < 400) return { ...obj, ...autoMeta };
+  return obj;
+}
+
 const ALLOWED_VERIFICATION_VERDICTS = new Set([
   "CONFIRMED",
   "REFUTED",
@@ -652,6 +797,31 @@ async function sha256HexGateway(input) {
   return Array.from(new Uint8Array(digest), (b) =>
     b.toString(QUEUE_GATEWAY_GRID.hex_radix).padStart(QUEUE_GATEWAY_GRID.hex_byte_pad, "0")
   ).join("");
+}
+
+// A refusal never tells a caller the fencing_token it should have sent: anyone can type any agent name (owner, Nov 6).
+function withoutExpectedFence(detail) {
+  return String(detail ?? "")
+    .replace(/\s*\(expected[=: ]*\d+\)/gi, "")
+    .replace(/(fencing_token|lease_epoch)\s*[=:]\s*\d+/gi, "$1")
+    .replace(/expected (?:fencing_token|lease_epoch|epoch|token)?\s*\d+/gi, "a different fencing_token");
+}
+
+// An empty result: nothing, blank text, or an empty list or object.
+function isEmptyResultBody(value) {
+  if (value === undefined || value === null) return true;
+  if (typeof value === "string") return !value.trim();
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === "object") return Object.keys(value).length === 0;
+  return false;
+}
+
+function safeDecodeSegment(raw) {
+  try {
+    return decodeURIComponent(String(raw || ""));
+  } catch {
+    return String(raw || "");
+  }
 }
 
 function cleanAgentId(raw) {
@@ -2131,6 +2301,7 @@ async function runPriorityGatewaySchemaInitOnce(
   ]);
   await ensureColumnsExist(db, "herma_evaluations", [
     ["verification_verdict", "TEXT NOT NULL DEFAULT 'UNREVIEWED'"],
+    ["sent_verdict", "TEXT NOT NULL DEFAULT ''"],
   ]);
 
   await runBatchOrSeq([
@@ -2150,6 +2321,8 @@ async function runPriorityGatewaySchemaInitOnce(
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_heval_target ON herma_evaluations (target_kind, target_id, id DESC)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_hto_vis ON herma_task_objects (visibility, id DESC)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_hto_content_sha ON herma_task_objects (content_sha256)`),
+    // The agent pages (/c/agent/<id>): lookups by agent name.
+    ...AGENT_PAGE_INDEXES.map((sql) => db.prepare(sql)),
   ]);
 
   const existing = await db.prepare("SELECT COUNT(*) AS cnt FROM herma_durable_queue").first();
@@ -3586,9 +3759,15 @@ async function lookupTaskObjectByKey(db, infraAllowed, objectKey, publicUrl, que
     permalink_url: `${publicUrl}/c/${encodeURIComponent(row.object_key)}`,
     demo_url: `${publicUrl}/q/demo/${encodeURIComponent(row.object_key)}`,
     created_at: row.created_at,
-    evaluations: evals?.results || [],
+    evaluations: (evals?.results || []).map(explainEvaluationRow),
     payload: assembled.payload,
   };
+}
+
+const LEASE_HOLDER_FIELDS = ["fencing_token", "leased_by", "leased_worker_uuid"];
+function withoutLeaseHolder(row) {
+  if (!row || typeof row !== "object") return row;
+  return Object.fromEntries(Object.entries(row).filter(([k]) => !LEASE_HOLDER_FIELDS.includes(k)));
 }
 
 async function lookupDurableTaskById(db, infraAllowed, taskId, publicUrl) {
@@ -3629,12 +3808,14 @@ async function lookupDurableTaskById(db, infraAllowed, taskId, publicUrl) {
   return {
     ok: true,
     schema: "herma.priority_work_gateway.task.v1",
-    task: row,
+    // Who holds a lease and its fencing_token are the holder's proof, not public facts (review, Nov 6): /q/object/verb_* returned them
+    // to anyone. Server workers keep the full row.
+    task: infraAllowed ? row : withoutLeaseHolder(row),
     relay_context: relayCtx,
     permalink_url: `${publicUrl}/c/${encodeURIComponent(row.task_id)}`,
     stored_task_objects: objsRes?.results || [],
     child_followup_verbs: childRes?.results || [],
-    evaluations: evalsRes?.results || [],
+    evaluations: (evalsRes?.results || []).map(explainEvaluationRow),
   };
 }
 
@@ -3879,10 +4060,11 @@ async function buildContributionPermalinkData(db, infraAllowed, rawLookupId) {
 
   return {
     lookup_id: cleanId,
-    task: taskRow || null,
+    // The same rule as lookupDurableTaskById: a public read carries no lease fencing_token or holder.
+    task: taskRow ? (infraAllowed ? taskRow : withoutLeaseHolder(taskRow)) : null,
     objects: hydratedObjects,
-    child_verbs: childVerbs,
-    evaluations: evals,
+    child_verbs: infraAllowed ? childVerbs : childVerbs.map(withoutLeaseHolder),
+    evaluations: (evals || []).map(explainEvaluationRow),
   };
 }
 
@@ -5024,23 +5206,38 @@ async function fetchPriorVerbRuntimes(db, infraAllowed, limit = QUEUE_GATEWAY_GR
   return rows?.results || [];
 }
 
-async function buildLiveEvaluationCandidates(db, infraAllowed, limit = QUEUE_GATEWAY_GRID.eval_packet_limit) {
+// `who` ({ agentId, workerUuid }) is the caller. Round 4: maker != checker, the same as the producer guard: the caller's own
+// Tasks and Task Objects (by agent name or worker id), and reviews of its own work, are never offered to it as candidates.
+async function buildLiveEvaluationCandidates(db, infraAllowed, limit = QUEUE_GATEWAY_GRID.eval_packet_limit, who = null) {
   const visFilter = infraAllowed
     ? "visibility IN ('public_ngo', 'public_commons', 'server_infra')"
     : "visibility IN ('public_ngo', 'public_commons')";
   const safeLim = Math.max(1, Math.min(QUEUE_GATEWAY_GRID.max_pulse_items, Number(limit || QUEUE_GATEWAY_GRID.eval_packet_limit)));
+  const agent = String(who?.agentId || "").trim().toLowerCase();
+  const uuid = String(who?.workerUuid || "").trim();
+  const filtered = Boolean(agent || uuid);
+  // Read a few more rows when some can be left out, so the list keeps its size.
+  const readLim = filtered ? safeLim * 2 : safeLim;
+  const taskMine = filtered
+    ? ` AND NOT (LOWER(COALESCE(producer_agent, '')) = ?1 OR LOWER(COALESCE(completed_by, '')) = ?1
+         OR (?2 != '' AND (COALESCE(producer_worker_uuid, '') = ?2 OR COALESCE(leased_worker_uuid, '') = ?2)))`
+    : "";
+  const objMine = filtered
+    ? ` AND NOT (LOWER(COALESCE(producer_agent, '')) = ?1 OR (?2 != '' AND COALESCE(worker_uuid, '') = ?2))`
+    : "";
+  const mineBind = filtered ? [agent || "\u0000", uuid] : [];
 
   const tasksRes = await db
     .prepare(
-      `SELECT task_id, tier, verb_kind, state, priority, category, title, prompt,
+      `SELECT task_id, tier, verb_kind, state, priority, category, title, prompt, producer_agent, producer_worker_uuid,
               generation_depth, quality_milli, actual_importance_milli, potential_importance_milli,
               novelty_milli, eval_count, lsh_band_0
        FROM herma_durable_queue
-       WHERE ${visFilter}
+       WHERE ${visFilter}${taskMine}
        ORDER BY eval_count ASC, id DESC
-       LIMIT ?`
+       LIMIT ?${filtered ? "3" : ""}`
     )
-    .bind(safeLim)
+    .bind(...mineBind, readLim)
     .all();
 
   const objsRes = await db
@@ -5049,16 +5246,26 @@ async function buildLiveEvaluationCandidates(db, infraAllowed, limit = QUEUE_GAT
               generation_depth, quality_milli, actual_importance_milli, potential_importance_milli,
               novelty_milli, eval_count, lsh_band_0
        FROM herma_task_objects
-       WHERE ${visFilter} AND is_tombstoned = 0
+       WHERE ${visFilter} AND is_tombstoned = 0${objMine}
        ORDER BY eval_count ASC, id DESC
-       LIMIT ?`
+       LIMIT ?${filtered ? "3" : ""}`
     )
-    .bind(safeLim)
+    .bind(...mineBind, readLim)
     .all();
 
+  let taskRows = tasksRes?.results || [];
+  if (filtered && taskRows.length) {
+    // A review Task of the caller's own work (it names the caller, or a Task Object the caller made) is left out too.
+    const conflicts = await makerConflictIds(db, taskRows, { agentId: agent, workerUuid: uuid });
+    taskRows = taskRows.filter((row) => !conflicts.has(row.task_id));
+  }
+  taskRows = taskRows.slice(0, safeLim).map(({ producer_worker_uuid: _u, ...row }) => row);
+  const objRows = (objsRes?.results || []).slice(0, safeLim);
+
   return {
-    tasks_to_evaluate: tasksRes?.results || [],
-    task_objects_to_evaluate: objsRes?.results || [],
+    tasks_to_evaluate: taskRows,
+    task_objects_to_evaluate: objRows,
+    ...(filtered ? { own_work_left_out: true } : {}),
     scoring_dimensions: [
       "actual_importance (1..100 immediate operational/NGO utility)",
       "potential_importance (1..100 downstream unlock value across future hops)",
@@ -5682,6 +5889,13 @@ const FIELD_WORK_PHRASES = Object.freeze([
   "recruited users",
   "real 5-user",
   "real users",
+  // D8 (round 4): titles from Tasks that every worker gave back because they need a person.
+  "native-speaker",
+  "native speaker",
+  "read-aloud",
+  "physical trial",
+  "hub volunteer",
+  "phone camera",
 ]);
 const FIELD_WORK_SQL = FIELD_WORK_PHRASES.map(
   (phrase) => `LOWER(COALESCE(title, '')) LIKE '%${phrase}%'`
@@ -5689,6 +5903,85 @@ const FIELD_WORK_SQL = FIELD_WORK_PHRASES.map(
 export function needsFieldTeam(title = "") {
   const text = String(title).toLowerCase();
   return FIELD_WORK_PHRASES.some((phrase) => text.includes(phrase));
+}
+
+// After a give-back: take another Task. After several give-backs in a short time, make something of your own or check someone
+// else's work instead, so a worker does not loop on Tasks it can't do. Says how many leases this agent still holds.
+async function nextAfterRelease(db, publicUrl, agentId, taskId) {
+  const enc = encodeURIComponent;
+  const cleanAgent = cleanAgentId(agentId);
+  const [recent, held] = await Promise.all([
+    db
+      .prepare("SELECT COUNT(*) AS n FROM herma_task_attempt_ledger WHERE agent_id = ? AND outcome LIKE 'released%' AND created_at >= ?")
+      .bind(cleanAgent, new Date(Date.now() - 3600000).toISOString())
+      .first()
+      .catch(() => null),
+    db
+      .prepare("SELECT COUNT(*) AS n FROM herma_durable_queue WHERE leased_by = ? AND state = 'leased'")
+      .bind(cleanAgent)
+      .first()
+      .catch(() => null),
+  ]);
+  const gaveBack = Number(recent?.n || 0);
+  const stillHeld = Number(held?.n || 0);
+  const heldLine = stillHeld ? `You still hold ${stillHeld} other lease${stillHeld === 1 ? "" : "s"}.` : "You hold no other lease.";
+  if (gaveBack >= 2) {
+    return {
+      action: "self_seed_or_review",
+      advisory: true,
+      given_back_last_hour: gaveBack,
+      leases_still_held: stillHeld,
+      self_seed: { url: `${publicUrl}/q/submit`, how: `POST {"agent_id":"${cleanAgent}","task_id":"self_seed","summary":"...","task_objects":[...]}` },
+      review_url: `${publicUrl}/q/tasks?state=ready&verb_kind=eval_and_rank&agent_id=${enc(cleanAgent)}&limit=10`,
+      other_url: `${publicUrl}/q/next?agent_id=${enc(cleanAgent)}&skip=${enc(taskId)}`,
+      why: `You gave back ${gaveBack} Tasks in the last hour. ${heldLine} Instead of another claim, store one small useful Task Object of your own (self_seed), or check someone else's work. Or stop this run.`,
+      retry_same_call: false,
+    };
+  }
+  return {
+    action: "find_other",
+    advisory: true,
+    given_back_last_hour: gaveBack,
+    leases_still_held: stillHeld,
+    url: `${publicUrl}/q/next?agent_id=${enc(cleanAgent)}&skip=${enc(taskId)}`,
+    why: `${heldLine} Take another Task, or stop this run.`,
+    retry_same_call: false,
+  };
+}
+
+// A Task that needs an independent checker but is pinned to its maker's worker (a verb_own_* review) is let go to everyone:
+// its owner pin is cleared, and a worker_self_directed one becomes an evaluation, so another worker's claim can reach it (G3).
+async function unpinFromMaker(db, row, workerUuid, agentId = "") {
+  if (!row?.task_id || !workerUuid || row.owner_worker_uuid !== workerUuid || !needsIndependentChecker(row)) return;
+  const changed = await db
+    .prepare(
+      `UPDATE herma_durable_queue SET owner_worker_uuid = '',
+         verb_kind = CASE WHEN verb_kind = 'worker_self_directed' THEN 'eval_and_rank' ELSE verb_kind END
+       WHERE task_id = ? AND state = 'ready' AND owner_worker_uuid = ?`
+    )
+    .bind(row.task_id, workerUuid)
+    .run()
+    .catch(() => null);
+  // On the record, with what it was, so the change can be undone.
+  if (Number(changed?.meta?.changes || 0) > 0) {
+    await recordTaskAttemptEvent(db, {
+      taskId: row.task_id,
+      workerUuid,
+      agentId: agentId || row.producer_agent || "worker",
+      outcome: "maker_unpinned",
+      blockerCode: "producer_cannot_evaluate",
+      errorSummary: `owner_worker_uuid was ${workerUuid}; verb_kind was ${row.verb_kind || ""}. A review is let go to other workers (maker != checker).`,
+    }).catch(() => {});
+  }
+}
+
+function isGatewayReviewTask(cand) {
+  const vk = String(cand?.verb_kind || "").trim().toLowerCase();
+  if (vk === "eval_and_rank" || vk === "review" || vk === "evaluate" || vk === "audit_review") {
+    return true;
+  }
+  const title = String(cand?.title || "").trim().toLowerCase();
+  return title.startsWith("review:") || title.startsWith("beat-1 priority");
 }
 
 async function claimNextAuthorizedTask(
@@ -5701,6 +5994,8 @@ async function claimNextAuthorizedTask(
     workerUuid = "",
     workerToken = "",
     slot = null,
+    priorityRegime = "",
+    preferReviews = false,
     generalist = false,
     canDoFieldWork = false,
     intentBucket = "",
@@ -5838,14 +6133,32 @@ async function claimNextAuthorizedTask(
     : null;
 
   const normalizedSlot = slot ? String(slot).toLowerCase().trim() : "";
+  const normalizedPriorityRegime = String(priorityRegime || "").trim().toLowerCase();
+  const isNgoFirstRegime = normalizedPriorityRegime === "ngo_first";
+  const callerExplicitlyWantsEval =
+    normalizedSlot === "eval" ||
+    cleanVerbKindFilter === "eval_and_rank" ||
+    cleanVerbKindFilter === "review" ||
+    cleanVerbKindFilter === "evaluate" ||
+    cleanVerbKindFilter === "audit_review" ||
+    preferReviews === true ||
+    preferReviews === "1" ||
+    preferReviews === "true" ||
+    preferReviews === 1;
   const isGeneralistMode = isGeneralistExplicit || normalizedSlot === "generalist";
   const effectiveSlot = isGeneralistMode
     ? "generalist"
     : normalizedSlot === "ngo" || normalizedSlot === "eval" || normalizedSlot === "own"
       ? normalizedSlot
-      : normalizedSlot === "any"
-        ? "any"
-        : honorSlotCodeForIndex(profile.iteration_count);
+      : normalizedSlot === "auto"
+        ? honorSlotCodeForIndex(profile.iteration_count)
+        : isNgoFirstRegime
+          ? "ngo"
+          : !requestedTier && !normalizedSlot
+            ? "public_frontier"
+            : normalizedSlot === "any"
+              ? "any"
+              : honorSlotCodeForIndex(profile.iteration_count);
 
   const visBase = infraAllowed
     ? "visibility IN ('server_infra', 'public_ngo', 'public_commons')"
@@ -5940,7 +6253,9 @@ async function claimNextAuthorizedTask(
     if (activeLease) {
       const priorRuntimes = await fetchPriorVerbRuntimes(db, infraAllowed, QUEUE_GATEWAY_GRID.prior_runtimes_limit);
       const evalCandidates =
-        effectiveSlot === "eval" ? await buildLiveEvaluationCandidates(db, infraAllowed) : null;
+        effectiveSlot === "eval"
+          ? await buildLiveEvaluationCandidates(db, infraAllowed, undefined, { agentId: cleanAgent, workerUuid: profile.worker_uuid })
+          : null;
       const reusedTask = formatLeasedTaskEnvelope(
         activeLease,
         cleanAgent,
@@ -5962,7 +6277,9 @@ async function claimNextAuthorizedTask(
               ? "ngo_priority_beat"
               : effectiveSlot === "eval"
                 ? "eval_and_rank_beat"
-                : "own_tagged_task_beat",
+                : effectiveSlot === "public_frontier"
+                  ? "public_frontier_first_beat"
+                  : "own_tagged_task_beat",
           next_beat_after_submit: honorBeatNameForIndex(profile.iteration_count + 1),
           anti_convergence_kit: {
             ...entropy,
@@ -6127,11 +6444,16 @@ async function claimNextAuthorizedTask(
         prompt: cand.prompt,
       }).step_mode;
     const stepModeBonus = computeStepModeRoutingBonus(profile.harness_tier, candStepMode);
+    const reviewDemotionPenalty =
+      isGatewayReviewTask(cand) && !callerExplicitlyWantsEval
+        ? QUEUE_GATEWAY_GRID.review_priority_demotion
+        : 0;
 
     const totalScore =
       tierRankBonus +
       explicitAffinityBonus +
-      Number(cand.priority || QUEUE_GATEWAY_GRID.priority_public_default) +
+      Number(cand.priority || QUEUE_GATEWAY_GRID.priority_public_default) -
+      reviewDemotionPenalty +
       complexityFitBonus +
       ucbBonus +
       ageBonus +
@@ -6149,6 +6471,7 @@ async function claimNextAuthorizedTask(
         complexity_bucket: compBucket,
         step_mode: candStepMode,
         step_mode_fit_bonus: Math.round(stepModeBonus * 100) / 100,
+        review_priority_demotion: reviewDemotionPenalty,
         complexity_fit_bonus: Math.round(complexityFitBonus * 100) / 100,
         ucb_learned_bonus: Math.round(ucbBonus * 100) / 100,
         age_anti_starvation_bonus: Math.round(ageBonus * 100) / 100,
@@ -6170,6 +6493,8 @@ async function claimNextAuthorizedTask(
     };
   };
 
+  // Tasks this claim found the caller made the work for (producer_guard.js); the next pick leaves them out.
+  const makerSkip = new Set();
   const pickBestScoredCandidate = (
     poolRows,
     preferredAffinity = affinityBand,
@@ -6179,6 +6504,7 @@ async function claimNextAuthorizedTask(
     if (!poolRows || poolRows.length === 0) return null;
     let best = null;
     for (const r of poolRows) {
+      if (makerSkip.has(r.task_id)) continue;
       const scored = scoreCandidate(r, preferredAffinity, preferredTierGroup, allowPinnedOwnContinuation);
       if (scored.excludedSelfReview) continue;
       if (
@@ -6199,6 +6525,9 @@ async function claimNextAuthorizedTask(
   let expiresIso = "";
   const bandOrderClause = affinityBand ? "CASE WHEN lsh_band_0 = ? THEN 0 ELSE 1 END ASC," : "";
   const bandBind = affinityBand ? [String(affinityBand)] : [];
+  const reviewOrderClause = callerExplicitlyWantsEval
+    ? ""
+    : "(CASE WHEN LOWER(COALESCE(verb_kind,'')) IN ('eval_and_rank','review','evaluate','audit_review') OR LOWER(COALESCE(title,'')) LIKE 'review:%' OR LOWER(COALESCE(title,'')) LIKE 'beat-1 priority%' THEN 1 ELSE 0 END) ASC,";
   const poolLimit = QUEUE_GATEWAY_GRID.max_pulse_items;
 
   for (let casAttempt = 0; casAttempt < QUEUE_GATEWAY_GRID.cas_claim_max_retries; casAttempt += 1) {
@@ -6215,12 +6544,17 @@ async function claimNextAuthorizedTask(
       const targetRow = await db.prepare(targetSql).bind(...targetBinds).first();
       if (targetRow) {
         const targetScored = scoreCandidate(targetRow, affinityBand, null);
-        if (targetScored.excludedSelfReview) {
+        const makerReason = await producerConflict(db, targetRow, { agentId: cleanAgent, workerUuid: profile.worker_uuid });
+        if (targetScored.excludedSelfReview || makerReason) {
+          // Only the maker's own pin is let go; the older review rule (it also keeps a review's reporter off it) changes no row.
+          if (makerReason) await unpinFromMaker(db, targetRow, profile.worker_uuid, cleanAgent);
           return {
-            forbidden: true,
-            code: "self_review_forbidden",
-            detail:
-              "Original producer or reporter cannot claim their own verification task (maker != checker).",
+            producerConflict: true,
+            ...producerRefusal(publicUrl, {
+              agentId: cleanAgent,
+              taskId: targetRow.task_id,
+              reason: makerReason || "the review rules leave it to a worker that did not make or report the work",
+            }),
           };
         }
         picked = { row: targetRow, scored: targetScored };
@@ -6252,16 +6586,23 @@ async function claimNextAuthorizedTask(
           " AND (LOWER(title) LIKE ? OR LOWER(prompt) LIKE ? OR LOWER(category) LIKE ? OR LOWER(labels_json) LIKE ? OR LOWER(branch_label) LIKE ?)";
         famBinds.push(likePat, likePat, likePat, likePat, likePat);
       }
-      famSql += " ORDER BY (CASE WHEN tier = 'ngo_priority' THEN 0 ELSE 1 END) ASC, priority DESC, id ASC LIMIT ?";
+      const famTierOrder = isNgoFirstRegime
+        ? "(CASE WHEN tier = 'ngo_priority' THEN 0 ELSE 1 END) ASC"
+        : "(CASE WHEN tier = 'public_general' THEN 0 ELSE 1 END) ASC";
+      famSql += ` ORDER BY ${famTierOrder}, ${reviewOrderClause} priority DESC, id ASC LIMIT ?`;
       famBinds.push(poolLimit);
       const famPool = await db.prepare(famSql).bind(...famBinds).all();
-      picked = pickBestScoredCandidate(famPool?.results || [], affinityBand, "ngo_first");
+      picked = pickBestScoredCandidate(
+        famPool?.results || [],
+        affinityBand,
+        requestedTier ? null : isNgoFirstRegime ? "ngo_first" : "public_first"
+      );
     } else if (requestedTier && ALL_TIERS.has(requestedTier)) {
       const pool = await db
         .prepare(
           `SELECT * FROM herma_durable_queue
            WHERE state = 'ready' AND tier = ? AND ${visAllowed} ${prereqReadyClause}
-           ORDER BY ${bandOrderClause} priority DESC, id ASC LIMIT ?`
+           ORDER BY ${reviewOrderClause} ${bandOrderClause} priority DESC, id ASC LIMIT ?`
         )
         .bind(requestedTier, ...bandBind, poolLimit)
         .all();
@@ -6278,6 +6619,7 @@ async function claimNextAuthorizedTask(
         .bind(profile.worker_uuid, staleOwnerCutoffIso, poolLimit)
         .all();
       for (const r of genHeadPool?.results || []) {
+        if (makerSkip.has(r.task_id)) continue;
         const scored = scoreCandidate(r, affinityBand, null);
         if (!scored.excludedSelfReview) {
           picked = { row: r, scored };
@@ -6298,7 +6640,7 @@ async function claimNextAuthorizedTask(
       picked = pickBestScoredCandidate(pool?.results || [], affinityBand, "infra_or_ngo");
     } else if (effectiveSlot === "eval") {
       if (!evalCandidates) {
-        evalCandidates = await buildLiveEvaluationCandidates(db, infraAllowed);
+        evalCandidates = await buildLiveEvaluationCandidates(db, infraAllowed, undefined, { agentId: cleanAgent, workerUuid: profile.worker_uuid });
       }
       const pool = await db
         .prepare(
@@ -6426,20 +6768,38 @@ async function claimNextAuthorizedTask(
              WHERE state = 'ready' AND ${visAllowed}
                AND (owner_worker_uuid = '' OR owner_worker_uuid = ? OR updated_at < ?) ${prereqReadyClause}
              ORDER BY (CASE WHEN tier = 'public_general' THEN 0 ELSE 1 END) ASC,
+                      ${reviewOrderClause}
                       ${bandOrderClause} priority DESC, id ASC LIMIT ?`
           )
           .bind(profile.worker_uuid, staleOwnerCutoffIso, ...bandBind, poolLimit)
           .all();
         picked = pickBestScoredCandidate(pubPool?.results || [], affinityBand, "public_first");
       }
+    } else if (effectiveSlot === "public_frontier" || (effectiveSlot === "any" && !isNgoFirstRegime)) {
+      // Default `public_frontier_first` regime: offer `public_general` frontier/engineering tasks ahead of `ngo_priority`,
+      // and non-review build tasks ahead of review/evaluation tasks, without forcing synthesized Beat-1 eval tasks.
+      const frontierPool = await db
+        .prepare(
+          `SELECT * FROM herma_durable_queue
+           WHERE state = 'ready' AND ${visAllowed}
+             AND (owner_worker_uuid = '' OR owner_worker_uuid = ? OR updated_at < ?) ${prereqReadyClause}
+           ORDER BY (CASE WHEN tier = 'public_general' THEN 0 ELSE 1 END) ASC,
+                    ${reviewOrderClause}
+                    ${bandOrderClause} priority DESC, id ASC
+           LIMIT ?`
+        )
+        .bind(profile.worker_uuid, staleOwnerCutoffIso, ...bandBind, poolLimit)
+        .all();
+      picked = pickBestScoredCandidate(frontierPool?.results || [], affinityBand, "public_first");
     } else {
-      // Beat 0 (`ngo`) or `any`: NGO Public-Good tasks ALWAYS first (avoiding other workers' fresh private own-tagged threads)
+      // Explicit `slot=ngo`, `slot=auto` Beat 0, or `?priority_regime=ngo_first`: NGO tasks first
       const ngoPool = await db
         .prepare(
           `SELECT * FROM herma_durable_queue
            WHERE state = 'ready' AND ${visAllowed}
              AND (owner_worker_uuid = '' OR owner_worker_uuid = ? OR updated_at < ?) ${prereqReadyClause}
            ORDER BY (CASE WHEN tier = 'ngo_priority' THEN 0 ELSE 1 END) ASC,
+                    ${reviewOrderClause}
                     ${bandOrderClause} priority DESC, id ASC
            LIMIT ?`
         )
@@ -6456,6 +6816,12 @@ async function claimNextAuthorizedTask(
     }
 
     const candidate = picked.row;
+    // G1: the makers of the Task Objects a review names are left out too (one indexed read, only for Tasks that need a checker).
+    if (!explicitTaskId && (await producerConflict(db, candidate, { agentId: cleanAgent, workerUuid: profile.worker_uuid }))) {
+      makerSkip.add(candidate.task_id);
+      await unpinFromMaker(db, candidate, profile.worker_uuid, cleanAgent);
+      continue;
+    }
     const prevToken = Number(candidate.fencing_token || 0);
     const maxCoEpRow = await db
       .prepare("SELECT COALESCE(MAX(lease_epoch), 0) AS max_ep FROM herma_task_co_leases WHERE task_id = ?")
@@ -6520,6 +6886,7 @@ async function claimNextAuthorizedTask(
       effectiveLeaseTtlMs,
       allowCoLeaseExplicit,
       scoreCandidateFn: (cand) => scoreCandidate(cand, affinityBand, "ngo_first"),
+      makerCheckFn: (cand) => producerConflict(db, cand, { agentId: cleanAgent, workerUuid: profile.worker_uuid }),
       poolLimit,
     });
     if (coOut?.reusedSameWorker && coOut.row) {
@@ -6575,6 +6942,9 @@ async function claimNextAuthorizedTask(
       const coPoolRes = await db.prepare(coBatchSql).bind(...coBatchBinds).all();
       for (const extraCand of coPoolRes?.results || []) {
         if (coLeasedBatch.length >= safeBatchSize) break;
+        // A batch claim keeps maker != checker too.
+        if (scoreCandidate(extraCand, row.lsh_band_0 || affinityBand, null).excludedSelfReview) continue;
+        if (await producerConflict(db, extraCand, { agentId: cleanAgent, workerUuid: profile.worker_uuid })) continue;
         const prevTok = Number(extraCand.fencing_token || 0);
         const maxExtraCoRow = await db
           .prepare("SELECT COALESCE(MAX(lease_epoch), 0) AS max_ep FROM herma_task_co_leases WHERE task_id = ?")
@@ -6631,7 +7001,7 @@ async function claimNextAuthorizedTask(
 
   const priorRuntimes = await fetchPriorVerbRuntimes(db, infraAllowed, QUEUE_GATEWAY_GRID.prior_runtimes_limit);
   if (!evalCandidates && effectiveSlot === "eval") {
-    evalCandidates = await buildLiveEvaluationCandidates(db, infraAllowed);
+    evalCandidates = await buildLiveEvaluationCandidates(db, infraAllowed, undefined, { agentId: cleanAgent, workerUuid: profile.worker_uuid });
   }
 
   const bilateralGuidance = {
@@ -6644,7 +7014,9 @@ async function claimNextAuthorizedTask(
         ? "ngo_priority_beat"
         : effectiveSlot === "eval"
           ? "eval_and_rank_beat"
-          : "own_tagged_task_beat",
+          : effectiveSlot === "public_frontier"
+            ? "public_frontier_first_beat"
+            : "own_tagged_task_beat",
     next_beat_after_submit: honorBeatNameForIndex(profile.iteration_count + 1),
     anti_convergence_kit: {
       ...entropy,
@@ -6798,7 +7170,7 @@ async function releaseLeasedTask(
       conflict: true,
       code: "stale_or_missing_lease_epoch",
       expected_lease_epoch: curFence,
-      detail: `Releasing leased task ${cleanTid} requires matching lease_epoch / fencing_token (${curFence}).`,
+      detail: `Releasing leased task ${cleanTid} requires the fencing_token from your claim reply.`,
     };
   }
 
@@ -6877,11 +7249,50 @@ const HELPERS_NOTE = "Found by word match, so they may not fit. Reading one runs
 
 const OWN_CHECKER_WORKERS = new Set(["w_teleionwarmc_5ab473a2"]);
 
+// D10 (round 4): an evaluation keeps the verdict its sender wrote in `sent_verdict`. The column a reader relies on,
+// `verification_verdict`, stays UNREVIEWED for a peer on purpose: an ID with no key can be made in one request, so only a
+// server key or our own checker sets it. The reply and the reads show both, with a note.
+let EVAL_SENT_VERDICT_READY = false;
+async function ensureEvaluationSentVerdictColumn(db) {
+  if (EVAL_SENT_VERDICT_READY) return true;
+  try {
+    const info = await db.prepare("PRAGMA table_info(herma_evaluations)").all();
+    const names = new Set((info?.results || []).map((r) => String(r.name)));
+    if (!names.size) return false;
+    if (!names.has("sent_verdict")) {
+      try {
+        await db.prepare("ALTER TABLE herma_evaluations ADD COLUMN sent_verdict TEXT NOT NULL DEFAULT ''").run();
+      } catch {
+        // Another isolate added it at the same moment; read again below.
+        const again = await db.prepare("PRAGMA table_info(herma_evaluations)").all();
+        if (!(again?.results || []).some((r) => String(r.name) === "sent_verdict")) return false;
+      }
+    }
+    EVAL_SENT_VERDICT_READY = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export const PEER_VERDICT_NOTE =
+  "Your verdict is kept as sent_verdict. The shown verdict (verification_verdict) changes only when a server checker reviews the work, because an ID with no key can be made in one request. Your evaluation counts in eval_count and stays on the record.";
+
+/** Adds `verdict_note` to an evaluation row when the sent verdict and the shown one differ. Rows from before round 4 have no sent_verdict. */
+export function explainEvaluationRow(row) {
+  if (!row || typeof row !== "object") return row;
+  const sent = String(row.sent_verdict || "");
+  const shown = String(row.verification_verdict || "UNREVIEWED");
+  if (!sent || sent === shown) return row;
+  return { ...row, verdict_note: `Sent as ${sent}. The shown verdict is ${shown}; only a server checker changes it.` };
+}
+
 async function applyWorkerEvaluations(db, infraAllowed, evaluatorProfile, rawEvaluations, nowIso, ownChecker = false) {
   const items = Array.isArray(rawEvaluations)
     ? rawEvaluations.slice(0, QUEUE_GATEWAY_GRID.max_evaluations_per_submit)
     : [];
   const applied = [];
+  const sentVerdictColumn = items.length ? await ensureEvaluationSentVerdictColumn(db) : false;
 
   for (const ev of items) {
     if (!ev || typeof ev !== "object") continue;
@@ -7077,6 +7488,7 @@ async function applyWorkerEvaluations(db, infraAllowed, evaluatorProfile, rawEva
         convergence_flag: Boolean(convFlag),
         verification_verdict: verVerdict,
         verdict: verVerdict,
+        ...sentVerdictFields(explicitVerdictProvided && sentVerdictColumn, verVerdict, infraAllowed || ownChecker ? verVerdict : "UNREVIEWED"),
       });
     } else if (objTarget) {
       if (objTarget.visibility === "server_infra" && !infraAllowed) continue;
@@ -7160,6 +7572,7 @@ async function applyWorkerEvaluations(db, infraAllowed, evaluatorProfile, rawEva
         convergence_flag: Boolean(convFlag),
         verification_verdict: nextObjVerdict,
         verdict: nextObjVerdict,
+        ...sentVerdictFields(explicitVerdictProvided && sentVerdictColumn, verVerdict, nextObjVerdict), // review L1: only what was stored
       });
     } else {
       resolvedKind = resolvedKind || "unmatched";
@@ -7169,8 +7582,8 @@ async function applyWorkerEvaluations(db, infraAllowed, evaluatorProfile, rawEva
       .prepare(
         `INSERT INTO herma_evaluations
          (evaluator_worker_uuid, evaluator_agent_id, target_kind, target_id, actual_importance,
-          potential_importance, estimated_priority, novelty_milli, convergence_flag, rationale, verification_verdict, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          potential_importance, estimated_priority, novelty_milli, convergence_flag, rationale, verification_verdict, created_at${sentVerdictColumn ? ", sent_verdict" : ""})
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${sentVerdictColumn ? ", ?" : ""})`
       )
       .bind(
         evaluatorProfile.worker_uuid,
@@ -7185,12 +7598,23 @@ async function applyWorkerEvaluations(db, infraAllowed, evaluatorProfile, rawEva
         rationale,
         // A peer's evaluation stays on the record; only a server key or our own checker can set the verdict a reader relies on.
         infraAllowed || ownChecker ? verVerdict : "UNREVIEWED",
-        nowIso
+        nowIso,
+        ...(sentVerdictColumn ? [explicitVerdictProvided ? verVerdict : ""] : [])
       )
       .run();
   }
 
   return applied;
+}
+
+function sentVerdictFields(explicitVerdictProvided, sentVerdict, shownVerdict) {
+  if (!explicitVerdictProvided) return {};
+  const shown = String(shownVerdict || "UNREVIEWED");
+  return {
+    sent_verdict: sentVerdict,
+    shown_verdict: shown,
+    ...(sentVerdict !== shown ? { verdict_note: PEER_VERDICT_NOTE } : {}),
+  };
 }
 
 async function storeReasoningSuggestionTaskObject(
@@ -7328,6 +7752,22 @@ async function isUnambiguouslyOwnLease(db, task, { agentId, workerUuid, tokenVer
   return Number(others?.n || 0) === 0;
 }
 
+// Round 4: advice only, never a refusal (free access, no gates). A submit with many follow-up Tasks fills the queue with
+// work that nobody asked for; the reply says so and keeps every follow-up it stored.
+export const FOLLOWUP_ADVICE_THRESHOLD = 10;
+export function followupAdvice(sentCount) {
+  const n = Number(sentCount) || 0;
+  if (n <= FOLLOWUP_ADVICE_THRESHOLD) return {};
+  return {
+    followup_advice: {
+      code: "many_followups",
+      sent_followups: n,
+      advisory_only: true,
+      detail: `This submit sent ${n} follow-up Tasks. Make 1 to 3 follow-up Tasks for each Task Object, and only for work that a person or another Task needs. Many Tasks at one time make the queue hard to use. This is advice only: nothing was refused.`,
+    },
+  };
+}
+
 async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed, payload, reqMeta = {}) {
   const agentId = cleanAgentId(
     payload.agent_id || payload.agent || payload.worker || payload.worker_id || "volunteer-agent"
@@ -7403,6 +7843,15 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
     };
   }
 
+  // G4: a submit from the maker of the work a review checks is refused before any write; the lease stays as it is.
+  if (existingTask && existingTask.state !== "done" && needsIndependentChecker(existingTask)) {
+    const makerReason = await producerConflict(db, existingTask, { agentId, workerUuid: cleanWorkerUuid(rawWorkerUuid) });
+    if (makerReason) {
+      const refusal = producerRefusal(publicUrl, { agentId, taskId, reason: makerReason, submit: true });
+      return { conflict: true, code: refusal.code, detail: refusal.detail, next: refusal.next, task_state: existingTask.state };
+    }
+  }
+
   const rawObjectsInput =
     payload.task_objects ||
     payload.output_nouns ||
@@ -7457,7 +7906,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
   const verbsList = Array.isArray(rawVerbsCandidate) ? rawVerbsCandidate : rawVerbsCandidate ? [rawVerbsCandidate] : [];
   if (!Array.isArray(rawVerbsCandidate) && rawVerbsCandidate) submitWarnings.push("follow-up tasks were not a list; kept as one");
   if (verbsList.length > QUEUE_GATEWAY_GRID.max_verbs_per_submit) {
-    submitWarnings.push(`kept the first ${QUEUE_GATEWAY_GRID.max_verbs_per_submit} of ${verbsList.length} follow-up tasks; send the rest in another call`);
+    submitWarnings.push(`kept the first ${QUEUE_GATEWAY_GRID.max_verbs_per_submit} of ${verbsList.length} follow-up tasks; keep only the follow-ups that matter most (1 to 3 for each Task Object)`);
   }
   const rawVerbs = verbsList.slice(0, QUEUE_GATEWAY_GRID.max_verbs_per_submit);
 
@@ -7498,6 +7947,42 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       taskNotFound: true,
       task_id: taskId,
       detail: `No Task has the id '${taskId}', so your text was not saved. Claim one first (${publicUrl}/q/tasks?state=ready&limit=10), then send it again.`,
+    };
+  }
+
+  // A completion with no Task Object, no follow-up, no evaluation and almost no summary closed a real Task for good (a "test
+  // probe" submit, Nov 4). It is refused before any write; the lease stays, so the real work can still be sent.
+  if (
+    reqMeta.action !== "enqueue" &&
+    existingTask &&
+    existingTask.state === "leased" &&
+    // A wrong or missing fence gets its own refusal first (the lease rules below); this check is for the lease holder.
+    String(payload.fencing_token ?? payload.lease_epoch ?? payload.fence_seq ?? payload.claim_revision ?? payload.fence ?? payload.active_fence ?? "").trim() ===
+      String(existingTask.fencing_token ?? "") &&
+    // A result field that is empty ("" or {}) is wrapped into a Task Object below, but it is no result (review M3).
+    !(explicitRawObjects.length > 0 || (rawObjects.length > 0 && !isEmptyResultBody(altResultBody))) &&
+    !rawVerbs.length &&
+    !topEvals.length &&
+    summaryFull.trim().length < QUEUE_GATEWAY_GRID.min_completion_summary_chars
+  ) {
+    return {
+      badRequest: true,
+      code: "empty_completion",
+      detail: `Nothing was saved, and your lease stays. A completion needs your result: a summary of at least ${QUEUE_GATEWAY_GRID.min_completion_summary_chars} characters, a Task Object, a follow-up Task or an evaluation. If you cannot do this Task, give it back instead.`,
+      give_back_url: `${publicUrl}/q/release`,
+    };
+  }
+
+  // Flexible contract, declared-count vs list-length, and run_record check (strict 422 only when opted in).
+  const contractEval = evaluateSubmissionContract(payload, rawObjects, summaryFull);
+  if ((contractEval.strict_enforced || reqMeta.strictContract === true) && !contractEval.contract_clean) {
+    const firstIssue = contractEval.issues[0];
+    return {
+      unprocessable: true,
+      code: firstIssue.code,
+      detail: `Nothing was saved, and your lease stays. ${firstIssue.location}: ${firstIssue.detail} ${firstIssue.repair}`,
+      contract_issues: contractEval.issues,
+      give_back_url: `${publicUrl}/q/release`,
     };
   }
 
@@ -7551,6 +8036,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
   const prevalidatedObjects = [];
   const nestedEvaluations = [];
   const nestedVerbs = [];
+  let nestedSentCount = 0; // follow-ups sent inside task_objects, before the per-submit limit (for the advice below)
   const encoder = new TextEncoder();
 
   for (let i = 0; i < rawObjects.length; i += 1) {
@@ -7623,6 +8109,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       (item.payload && typeof item.payload === "object" && Array.isArray(item.payload.followups) && item.payload.followups) ||
       null;
     if (candidateNestedVerbs) {
+      nestedSentCount += candidateNestedVerbs.length;
       for (const nv of candidateNestedVerbs) {
         if (nestedVerbs.length < QUEUE_GATEWAY_GRID.max_verbs_per_submit) {
           nestedVerbs.push(nv);
@@ -7860,7 +8347,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
         return {
           conflict: true,
           code: "missing_fencing_token",
-          detail: `Completing leased task ${taskId} requires explicit lease_epoch / fencing_token (${curToken}).`,
+          detail: `Completing leased task ${taskId} requires the fencing_token from your claim reply.`,
           expected_fencing_token: curToken,
           expected_lease_epoch: curToken,
           task_state: existingTask.state,
@@ -7880,7 +8367,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
         return {
           conflict: true,
           code: "stale_fencing_token",
-          detail: `Stale or invalid fencing_token / lease_epoch (${effectiveRawFence}) for task ${taskId} (expected=${curToken}).`,
+          detail: `Stale or invalid fencing_token / lease_epoch (${effectiveRawFence}) for task ${taskId}. Your lease ended or moved; claim the Task again by its id.`,
           expected_fencing_token: curToken,
           expected_lease_epoch: curToken,
           task_state: existingTask.state,
@@ -7965,7 +8452,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
           return {
             conflict: true,
             code: "stale_fencing_token",
-            detail: `Stale or invalid fencing_token / lease_epoch (${effectiveRawFence}) for task ${taskId} (expected=${curToken}).`,
+            detail: `Stale or invalid fencing_token / lease_epoch (${effectiveRawFence}) for task ${taskId}. Your lease ended or moved; claim the Task again by its id.`,
             expected_fencing_token: curToken,
             expected_lease_epoch: curToken,
             task_state: existingTask.state,
@@ -8625,7 +9112,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
   for (let i = 0; i < prevalidatedVerbs.length; i += 1) {
     const { v, vPrompt, tier } = prevalidatedVerbs[i];
     const rawKind = String(v.verb_kind || "").trim();
-    const verbKind = ALLOWED_VERB_KINDS.has(rawKind)
+    let verbKind = ALLOWED_VERB_KINDS.has(rawKind)
       ? rawKind
       : tier === "ngo_priority"
         ? "ngo_public_good"
@@ -8633,10 +9120,16 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
           ? "worker_self_directed"
           : "general_verb";
 
+    // A follow-up that needs an independent checker is never pinned to the worker that made the work (producer_guard.js, G3).
+    const needsChecker = needsIndependentChecker({ title: v.title, prompt: vPrompt, verb_kind: verbKind });
     const ownerUuid =
-      v.owner_worker_uuid || v.for_self || verbKind === "worker_self_directed"
-        ? cleanWorkerUuid(v.owner_worker_uuid || workerProfile.worker_uuid)
-        : "";
+      needsChecker && cleanWorkerUuid(v.owner_worker_uuid || workerProfile.worker_uuid) === workerProfile.worker_uuid
+        ? ""
+        : v.owner_worker_uuid || v.for_self || verbKind === "worker_self_directed"
+          ? cleanWorkerUuid(v.owner_worker_uuid || workerProfile.worker_uuid)
+          : "";
+    // With no owner, the maker's own kind of Task would reach no one: it is an evaluation for another worker.
+    if (needsChecker && !ownerUuid && verbKind === "worker_self_directed") verbKind = "eval_and_rank";
 
     const vis =
       tier === "infra_private" ? "server_infra" : tier === "ngo_priority" ? "public_ngo" : "public_commons";
@@ -8688,7 +9181,21 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       rejectedOpenFollowups.push({ title: vTitle, reason: "a follow-up needs a real prompt of at least 24 characters, not only a title" });
       continue;
     }
-    const prio = openLimits ? Math.min(clampedPrio, QUEUE_GATEWAY_GRID.open_followup_priority_cap) : clampedPrio;
+    // Round 4: no-key work keeps the priority it sent, inside 1 to open_followup_priority_cap. Before, an ngo_priority
+    // follow-up went up to the NGO floor (80) and then down to the cap, so every sent value was stored as 60. The tier still
+    // puts NGO Tasks first in a claim. When the stored value differs from the sent one, the reply says why.
+    const sentPrio = v.priority !== undefined && v.priority !== null && Number.isFinite(Number(v.priority)) ? Math.round(Number(v.priority)) : null;
+    const prio = openLimits
+      ? sentPrio !== null
+        ? Math.max(COMPOSITION_DEMAND_GRID.public_priority_floor, Math.min(QUEUE_GATEWAY_GRID.open_followup_priority_cap, sentPrio))
+        : Math.min(clampedPrio, QUEUE_GATEWAY_GRID.open_followup_priority_cap)
+      : clampedPrio;
+    const prioNote =
+      sentPrio === null || sentPrio === prio
+        ? null
+        : openLimits
+          ? `The sent priority ${sentPrio} is outside 1 to ${QUEUE_GATEWAY_GRID.open_followup_priority_cap}, the range for a follow-up from work with no key, so it is stored as ${prio}.`
+          : `The sent priority ${sentPrio} is outside the range for the ${tier} tier, so it is stored as ${prio}.`;
     const vGenDepth = Math.max(
       0,
       Math.min(QUEUE_GATEWAY_GRID.max_generation_depth, Number(v.generation_depth ?? parentGenDepth + 1))
@@ -8871,6 +9378,7 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       complexity_milli: vComplexityMilli,
       generation_depth: vGenDepth,
       priority: prio,
+      ...(prioNote ? { sent_priority: sentPrio, priority_note: prioNote } : {}),
       lsh_band_0: idxMeta.lsh_band_0,
       title: vTitle,
       permalink_url: `${publicUrl}/c/${encodeURIComponent(explicitVerbId)}`,
@@ -9219,6 +9727,15 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
   }
 
   const selfSeedNoObject = taskId === "self_seed" && !storedObjects.length;
+  // Work with no Task has no Task row to hold its code, so /c/<verification_code> could not open. The code is kept as a name
+  // for the first Task Object, and that page answers to it.
+  if (taskId === "self_seed" && storedObjects[0]?.object_key && verificationCode) {
+    await db
+      .prepare("INSERT OR IGNORE INTO herma_object_aliases (alias_key, target_object_key, created_at) VALUES (?, ?, ?)")
+      .bind(`code:${verificationCode}`, storedObjects[0].object_key, nowIso)
+      .run()
+      .catch(() => {});
+  }
   const primaryPermalinkId =
     existingTask && !salvagedConcurrentTwinAttempt && !preservePriorPrimaryCompletion
       ? verificationCode
@@ -9295,8 +9812,11 @@ async function processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed
       : {}),
     applied_evaluations: appliedEvaluations,
     ...(rejectedOpenFollowups.length ? { rejected_followup_tasks: rejectedOpenFollowups } : {}),
+    ...followupAdvice(verbsList.length + nestedSentCount), // review M2: top-level and nested follow-ups together
     enqueued_followup_tasks: enqueuedVerbs,
     enqueued_followup_verbs: enqueuedVerbs,
+    contract_clean: contractEval.contract_clean,
+    ...(contractEval.issues.length > 0 ? { contract_warnings: contractEval.issues } : {}),
     queue_counts_by_tier: pulse.queue_counts_by_tier,
     next_claim_url: `${publicUrl}/q/claim/${encodeURIComponent(agentId)}?worker_uuid=${encodeURIComponent(workerProfile.worker_uuid)}&slot=auto`,
   };
@@ -9508,7 +10028,13 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
                               ? "dashboard"
                               : rootSeg === "dashboard.js"
                                 ? "dashboard_js"
-                                : rootSeg === "c"
+                                : rootSeg === "discover"
+                                  ? "discover_page"
+                                  : rootSeg === "discover.js"
+                                    ? "discover_js"
+                                    : rootSeg === "models"
+                                      ? "models_page"
+                                      : rootSeg === "c"
                                   ? "permalink_c"
                                   : rootSeg === "w"
                                     ? "permalink_w"
@@ -9547,10 +10073,20 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     action !== "dashboard.js" &&
     action !== "demo-runner.js" &&
     action !== "prompts_js" &&
-    action !== "prompts.js";
+    action !== "prompts.js" &&
+    action !== "discover_js" &&
+    action !== "discover.js";
 
-  const MUTATING_GET_ACTIONS = new Set(["claim", "submit", "complete", "enqueue", "onboard", "register", "heartbeat"]);
+  const MUTATING_GET_ACTIONS = new Set(["claim", "submit", "complete", "enqueue", "onboard", "register", "heartbeat", "release", "checkpoint"]);
+  // Claimed agent names (agent_names.js): set below for a write, before its handler runs.
+  let nameGate = { ok: true };
+  let autoAssignedAgentId = "";
   const finalizeWithTrace = async (resp, status, errorCode = "") => {
+    // A first write that failed does not keep the name it claimed (review of item 4): the agent can send it again.
+    if (nameGate?.issued && status >= QUEUE_GATEWAY_GRID.http_bad_request) {
+      await releaseFailedClaim(db, nameGate.issued).catch(() => {});
+      nameGate = { ok: true };
+    }
     const skipReadOnlyTrace =
       method === "HEAD" ||
       (method === "GET" && status < QUEUE_GATEWAY_GRID.http_bad_request && !MUTATING_GET_ACTIONS.has(action));
@@ -9572,11 +10108,18 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         detail: traceCtx.detail,
       });
     }
+    // Server-Timing (owner, Nov 6): the time this Worker spent on the answer, so a slow route shows where the time goes.
+    try {
+      resp.headers.append("server-timing", `app;dur=${Date.now() - reqStartMs}`);
+    } catch {
+      // A response with fixed headers keeps them.
+    }
     return withSecurity(resp);
   };
 
-  const sendJson = (obj, status = QUEUE_GATEWAY_GRID.http_ok, extraHeaders = {}) =>
-    finalizeWithTrace(
+  const sendJson = async (obj, status = QUEUE_GATEWAY_GRID.http_ok, extraHeaders = {}) => {
+    obj = await withNameGate(db, nameGate, obj, status);
+    return finalizeWithTrace(
       new Response(JSON.stringify(addNextToRefusal(obj, status, publicUrl, action), null, 2), {
         status,
         headers: { "content-type": "application/json; charset=utf-8", ...extraHeaders },
@@ -9584,9 +10127,10 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       status,
       obj?.code || obj?.error || ""
     );
+  };
   const sendText = (txt, status = QUEUE_GATEWAY_GRID.http_ok, errorCode = "") =>
     finalizeWithTrace(
-      new Response(txt, {
+      new Response(nameGate.issued && status < QUEUE_GATEWAY_GRID.http_bad_request ? [...claimReplyLines(nameGate.issued), "", txt].join("\n") : txt, {
         status,
         headers: { "content-type": "text/plain; charset=utf-8" },
       }),
@@ -9602,6 +10146,131 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       status,
       errorCode
     );
+
+  // Claimed agent names (owner, Nov 6): a write under a claimed name needs its worker_token; a new name is claimed by its
+  // first write; a bare name is not taken as a new ID. Reads, previews and server workers are not gated.
+  if (env?.AGENT_NAME_CLAIMS !== "off" && NAME_GATED_ACTIONS.has(action) && (method === "POST" || (method === "GET" && NAME_GATED_GETS.has(action)))) {
+    // Read the body the way the handlers do: JSON, gzip JSON, or a form (review of item 4, round 2).
+    const body = method === "POST" ? await peekWriteBody(request) : null;
+    const optOp = action === "optimize" && method === "POST" ? String(body?.operation || body?.mode || "").trim().toLowerCase() : "";
+    const skipReadOnlyOptimizeGate =
+      action === "optimize" &&
+      method === "POST" &&
+      (optOp === "inspect" ||
+        optOp === "compile_dag" ||
+        optOp === "macro_dag" ||
+        Boolean(body?.goal && !body?.axes && !body?.arms && !body?.trajectory && !body?.observations));
+    const modelsSub = action === "models" && method === "POST" ? safeDecode(segments[2] || "").trim().toLowerCase() : "";
+    const modelsOp = action === "models" && method === "POST" ? String(body?.operation || body?.mode || "").trim().toLowerCase() : "";
+    const skipReadOnlyModelsGate =
+      action === "models" &&
+      method === "POST" &&
+      (modelsSub === "infer" ||
+        (Boolean(modelsSub) && modelsSub !== "register" && modelsSub !== "evaluate") ||
+        (!modelsSub && (modelsOp === "infer" || modelsOp === "list" || modelsOp === "inspect")));
+    const isModelsEvaluate =
+      action === "models" &&
+      method === "POST" &&
+      !skipReadOnlyModelsGate &&
+      (modelsSub === "evaluate" ||
+        modelsOp === "evaluate" ||
+        (!modelsSub && body?.live_score !== undefined));
+    const skipProducerAboutOthers = NAME_FIELDS_ABOUT_OTHERS.has(action) || isModelsEvaluate;
+    if (!skipReadOnlyOptimizeGate && !skipReadOnlyModelsGate) {
+      const pathName = NAME_IN_PATH_ACTIONS.has(action) && segments[2] ? safeDecode(segments[2]) : "";
+      const names = [];
+      const addName = (v) => {
+        if (typeof v === "string" && v.trim() && !names.includes(v.trim())) names.push(v.trim());
+      };
+      addName(pathName);
+      for (const key of NAME_FIELDS) {
+        if (key === "producer_agent" && skipProducerAboutOthers) continue;
+        addName(body?.[key]);
+        addName(url.searchParams.get(key));
+      }
+      const uuids = [body?.worker_uuid, url.searchParams.get("worker_uuid")].filter((v) => typeof v === "string" && v.trim());
+      // A worker id stands for the name it belongs to; one sent in a name field counts the same way, and is also kept as a name.
+      for (const v of [...uuids, ...names.filter((n) => /^w_[a-z0-9_]+$/i.test(n))]) {
+        const owner = await db.prepare("SELECT agent_id FROM herma_worker_registry WHERE worker_uuid = ?").bind(String(v).slice(0, 96)).first().catch(() => null);
+        addName(owner?.agent_id);
+      }
+      const rawAutoFlag = String(
+        url.searchParams.get("auto_suffix") ??
+          url.searchParams.get("auto_id") ??
+          body?.auto_suffix ??
+          body?.auto_id ??
+          ""
+      ).toLowerCase();
+      const wantAutoSuffix = ["1", "true", "yes", "always"].includes(rawAutoFlag);
+      const isReadOnlyEmptyCheckpointGet =
+        action === "checkpoint" && method === "GET" && !segments[2] && !url.searchParams.get("task_id");
+      if (wantAutoSuffix && !isReadOnlyEmptyCheckpointGet) {
+        const firstRaw = names[0] ? cleanAgentId(names[0]) : "";
+        if (!firstRaw || firstRaw === "volunteer-agent" || firstRaw === "volunteer-worker" || isBareAgentName(firstRaw)) {
+          const seedBase =
+            firstRaw && firstRaw !== "volunteer-agent" && firstRaw !== "volunteer-worker" ? firstRaw : "agent";
+          autoAssignedAgentId = suggestAgentId(seedBase);
+          if (names.length === 0) names.push(autoAssignedAgentId);
+          else names[0] = autoAssignedAgentId;
+        }
+      }
+      if (names.length > MAX_NAMES_PER_WRITE) {
+        return sendJson({ ok: false, code: "too_many_agent_names", detail: `This write names ${names.length} different agents. Send one agent ID (agent_id) and, if you need it, one worker_uuid.` }, QUEUE_GATEWAY_GRID.http_bad_request);
+      }
+      // Every name a write could act as is checked; only the first one can be claimed by this write.
+      const token = tokenFromRequest(request, url, body);
+      for (const [i, raw] of names.entries()) {
+        let gate = await agentNameGate(db, { agentId: cleanAgentId(raw), token, infraAllowed, publicUrl, claimNew: i === 0 });
+        if (!gate.ok && i === 0 && rawAutoFlag === "always" && gate.body?.suggested_agent_id) {
+          autoAssignedAgentId = gate.body.suggested_agent_id;
+          gate = await agentNameGate(db, { agentId: autoAssignedAgentId, token: "", infraAllowed, publicUrl, claimNew: true });
+        }
+        if (!gate.ok) {
+          if (nameGate.issued) await releaseFailedClaim(db, nameGate.issued).catch(() => {});
+          nameGate = { ok: true };
+          traceCtx.agent_id = cleanAgentId(raw);
+          return sendJson(gate.body, gate.status || 409);
+        }
+        if (i === 0) {
+          nameGate = autoAssignedAgentId
+            ? { ...gate, auto_assigned_agent_id: true, resolved_agent_id: autoAssignedAgentId }
+            : gate;
+        }
+      }
+    }
+  }
+
+  // What an agent does after a saved submit. withPersonLinks adds the links to show its person.
+  // Owner, Nov 6: advisory. A worker with time left may take another Task; one with no time stops.
+  const submitNext = (out) => ({
+    action: "report_then_continue_or_stop",
+    advisory: true,
+    may_continue: true,
+    url: `${publicUrl}/q/next?agent_id=${encodeURIComponent(out.agent_id || "")}`,
+    why: "Saved. Show your person the share line. If your run has time and your rules allow it, take another Task at this url. If not, stop here.",
+    retry_same_call: false,
+  });
+
+  // One agent's public work, or one public Task, as a page, its text copy or its JSON copy. Public items only, whoever asks.
+  const sendAgentOrTaskPage = async (kind, rawSegment) => {
+    const { id, format } = readPageAddress(rawSegment, url);
+    if (kind === "agent") {
+      const agentId = cleanAgentName(id);
+      traceCtx.agent_id = agentId;
+      const data = await buildAgentPageData(db, publicUrl, agentId, { ...readPaging(url), rawName: id });
+      const status = data.found ? QUEUE_GATEWAY_GRID.http_ok : QUEUE_GATEWAY_GRID.http_not_found;
+      if (format === "json") return sendJson(data.found ? data : { ...data, code: "agent_not_found", detail: `No public work is recorded under this agent name yet. Instructions: ${publicUrl}/llms.txt` }, status);
+      if (format === "txt") return sendText(renderAgentPageText(publicUrl, data, id), status, data.found ? "" : "agent_not_found");
+      return sendHtml(renderAgentPageHtml(publicUrl, data, id), status, data.found ? "" : "agent_not_found");
+    }
+    const taskId = id.slice(0, QUEUE_GATEWAY_GRID.task_id_max_len);
+    traceCtx.task_id = taskId;
+    const data = await buildTaskPageData(db, publicUrl, taskId);
+    const status = data.found ? QUEUE_GATEWAY_GRID.http_ok : QUEUE_GATEWAY_GRID.http_not_found;
+    if (format === "json") return sendJson(data.found ? data : { ...data, code: "task_not_found", detail: `No public Task matches this id. Instructions: ${publicUrl}/llms.txt` }, status);
+    if (format === "txt") return sendText(renderTaskPageText(publicUrl, data, id), status, data.found ? "" : "task_not_found");
+    return sendHtml(renderTaskPageHtml(publicUrl, data, id), status, data.found ? "" : "task_not_found");
+  };
 
   // Free-Access Window Guardrail (`2026-12-31T23:59:59-05:00` + `FREE_ACCESS_KILL_SWITCH` + scoped `hk_*` key bypass)
   const freeWindowCheck = await evaluateFreeAccessWindowGuardrail(request, url, env, db, {
@@ -9637,6 +10306,380 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       max_chunked_payload_bytes: QUEUE_GATEWAY_GRID.max_chunked_payload_bytes,
       timestamp: new Date().toISOString(),
     });
+  }
+
+  // Public Open-Source Discovery Gallery, 36-Category Browser, Rankings, Showcase & Feeds (`/discover`, `/q/discover`, `/q/feed.json`, `/q/rss.xml`, `/q/atom.xml`)
+  if (action === "discover_js" || action === "discover.js") {
+    if (method !== "GET" && method !== "HEAD") {
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+    }
+    return withSecurity(
+      new Response(method === "HEAD" ? null : renderDiscoverJs(), {
+        status: QUEUE_GATEWAY_GRID.http_ok,
+        headers: { "content-type": "application/javascript; charset=utf-8" },
+      })
+    );
+  }
+
+  if (action === "models_page") {
+    if (method !== "GET" && method !== "HEAD") {
+      return sendJson(
+        { ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` },
+        QUEUE_GATEWAY_GRID.http_method_not_allowed
+      );
+    }
+    if (segments.length > 1) {
+      return sendJson(
+        { ok: false, code: "not_found", detail: `No page matches ${url.pathname}. Open ${publicUrl}/models or ${publicUrl}/q/models.` },
+        QUEUE_GATEWAY_GRID.http_not_found
+      );
+    }
+    const acceptHdr = String(request.headers.get("accept") || "").toLowerCase();
+    const explicitJson =
+      url.searchParams.get("format") === "json" ||
+      (acceptHdr.includes("application/json") && !acceptHdr.includes("text/html"));
+    const catalog = await queryWeightModelCatalog(db, publicUrl, Object.fromEntries(url.searchParams.entries()));
+    if (explicitJson) {
+      return sendJson(catalog);
+    }
+    const html = renderModelsHubHtml(publicUrl, catalog);
+    if (method === "HEAD") {
+      return finalizeWithTrace(
+        new Response(null, {
+          status: QUEUE_GATEWAY_GRID.http_ok,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
+        QUEUE_GATEWAY_GRID.http_ok
+      );
+    }
+    return sendHtml(html);
+  }
+
+  if (action === "models" || action === "models.txt") {
+    if (action === "models.txt" && method !== "GET" && method !== "HEAD") {
+      return sendJson(
+        { ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` },
+        QUEUE_GATEWAY_GRID.http_method_not_allowed
+      );
+    }
+    if (method !== "GET" && method !== "HEAD" && method !== "POST") {
+      return sendJson(
+        { ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` },
+        QUEUE_GATEWAY_GRID.http_method_not_allowed
+      );
+    }
+    const rawSeg2 = safeDecode(segments[2] || "").trim();
+    const rawSeg3 = safeDecode(segments[3] || "").trim();
+    const subLower = rawSeg2.toLowerCase();
+
+    if (subLower === "infer") {
+      if (method === "GET" || method === "HEAD") {
+        const queryInput = Object.fromEntries(url.searchParams.entries());
+        const out = await runHubInference(request, db, publicUrl, queryInput, { skipPersist: method === "HEAD" });
+        return sendJson(out.body, out.status);
+      }
+      const parsedInfer = await readPossiblyGzippedJson(request, WEIGHT_MODEL_HUB_GRID.request_max_bytes);
+      if (parsedInfer.payloadTooLarge) {
+        return sendJson(
+          { ok: false, code: "payload_too_large", max_bytes: parsedInfer.max_bytes, actual_bytes: parsedInfer.actual_bytes },
+          QUEUE_GATEWAY_GRID.http_payload_too_large
+        );
+      }
+      if (parsedInfer.invalidGzip || parsedInfer.invalidEncoding || parsedInfer.invalidJson) {
+        return sendJson(
+          { ok: false, code: parsedInfer.invalidJson ? "invalid_json" : "invalid_gzip", detail: "Model inference body must be valid JSON." },
+          QUEUE_GATEWAY_GRID.http_bad_request
+        );
+      }
+      const mergedInput = { ...Object.fromEntries(url.searchParams.entries()), ...(parsedInfer.json || {}) };
+      const out = await runHubInference(request, db, publicUrl, mergedInput);
+      return sendJson(out.body, out.status);
+    }
+
+    if (subLower === "register" || subLower === "evaluate") {
+      if (method !== "POST") {
+        return sendJson(
+          {
+            ok: false,
+            error: "method_not_allowed",
+            detail: `POST JSON to ${publicUrl}/q/models/${subLower}. Read catalog at ${publicUrl}/q/models.`,
+          },
+          QUEUE_GATEWAY_GRID.http_method_not_allowed
+        );
+      }
+      const parsedWrite = await readPossiblyGzippedJson(request, WEIGHT_MODEL_HUB_GRID.request_max_bytes);
+      if (parsedWrite.payloadTooLarge) {
+        return sendJson(
+          { ok: false, code: "payload_too_large", max_bytes: parsedWrite.max_bytes, actual_bytes: parsedWrite.actual_bytes },
+          QUEUE_GATEWAY_GRID.http_payload_too_large
+        );
+      }
+      if (parsedWrite.invalidGzip || parsedWrite.invalidEncoding || parsedWrite.invalidJson) {
+        return sendJson(
+          { ok: false, code: parsedWrite.invalidJson ? "invalid_json" : "invalid_gzip", detail: "Model request body must be valid JSON." },
+          QUEUE_GATEWAY_GRID.http_bad_request
+        );
+      }
+      const body = parsedWrite.json || {};
+      const subOp = String(body.operation || body.mode || "").trim().toLowerCase();
+      const effectiveMode = subLower === "evaluate" || subOp === "evaluate" ? "evaluate" : "register";
+      const rawAgent =
+        autoAssignedAgentId ||
+        body.agent_id ||
+        (effectiveMode === "evaluate" ? body.evaluator_agent_id || body.evaluator_agent : body.producer_agent) ||
+        body.agent ||
+        body.worker ||
+        url.searchParams.get("agent_id") ||
+        "";
+      if (!String(rawAgent).trim()) {
+        return sendJson(
+          { ok: false, code: "missing_agent_id", detail: `POST /q/models/${effectiveMode} requires agent_id.` },
+          QUEUE_GATEWAY_GRID.http_bad_request
+        );
+      }
+      const agentId = autoAssignedAgentId || cleanAgentId(rawAgent);
+      if (
+        env?.AGENT_NAME_CLAIMS !== "off" &&
+        !infraAllowed &&
+        !autoAssignedAgentId &&
+        nameGate?.issued?.agent_id !== agentId.toLowerCase()
+      ) {
+        const verifyGate = await agentNameGate(db, {
+          agentId,
+          token: tokenFromRequest(request, url, body),
+          infraAllowed,
+          publicUrl,
+          claimNew: false,
+        });
+        if (!verifyGate.ok) {
+          return sendJson(verifyGate.body, verifyGate.status || QUEUE_GATEWAY_GRID.http_conflict);
+        }
+      }
+      traceCtx.agent_id = agentId;
+      const out =
+        effectiveMode === "evaluate"
+          ? await evaluateWeightModel(db, publicUrl, agentId, body)
+          : await registerWeightModel(db, publicUrl, agentId, body);
+      return sendJson(out.body, out.status);
+    }
+
+    if (method === "POST") {
+      if (rawSeg2 && (rawSeg3.toLowerCase() === "export" || rawSeg3 === "weights.safetensors") && !segments[4]) {
+        return sendJson(
+          {
+            ok: false,
+            error: "method_not_allowed",
+            detail: `GET ${publicUrl}${url.pathname}${url.search} is read-only and does not take POST.`,
+          },
+          QUEUE_GATEWAY_GRID.http_method_not_allowed,
+          { allow: "GET, HEAD" }
+        );
+      }
+      if (rawSeg2) {
+        return sendJson(
+          {
+            ok: false,
+            code: "unknown_models_subroute",
+            detail: `Unsupported POST path ${url.pathname}. Use /q/models/infer, /q/models/register, or /q/models/evaluate.`,
+          },
+          QUEUE_GATEWAY_GRID.http_not_found
+        );
+      }
+      const parsedRoot = await readPossiblyGzippedJson(request, WEIGHT_MODEL_HUB_GRID.request_max_bytes);
+      if (parsedRoot.payloadTooLarge) {
+        return sendJson(
+          { ok: false, code: "payload_too_large", max_bytes: parsedRoot.max_bytes, actual_bytes: parsedRoot.actual_bytes },
+          QUEUE_GATEWAY_GRID.http_payload_too_large
+        );
+      }
+      if (parsedRoot.invalidGzip || parsedRoot.invalidEncoding || parsedRoot.invalidJson) {
+        return sendJson(
+          { ok: false, code: parsedRoot.invalidJson ? "invalid_json" : "invalid_gzip", detail: "Model request body must be valid JSON." },
+          QUEUE_GATEWAY_GRID.http_bad_request
+        );
+      }
+      const body = parsedRoot.json || {};
+      const op = String(body.operation || body.mode || "").trim().toLowerCase();
+      if (op === "list" || op === "inspect") {
+        const cat = await queryWeightModelCatalog(db, publicUrl, body);
+        return sendJson(cat);
+      }
+      if (op === "infer") {
+        const out = await runHubInference(request, db, publicUrl, body);
+        return sendJson(out.body, out.status);
+      }
+      const effectiveMode = op === "evaluate" || body.live_score !== undefined ? "evaluate" : "register";
+      const rawAgent =
+        autoAssignedAgentId ||
+        body.agent_id ||
+        (effectiveMode === "evaluate" ? body.evaluator_agent_id || body.evaluator_agent : body.producer_agent) ||
+        body.agent ||
+        body.worker ||
+        url.searchParams.get("agent_id") ||
+        "";
+      if (!String(rawAgent).trim()) {
+        return sendJson(
+          {
+            ok: false,
+            code: "missing_agent_id",
+            detail: "POST /q/models requires agent_id for register/evaluate (or set operation='infer' for stateless edge inference).",
+          },
+          QUEUE_GATEWAY_GRID.http_bad_request
+        );
+      }
+      const agentId = autoAssignedAgentId || cleanAgentId(rawAgent);
+      if (
+        env?.AGENT_NAME_CLAIMS !== "off" &&
+        !infraAllowed &&
+        !autoAssignedAgentId &&
+        nameGate?.issued?.agent_id !== agentId.toLowerCase()
+      ) {
+        const verifyGate = await agentNameGate(db, {
+          agentId,
+          token: tokenFromRequest(request, url, body),
+          infraAllowed,
+          publicUrl,
+          claimNew: false,
+        });
+        if (!verifyGate.ok) {
+          return sendJson(verifyGate.body, verifyGate.status || QUEUE_GATEWAY_GRID.http_conflict);
+        }
+      }
+      traceCtx.agent_id = agentId;
+      const out =
+        effectiveMode === "evaluate"
+          ? await evaluateWeightModel(db, publicUrl, agentId, body)
+          : await registerWeightModel(db, publicUrl, agentId, body);
+      return sendJson(out.body, out.status);
+    }
+
+    if (rawSeg2 && rawSeg3 === "weights.safetensors" && !segments[4]) {
+      const dl = await buildModelSafetensorsDownload(db, rawSeg2);
+      if (!dl) {
+        return sendJson(
+          { ok: false, code: "model_not_found", detail: `No hosted model matches '${rawSeg2}'.` },
+          QUEUE_GATEWAY_GRID.http_not_found
+        );
+      }
+      return finalizeWithTrace(
+        new Response(method === "HEAD" ? null : dl.bytes, {
+          status: QUEUE_GATEWAY_GRID.http_ok,
+          headers: {
+            "content-type": "application/octet-stream",
+            "content-disposition": `attachment; filename="${dl.filename}"`,
+            "content-length": String(dl.bytes.byteLength),
+            "cache-control": `public, max-age=${WEIGHT_MODEL_HUB_GRID.cache_max_age_sec}`,
+          },
+        }),
+        QUEUE_GATEWAY_GRID.http_ok
+      );
+    }
+
+    if (rawSeg2 && rawSeg3.toLowerCase() === "export" && !segments[4]) {
+      const exp = await buildModelPortableExport(db, publicUrl, rawSeg2, url.searchParams.get("runtime"));
+      if (exp.errorBody) {
+        return sendJson(exp.errorBody, exp.status);
+      }
+      return finalizeWithTrace(
+        new Response(method === "HEAD" ? null : exp.bytes, {
+          status: QUEUE_GATEWAY_GRID.http_ok,
+          headers: {
+            "content-type": exp.contentType,
+            "content-disposition": `inline; filename="${exp.filename}"`,
+            "content-length": String(exp.bytes.byteLength),
+            "cache-control": `public, max-age=${WEIGHT_MODEL_HUB_GRID.cache_max_age_sec}`,
+          },
+        }),
+        QUEUE_GATEWAY_GRID.http_ok
+      );
+    }
+
+    if (rawSeg2 && !rawSeg3) {
+      const wantsDetailTxt =
+        rawSeg2.endsWith(".txt") ||
+        url.searchParams.get("format") === "text" ||
+        ((request.headers.get("accept") || "").toLowerCase().includes("text/plain") &&
+          !(request.headers.get("accept") || "").toLowerCase().includes("application/json") &&
+          url.searchParams.get("format") !== "json");
+      const targetModelId = rawSeg2.endsWith(".txt") ? rawSeg2.slice(0, -4) : rawSeg2;
+      const detail = await getWeightModelDetail(db, publicUrl, targetModelId);
+      if (!detail) {
+        return sendJson(
+          { ok: false, code: "model_not_found", detail: `No hosted model matches '${targetModelId}'.` },
+          QUEUE_GATEWAY_GRID.http_not_found
+        );
+      }
+      if (wantsDetailTxt) return sendText(renderModelDetailText(detail));
+      return sendJson(detail);
+    }
+
+    if (rawSeg2 && rawSeg3) {
+      return sendJson(
+        { ok: false, code: "not_found", detail: `Unsupported model path ${url.pathname}.` },
+        QUEUE_GATEWAY_GRID.http_not_found
+      );
+    }
+
+    const acceptHdr = String(request.headers.get("accept") || "").toLowerCase();
+    const wantsCatalogTxt =
+      action === "models.txt" ||
+      url.pathname.endsWith(".txt") ||
+      url.searchParams.get("format") === "text" ||
+      (acceptHdr.includes("text/plain") && !acceptHdr.includes("application/json") && !acceptHdr.includes("text/html") && url.searchParams.get("format") !== "json");
+    const catalog = await queryWeightModelCatalog(db, publicUrl, Object.fromEntries(url.searchParams.entries()));
+    if (wantsCatalogTxt) return sendText(renderModelsCatalogText(catalog));
+    return sendJson(catalog);
+  }
+
+  if (action === "discover_page") {
+    if (method !== "GET" && method !== "HEAD") {
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+    }
+    if (wantsJson) {
+      const apiOut = await handleDiscoverApi(request, url, db, publicUrl);
+      return sendJson(apiOut.body, apiOut.status);
+    }
+    const state = await queryDiscoverCatalog(db, publicUrl, Object.fromEntries(url.searchParams.entries()));
+    const html = renderDiscoverHtml(publicUrl, state);
+    if (method === "HEAD") {
+      return finalizeWithTrace(
+        new Response(null, {
+          status: QUEUE_GATEWAY_GRID.http_ok,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
+        QUEUE_GATEWAY_GRID.http_ok
+      );
+    }
+    return sendHtml(html);
+  }
+
+  if (action === "discover") {
+    const out = await handleDiscoverApi(request, url, db, publicUrl);
+    return sendJson(out.body, out.status);
+  }
+
+  if (action === "feed.json" || action === "feed") {
+    const out = await handleDiscoverJsonFeed(request, url, db, publicUrl);
+    return finalizeWithTrace(
+      new Response(out.rawBody, { status: out.status, headers: out.headers }),
+      out.status
+    );
+  }
+
+  if (action === "rss.xml" || action === "rss") {
+    const out = await handleDiscoverRssXml(request, url, db, publicUrl);
+    return finalizeWithTrace(
+      new Response(out.rawBody, { status: out.status, headers: out.headers }),
+      out.status
+    );
+  }
+
+  if (action === "atom.xml" || action === "atom") {
+    const out = await handleDiscoverAtomXml(request, url, db, publicUrl);
+    return finalizeWithTrace(
+      new Response(out.rawBody, { status: out.status, headers: out.headers }),
+      out.status
+    );
   }
 
   // Real Downloadable Worker Onboarding Kits (`/kits`, `/kits.js`, `/kits/*`, `/q/kits/*`)
@@ -9694,7 +10737,8 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     if (method !== "GET" && method !== "HEAD") {
       return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
-    return sendJson(await buildAffinitySnapshot(db, infraAllowed, publicUrl));
+    // These rows carry names that workers and their local runners send; the shared word list applies at display time.
+    return sendJson(scrubBannedDeep(await buildAffinitySnapshot(db, infraAllowed, publicUrl)));
   }
 
   const gatewayOps = {
@@ -9762,6 +10806,11 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           return { forbidden: true };
         }
         if (target && target.state === "ready") {
+          const makerReason = await producerConflict(db, target, { agentId: cleanAgentId(agentId), workerUuid });
+          if (makerReason) {
+            await unpinFromMaker(db, target, String(workerUuid || ""), cleanAgentId(agentId));
+            return { forbidden: true, code: "producer_cannot_evaluate", detail: producerRefusal(publicUrl, { agentId, taskId: target.task_id, reason: makerReason }).detail };
+          }
           const nowMs = Date.now();
           const nowIso = new Date(nowMs).toISOString();
           const expIso = new Date(nowMs + QUEUE_GATEWAY_GRID.lease_ttl_ms).toISOString();
@@ -9803,7 +10852,12 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         const readyHit = (hits?.results || []).find((h) => h.doc_type === "task" && h.state === "ready");
         if (readyHit?.id) {
           const target = await db.prepare("SELECT * FROM herma_durable_queue WHERE task_id = ?").bind(readyHit.id).first();
-          if (target && target.state === "ready" && (target.visibility !== "server_infra" || infraAllowed)) {
+          if (
+            target &&
+            target.state === "ready" &&
+            (target.visibility !== "server_infra" || infraAllowed) &&
+            !(await producerConflict(db, target, { agentId: cleanAgentId(agentId), workerUuid }))
+          ) {
             const nowMs = Date.now();
             const nowIso = new Date(nowMs).toISOString();
             const expIso = new Date(nowMs + QUEUE_GATEWAY_GRID.lease_ttl_ms).toISOString();
@@ -9851,7 +10905,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         userAgent,
         workerToken: subPayload.worker_token || "",
         latencyMs: Date.now() - reqStartMs,
-      }).then((out) => (out.taskNotFound ? { forbidden: true, code: "task_not_found", detail: out.detail } : out)),
+      }).then((out) => (out.taskNotFound ? { forbidden: true, code: "task_not_found", detail: out.detail } : out.badRequest ? { forbidden: true, code: out.code, detail: out.detail } : out)),
     storeReasoningSuggestionObject: (spec) => storeReasoningSuggestionTaskObject(db, publicUrl, spec),
     lookupTaskObjectByKey: async (key, qOpts = {}) => {
       const r = await lookupTaskObjectByKey(db, infraAllowed, key, publicUrl, qOpts);
@@ -9861,10 +10915,47 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
   };
 
   if (action === "schema") {
-    const out = await handleSchemaCoachRequest(request, url, publicUrl, {
-      infraAllowed,
-      subAction: String(segments[2] || "").trim(),
-    });
+    const subAction = String(segments[2] || "").trim();
+    // /q/schema/validate also runs the rules /q/submit enforces (submit_check.js), on a copy of the body.
+    const rawText = subAction === "validate" && method === "POST" ? await request.clone().text().catch(() => "") : "";
+    const out = await handleSchemaCoachRequest(request, url, publicUrl, { infraAllowed, subAction });
+    if (subAction === "validate" && out.status === QUEUE_GATEWAY_GRID.http_ok && out.body?.ok) {
+      let candidate = null;
+      if (method === "POST") {
+        try {
+          candidate = JSON.parse(rawText || "{}");
+        } catch {
+          candidate = null;
+        }
+      } else if (!url.searchParams.has("sample") && url.searchParams.size > 0) {
+        candidate = Object.fromEntries(url.searchParams.entries());
+      }
+      if (candidate) {
+        const strictParam = String(
+          url.searchParams.get("strict") || url.searchParams.get("strict_contract") || ""
+        ).toLowerCase();
+        if (strictParam === "1" || strictParam === "true") {
+          candidate.strict_contract = true;
+        }
+        const check = await checkSubmitCandidate(db, candidate, {
+          rawBytes: new TextEncoder().encode(rawText).length,
+          openLimits: env?.OPEN_WORK_LIMITS === "on",
+          infraAllowed,
+        });
+        const valid = Boolean(out.body.valid_for_open_world_submit) && check.would_save;
+        return sendJson(
+          {
+            ...out.body,
+            valid,
+            valid_for_open_world_submit: valid,
+            contract_clean: check.contract_clean,
+            contract_issues: check.contract_issues,
+            submit_check: check,
+          },
+          out.status
+        );
+      }
+    }
     return sendJson(out.body, out.status);
   }
 
@@ -9947,6 +11038,387 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     return sendJson(await workNextResponse(url, db, { publicUrl, fieldSql: FIELD_WORK_SQL, infraAllowed }));
   }
 
+  if (action === "resume") {
+    if (method !== "GET" && method !== "HEAD") {
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+    }
+    const pathSeg = safeDecode(segments[2] || "").trim();
+    const rawSeg = pathSeg || safeDecode(url.searchParams.get("agent_id") || url.searchParams.get("agent") || "").trim();
+    const acceptHdr = String(request.headers.get("accept") || "").toLowerCase();
+    const wantsTextSuffix =
+      Boolean(pathSeg) &&
+      pathSeg.toLowerCase().endsWith(".txt") &&
+      url.searchParams.get("format") !== "json";
+    const strippedSeg = wantsTextSuffix ? rawSeg.slice(0, -".txt".length) : rawSeg;
+    if (!strippedSeg) {
+      return sendJson({
+        ok: true,
+        schema: "shim.session_resume.v1",
+        read_only: "Open GET /q/resume/<agent_id> (or /q/resume/<agent_id>.txt) to hydrate active leases, saved checkpoints, and unseen ready Tasks.",
+        token_header: "X-Worker-Token",
+        note: "Active fencing_token values appear only when you send the matching X-Worker-Token header or ?wt=<token>.",
+        local_cell: buildLocalCellHint(publicUrl),
+      });
+    }
+    const agentId = cleanAgentId(strippedSeg);
+    traceCtx.agent_id = agentId;
+    const rawToken = tokenFromRequest(request, url, null);
+    const tokenMatched = Boolean(infraAllowed || (await doesTokenMatchAgentClaim(db, agentId, rawToken)));
+    const compact =
+      wantsTextSuffix ||
+      ["1", "true"].includes(String(url.searchParams.get("compact") || "").toLowerCase()) ||
+      url.searchParams.get("format") === "text";
+    const campaign = String(url.searchParams.get("campaign") || "default");
+    const askedMaxBytes = Number(url.searchParams.get("max_bytes"));
+    const resumed = await hydrateSessionResume(db, publicUrl, {
+      agentId,
+      tokenMatched,
+      infraAllowed,
+      campaign,
+      compact,
+      maxBytes: Number.isFinite(askedMaxBytes) && askedMaxBytes > 0 ? askedMaxBytes : DURABLE_SESSION_GRID.resume_default_max_bytes,
+      suggestNextTasks: () => {
+        const subUrl = new URL(`${publicUrl}/q/next`);
+        subUrl.searchParams.set("agent_id", agentId);
+        subUrl.searchParams.set("unseen_only", "1");
+        subUrl.searchParams.set("campaign", campaign);
+        subUrl.searchParams.set("limit", String(DURABLE_SESSION_GRID.resume_suggested_tasks));
+        return workNextResponse(subUrl, db, { publicUrl, fieldSql: FIELD_WORK_SQL, infraAllowed });
+      },
+    });
+    if (!compact && resumed && typeof resumed === "object") {
+      resumed.local_cell = buildLocalCellHint(publicUrl, { agentId });
+    }
+    const sendPlain =
+      wantsTextSuffix ||
+      url.searchParams.get("format") === "text" ||
+      (acceptHdr.includes("text/plain") && !acceptHdr.includes("application/json") && !acceptHdr.includes("text/html") && url.searchParams.get("format") !== "json");
+    if (sendPlain) return sendText(renderSessionResumeText(resumed));
+    return sendJson(resumed);
+  }
+
+  if (action === "checkpoint") {
+    if (method !== "GET" && method !== "HEAD" && method !== "POST") {
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+    }
+    if (method === "GET" || method === "HEAD") {
+      const segAgent = safeDecode(segments[2] || url.searchParams.get("agent_id") || url.searchParams.get("agent") || "").trim();
+      const segTask = safeDecode(segments[3] || url.searchParams.get("task_id") || "").trim();
+      const rawSlug = segments.slice(4).join("/");
+      const queryStep = url.searchParams.get("step") || "";
+      if (!segAgent && !segTask && !rawSlug) {
+        return sendJson({
+          ok: true,
+          schema: "shim.session_checkpoint.v1",
+          read_only: "Send POST /q/checkpoint with JSON, or open /q/checkpoint/<agent_id>/<task_id>/step-1-of-3--done-<step>--pending-<next> to save progress.",
+          post_endpoint: `${publicUrl}/q/checkpoint`,
+          resume_endpoint: `${publicUrl}/q/resume/{agent_id}`,
+        });
+      }
+      if (!segAgent || !segTask) {
+        return sendJson(
+          {
+            ok: false,
+            code: "missing_checkpoint_fields",
+            detail: "GET /q/checkpoint requires /q/checkpoint/<agent_id>/<task_id>/step-<k>-of-<n>--done-<step> or POST JSON to /q/checkpoint.",
+          },
+          QUEUE_GATEWAY_GRID.http_bad_request
+        );
+      }
+      const parsedSlug = parseCheckpointUrlSlug(rawSlug);
+      const queryStepNumeric = /^\d+$/.test(queryStep.trim()) ? Number(queryStep.trim()) : undefined;
+      const queryStepNote = queryStep && queryStepNumeric === undefined ? queryStep : "";
+      const agentId = autoAssignedAgentId || cleanAgentId(segAgent);
+      traceCtx.agent_id = agentId;
+      traceCtx.task_id = segTask;
+      const cpOut = await recordSessionCheckpoint(db, publicUrl, {
+        agentId,
+        taskId: segTask,
+        stepIndex: url.searchParams.get("step_index") ?? queryStepNumeric ?? parsedSlug.step_index,
+        totalSteps: url.searchParams.get("total_steps") ?? parsedSlug.total_steps,
+        completedSteps: url.searchParams.get("completed_steps") || url.searchParams.get("done_items") || parsedSlug.completed_steps,
+        pendingSteps: url.searchParams.get("pending_steps") || url.searchParams.get("remaining_items") || parsedSlug.pending_steps,
+        notes: url.searchParams.get("notes") || queryStepNote || parsedSlug.notes,
+        artifactKeys: url.searchParams.get("artifact_keys") || [],
+        seenItems: url.searchParams.get("seen_items") || [],
+        campaign: url.searchParams.get("campaign") || "default",
+        fencingToken: url.searchParams.get("fencing_token") || url.searchParams.get("lease_epoch") || parsedSlug.fencing_token,
+      });
+      return sendJson(cpOut);
+    }
+    const parsedReq = await readPossiblyGzippedJson(request, DURABLE_SESSION_GRID.checkpoint_request_max_bytes);
+    if (parsedReq.payloadTooLarge) {
+      return sendJson(
+        { ok: false, code: "payload_too_large", max_bytes: parsedReq.max_bytes, actual_bytes: parsedReq.actual_bytes },
+        QUEUE_GATEWAY_GRID.http_payload_too_large
+      );
+    }
+    if (parsedReq.invalidGzip || parsedReq.invalidEncoding || parsedReq.invalidJson) {
+      return sendJson(
+        { ok: false, code: parsedReq.invalidJson ? "invalid_json" : "invalid_gzip", detail: "Checkpoint body must be valid JSON." },
+        QUEUE_GATEWAY_GRID.http_bad_request
+      );
+    }
+    const body = parsedReq.json || {};
+    const rawAgent = autoAssignedAgentId || body.agent_id || body.agent || body.worker || url.searchParams.get("agent_id") || "";
+    const rawTask = body.task_id || body.verb_id || url.searchParams.get("task_id") || "";
+    if (!String(rawAgent).trim() || !String(rawTask).trim()) {
+      return sendJson(
+        {
+          ok: false,
+          code: "missing_checkpoint_fields",
+          detail: "POST /q/checkpoint requires agent_id and task_id.",
+          required_fields: ["agent_id", "task_id"],
+        },
+        QUEUE_GATEWAY_GRID.http_bad_request
+      );
+    }
+    const agentId = autoAssignedAgentId || cleanAgentId(rawAgent);
+    traceCtx.agent_id = agentId;
+    traceCtx.task_id = String(rawTask).slice(0, QUEUE_GATEWAY_GRID.task_id_max_len);
+    const stepTextFallback =
+      typeof body.step === "string" && body.step.trim() && !/^\d+$/.test(body.step.trim()) ? body.step.trim() : "";
+    const cpOut = await recordSessionCheckpoint(db, publicUrl, {
+      agentId,
+      taskId: rawTask,
+      stepIndex: body.step_index ?? (stepTextFallback ? undefined : body.step),
+      totalSteps: body.total_steps ?? body.steps_total,
+      completedSteps: body.completed_steps ?? body.done_steps ?? body.done_items ?? [],
+      pendingSteps: body.pending_steps ?? body.remaining_steps ?? body.remaining_items ?? [],
+      notes: body.notes ?? body.summary ?? stepTextFallback,
+      artifactKeys: body.artifact_keys ?? body.object_keys ?? [],
+      seenItems: body.seen_items ?? [],
+      campaign: body.campaign || "default",
+      fencingToken: body.fencing_token ?? body.lease_epoch,
+    });
+    return sendJson(cpOut);
+  }
+
+  if (action === "frontier") {
+    if (method !== "GET" && method !== "HEAD" && method !== "POST") {
+      return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
+    }
+    if (method === "GET" || method === "HEAD") {
+      const rawAgent = safeDecode(segments[2] || url.searchParams.get("agent_id") || url.searchParams.get("agent") || "").trim();
+      if (!rawAgent) {
+        return sendJson({
+          ok: true,
+          schema: "shim.frontier_dedup.v1",
+          read_only: "GET /q/frontier?agent_id=<id>&items=a,b checks which items are unseen without writing. POST /q/frontier {agent_id, campaign, items, record} checks and optionally records them.",
+          post_endpoint: `${publicUrl}/q/frontier`,
+        });
+      }
+      const agentId = cleanAgentId(rawAgent);
+      traceCtx.agent_id = agentId;
+      const out = await evaluateFrontierScope(db, {
+        agentId,
+        campaign: url.searchParams.get("campaign") || "default",
+        items: url.searchParams.get("items") || url.searchParams.get("check") || url.searchParams.get("candidates") || "",
+        recordNew: false,
+      });
+      return sendJson(out);
+    }
+    const parsedReq = await readPossiblyGzippedJson(request, DURABLE_SESSION_GRID.frontier_request_max_bytes);
+    if (parsedReq.payloadTooLarge) {
+      return sendJson(
+        { ok: false, code: "payload_too_large", max_bytes: parsedReq.max_bytes, actual_bytes: parsedReq.actual_bytes },
+        QUEUE_GATEWAY_GRID.http_payload_too_large
+      );
+    }
+    if (parsedReq.invalidGzip || parsedReq.invalidEncoding || parsedReq.invalidJson) {
+      return sendJson(
+        { ok: false, code: parsedReq.invalidJson ? "invalid_json" : "invalid_gzip", detail: "Frontier body must be valid JSON." },
+        QUEUE_GATEWAY_GRID.http_bad_request
+      );
+    }
+    const body = parsedReq.json || {};
+    const rawAgent = autoAssignedAgentId || body.agent_id || body.agent || body.worker || url.searchParams.get("agent_id") || "";
+    if (!String(rawAgent).trim()) {
+      return sendJson(
+        { ok: false, code: "missing_agent_id", detail: "POST /q/frontier requires agent_id and items." },
+        QUEUE_GATEWAY_GRID.http_bad_request
+      );
+    }
+    const agentId = autoAssignedAgentId || cleanAgentId(rawAgent);
+    traceCtx.agent_id = agentId;
+    const actionLower = String(body.action || "").trim().toLowerCase();
+    const recordNew = actionLower === "check" ? false : body.record !== false;
+    const out = await evaluateFrontierScope(db, {
+      agentId,
+      campaign: body.campaign || url.searchParams.get("campaign") || "default",
+      items: body.items ?? body.check ?? body.candidates ?? [],
+      recordNew,
+    });
+    return sendJson(out);
+  }
+
+  if (action === "cell" || action === "cell.txt") {
+    if (method !== "GET" && method !== "HEAD") {
+      return sendJson(
+        { ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` },
+        QUEUE_GATEWAY_GRID.http_method_not_allowed
+      );
+    }
+    const rawSeg2 = safeDecode(segments[2] || "").trim();
+    const wantsPy =
+      rawSeg2 === "local_fabric_cell.py" ||
+      String(url.searchParams.get("format") || "").toLowerCase() === "python";
+    if (wantsPy) {
+      const pySource = renderLocalCellPythonReplica(publicUrl);
+      return finalizeWithTrace(
+        new Response(method === "HEAD" ? null : pySource, {
+          status: QUEUE_GATEWAY_GRID.http_ok,
+          headers: { "content-type": "text/x-python; charset=utf-8" },
+        }),
+        QUEUE_GATEWAY_GRID.http_ok
+      );
+    }
+    const wantsTxt =
+      action === "cell.txt" ||
+      url.pathname.endsWith(".txt") ||
+      rawSeg2.endsWith(".txt") ||
+      url.searchParams.get("format") === "text";
+    const segAgent = rawSeg2.endsWith(".txt") ? rawSeg2.slice(0, -4) : rawSeg2;
+    const manifest = buildLocalCellManifest(publicUrl, {
+      agentId: segAgent || url.searchParams.get("agent_id") || url.searchParams.get("agent") || "",
+      campaign: url.searchParams.get("campaign") || "default",
+      sync_policy: url.searchParams.get("sync_policy") || "",
+      subagent_slots: url.searchParams.get("subagent_slots") || url.searchParams.get("subagents") || undefined,
+      port: url.searchParams.get("port") || url.searchParams.get("loopback_port") || undefined,
+      lease_seconds: url.searchParams.get("lease_seconds") || undefined,
+      sync_batch_limit: url.searchParams.get("sync_batch_limit") || undefined,
+    });
+    const acceptHdr = String(request.headers.get("accept") || "").toLowerCase();
+    const sendPlain =
+      wantsTxt ||
+      (acceptHdr.includes("text/plain") && !acceptHdr.includes("application/json") && !acceptHdr.includes("text/html") && url.searchParams.get("format") !== "json");
+    if (sendPlain) return sendText(renderLocalCellText(manifest));
+    return sendJson(manifest);
+  }
+
+  if (action === "optimize" || action === "optimize.txt") {
+    if (action === "optimize.txt" && method !== "GET" && method !== "HEAD") {
+      return sendJson(
+        { ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` },
+        QUEUE_GATEWAY_GRID.http_method_not_allowed
+      );
+    }
+    if (method !== "GET" && method !== "HEAD" && method !== "POST") {
+      return sendJson(
+        { ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` },
+        QUEUE_GATEWAY_GRID.http_method_not_allowed
+      );
+    }
+    if (method === "GET" || method === "HEAD") {
+      const rawSeg = safeDecode(segments[2] || "");
+      const wantsTxt =
+        action === "optimize.txt" ||
+        url.pathname.endsWith(".txt") ||
+        rawSeg.endsWith(".txt") ||
+        url.searchParams.get("format") === "text";
+      const segClean = rawSeg.endsWith(".txt") ? rawSeg.slice(0, -4) : rawSeg;
+      const sharedFlag = ["1", "true", "yes"].includes(String(url.searchParams.get("shared") || "").toLowerCase()) || segClean === "shared";
+      const rawAgent = (segClean && segClean !== "shared" ? segClean : url.searchParams.get("agent_id") || url.searchParams.get("agent") || "").trim();
+      const campaign = safeDecode(
+        (segClean === "shared" && segments[3] ? segments[3].replace(/\.txt$/, "") : "") ||
+          url.searchParams.get("campaign") ||
+          "default"
+      );
+      if (!rawAgent && !sharedFlag && !url.searchParams.get("campaign")) {
+        return sendJson({
+          ok: true,
+          schema: "teleion.optimization_engine.v1",
+          read_only:
+            "GET /q/optimize/<agent_id>?campaign=default inspects grid search, RBF/UCB surrogate, Pareto frontier, and contextual RL policy state. POST /q/optimize runs propose, observe, rl_select, rl_update, or compile_dag.",
+          strategies: OPTIMIZATION_ENGINE_GRID.grid_axes.strategy.choices,
+          post_endpoint: `${publicUrl}/q/optimize`,
+          local_cell: buildLocalCellHint(publicUrl),
+          weight_models: buildWeightModelsHint(publicUrl),
+        });
+      }
+      const agentId = rawAgent ? cleanAgentId(rawAgent) : "public";
+      traceCtx.agent_id = agentId;
+      const view = await inspectOptimizationCampaign(db, publicUrl, {
+        agentId,
+        campaign,
+        shared: sharedFlag,
+      });
+      if (view && typeof view === "object") {
+        view.local_cell = buildLocalCellHint(publicUrl, { agentId });
+      }
+      const acceptHdr = (request.headers.get("accept") || "").toLowerCase();
+      const sendPlain =
+        wantsTxt ||
+        (acceptHdr.includes("text/plain") && !acceptHdr.includes("application/json") && !acceptHdr.includes("text/html") && url.searchParams.get("format") !== "json");
+      if (sendPlain) return sendText(renderOptimizationCampaignText(view));
+      return sendJson(view);
+    }
+
+    const parsedReq = await readPossiblyGzippedJson(request, OPTIMIZATION_ENGINE_GRID.request_max_bytes);
+    if (parsedReq.payloadTooLarge) {
+      return sendJson(
+        { ok: false, code: "payload_too_large", max_bytes: parsedReq.max_bytes, actual_bytes: parsedReq.actual_bytes },
+        QUEUE_GATEWAY_GRID.http_payload_too_large
+      );
+    }
+    if (parsedReq.invalidGzip || parsedReq.invalidEncoding || parsedReq.invalidJson) {
+      return sendJson(
+        { ok: false, code: parsedReq.invalidJson ? "invalid_json" : "invalid_gzip", detail: "Optimization request body must be valid JSON." },
+        QUEUE_GATEWAY_GRID.http_bad_request
+      );
+    }
+    const body = parsedReq.json || {};
+    const opLower = String(body.operation || body.mode || "").trim().toLowerCase();
+
+    if (opLower === "compile_dag" || opLower === "macro_dag" || (body.goal && !body.axes && !body.arms && !body.trajectory && !body.observations)) {
+      const dagOut = compileParameterizedMacroDag(publicUrl, body);
+      return sendJson(dagOut);
+    }
+
+    if (opLower === "inspect") {
+      const rawAgentInspect = body.agent_id || body.agent || url.searchParams.get("agent_id") || "public";
+      const cleanedInspectAgent = cleanAgentId(rawAgentInspect);
+      const view = await inspectOptimizationCampaign(db, publicUrl, {
+        agentId: cleanedInspectAgent,
+        campaign: body.campaign || url.searchParams.get("campaign") || "default",
+        shared: Boolean(body.shared || url.searchParams.get("shared") === "1"),
+      });
+      if (view && typeof view === "object") {
+        view.local_cell = buildLocalCellHint(publicUrl, { agentId: cleanedInspectAgent });
+      }
+      return sendJson(view);
+    }
+
+    const rawAgent = autoAssignedAgentId || body.agent_id || body.agent || body.worker || url.searchParams.get("agent_id") || "";
+    if (!String(rawAgent).trim()) {
+      return sendJson(
+        {
+          ok: false,
+          code: "missing_agent_id",
+          detail: "POST /q/optimize requires agent_id (or set operation='compile_dag' for stateless DAG planning).",
+        },
+        QUEUE_GATEWAY_GRID.http_bad_request
+      );
+    }
+    const agentId = autoAssignedAgentId || cleanAgentId(rawAgent);
+    traceCtx.agent_id = agentId;
+
+    const isRlOp =
+      opLower === "rl_select" ||
+      opLower === "rl_update" ||
+      Array.isArray(body.arms) ||
+      Array.isArray(body.trajectory) ||
+      Boolean(body.arm_id);
+
+    if (isRlOp) {
+      const rlOut = await runReinforcementPolicyStep(db, publicUrl, { ...body, agentId });
+      return sendJson(rlOut);
+    }
+
+    const gridOut = await runGridOptimizationOperation(db, publicUrl, { ...body, agentId });
+    return sendJson(gridOut);
+  }
+
   if ((action === "objects" || action === "object") && method === "POST") {
     const parsedReq = await readPossiblyGzippedJson(request, QUEUE_GATEWAY_GRID.max_chunked_payload_bytes * 2);
     if (parsedReq.payloadTooLarge) {
@@ -10007,6 +11479,9 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     if (out.taskNotFound) {
       return sendJson({ ok: false, code: "task_not_found", task_id: out.task_id, detail: out.detail }, QUEUE_GATEWAY_GRID.http_not_found);
     }
+    if (out.badRequest) {
+      return sendJson({ ok: false, code: out.code, detail: out.detail, ...(out.give_back_url ? { give_back_url: out.give_back_url } : {}) }, QUEUE_GATEWAY_GRID.http_bad_request);
+    }
     if (out.forbidden) {
       return sendJson({ ok: false, code: out.code || "forbidden_tier", detail: out.detail }, QUEUE_GATEWAY_GRID.http_forbidden);
     }
@@ -10027,16 +11502,17 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         {
           ok: false,
           code: out.code || "stale_fencing_token",
-          detail: out.detail,
-          expected_fencing_token: out.expected_fencing_token,
+          detail: infraAllowed ? out.detail : withoutExpectedFence(out.detail),
+          ...(infraAllowed ? { expected_fencing_token: out.expected_fencing_token } : {}),
           task_state: out.task_state,
+          ...(out.next ? { next: out.next } : {}),
         },
         QUEUE_GATEWAY_GRID.http_conflict
       );
     }
     traceCtx.worker_uuid = out.worker_uuid || "";
     traceCtx.harness_tier = out.harness_tier || "";
-    return sendJson(out);
+    return sendJson(withPersonLinks({ ...out, next: out.next || submitNext(out) }, publicUrl));
   }
 
   if (action === "objects" || action === "catalog") {
@@ -10129,7 +11605,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
 
   if (action === "meta-telemetry") {
     const out = await handleMetaTelemetryRequest(request, env, db);
-    return sendJson(out.body, out.status);
+    return sendJson(scrubBannedDeep(out.body), out.status);
   }
 
   if (action === "training-export") {
@@ -10179,6 +11655,11 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     if (rootSeg === "q" && !wantsJson) {
       return withSecurity(new Response(null, { status: 301, headers: { location: `/dashboard${url.search}` } }));
     }
+    // /dashboard?agent=<agent_id> shows that one agent's work: the same page as /c/agent/<agent_id>.
+    const askedAgent = (url.searchParams.get("agent") || url.searchParams.get("agent_id") || url.searchParams.get("producer") || "").trim();
+    if (askedAgent && url.searchParams.get("fragment") !== "results") {
+      return sendAgentOrTaskPage("agent", encodeURIComponent(askedAgent));
+    }
     // The search runs here, on the server, so the titles and summaries workers wrote pass through the shared word list
     // (tidyText) before a page shows them. With JavaScript the page asks only for the results fragment.
     const searchParams = {};
@@ -10206,12 +11687,46 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     if (method !== "GET" && method !== "HEAD") {
       return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
-    const lookupId = decodeURIComponent(rootSeg === "c" ? segments[1] || "" : segments[2] || "");
+    // /c/agent/<agent_id> and /c/task/<task_id> are the pages a person opens for one agent's work and for one Task.
+    // /c/agent/ and /c/task/ list recent public work; index.txt is their text copy.
+    if (rootSeg === "c" && (segments[1] === "agent" || segments[1] === "task") && (!segments[2] || segments[2] === "index.txt")) {
+      const isAgents = segments[1] === "agent";
+      const data = isAgents ? await buildAgentIndexData(db, publicUrl) : await buildTaskIndexData(db, publicUrl);
+      const fmt = String(url.searchParams.get("format") || "").toLowerCase();
+      if (fmt === "json") return sendJson(data);
+      if (segments[2] === "index.txt" || fmt === "txt") return sendText(isAgents ? renderAgentIndexText(publicUrl, data) : renderTaskIndexText(publicUrl, data));
+      return sendHtml(isAgents ? renderAgentIndexHtml(publicUrl, data) : renderTaskIndexHtml(publicUrl, data));
+    }
+    if (rootSeg === "c" && (segments[1] === "agent" || segments[1] === "task") && segments[2]) {
+      return sendAgentOrTaskPage(segments[1], segments.slice(2).join("/"));
+    }
+    let lookupId = safeDecodeSegment(rootSeg === "c" ? segments[1] || "" : segments[2] || "");
     // Older replies and pages linked to this name, which is a marker for work with no Task, not a page.
     if (lookupId === "self_seed") return new Response(null, { status: 302, headers: { location: "/dashboard" } });
-    const pData = await buildContributionPermalinkData(db, infraAllowed, lookupId);
-    const found = Boolean(pData.task || pData.objects.length);
+    let pData = await buildContributionPermalinkData(db, infraAllowed, lookupId);
+    let found = Boolean(pData.task || pData.objects.length);
+    // <name>.txt is the text copy of the page for <name>, unless something is stored under the whole name.
+    let asText = url.searchParams.get("format") === "txt";
+    if (!found && rootSeg === "c" && lookupId.toLowerCase().endsWith(".txt") && lookupId.length > 4) {
+      lookupId = lookupId.slice(0, -4);
+      pData = await buildContributionPermalinkData(db, infraAllowed, lookupId);
+      found = Boolean(pData.task || pData.objects.length);
+      asText = true;
+    }
+    // A self_seed reply's verification code opens the page of the Task Object it stored.
+    if (!found && /^[0-9a-f]{8,64}$/i.test(lookupId)) {
+      const coded = await db
+        .prepare("SELECT target_object_key FROM herma_object_aliases WHERE alias_key = ? LIMIT 1")
+        .bind(`code:${lookupId.toLowerCase()}`)
+        .first()
+        .catch(() => null);
+      if (coded?.target_object_key) {
+        const tail = asText ? ".txt" : url.searchParams.get("format") === "json" ? "?format=json" : "";
+        return withSecurity(new Response(null, { status: 302, headers: { location: `/c/${encodeURIComponent(coded.target_object_key)}${tail}` } }));
+      }
+    }
     const status = found ? QUEUE_GATEWAY_GRID.http_ok : QUEUE_GATEWAY_GRID.http_not_found;
+    if (asText) return sendText(renderContributionText(publicUrl, pData), status, found ? "" : "permalink_not_found");
     if (wantsJson && url.searchParams.get("format") === "json") {
       return sendJson({ ok: found, ...pData }, status, found ? {} : {});
     }
@@ -10222,9 +11737,14 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     if (method !== "GET" && method !== "HEAD") {
       return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
-    const wUuid = decodeURIComponent(
+    let wUuid = safeDecodeSegment(
       rootSeg === "w" ? segments[1] || "" : segments[2] || url.searchParams.get("worker_uuid") || ""
     );
+    let wAsText = url.searchParams.get("format") === "txt";
+    if (rootSeg === "w" && wUuid.toLowerCase().endsWith(".txt") && wUuid.length > 4) {
+      wUuid = wUuid.slice(0, -4);
+      wAsText = true;
+    }
     traceCtx.worker_uuid = wUuid;
     const wData = await buildWorkerProfileData(db, infraAllowed, wUuid);
     const found = Boolean(
@@ -10233,7 +11753,13 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         wData.objects.length ||
         Number(wData.spawned_tasks_attribution?.counts?.total || 0) > 0
     );
+    // /w/<agent_id> (an agent name; worker ids start with w_) opens that agent's page, which lists the work of all its workers.
+    if (!found && rootSeg === "w" && !wAsText && !/^w_/i.test(wUuid) && cleanAgentName(wUuid) && cleanAgentName(wUuid) === wUuid.toLowerCase()) {
+      const tail = url.searchParams.get("format") === "json" ? "?format=json" : "";
+      return withSecurity(new Response(null, { status: 302, headers: { location: `/c/agent/${encodeURIComponent(cleanAgentName(wUuid))}${tail}` } }));
+    }
     const status = found ? QUEUE_GATEWAY_GRID.http_ok : QUEUE_GATEWAY_GRID.http_not_found;
+    if (wAsText) return sendText(renderWorkerText(publicUrl, wData), status, found ? "" : "worker_not_found");
     const returnJson =
       action === "worker"
         ? !(request.headers.get("accept") || "").includes("text/html") || wantsJson
@@ -10287,7 +11813,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     if (objectPrefs.max_bytes != null && new TextEncoder().encode(JSON.stringify(out)).byteLength > objectPrefs.max_bytes) {
       // The label, the address and the digest stay; the rest is one more request away.
       const { payload: _payload, task: _task, ...withoutPayload } = out;
-      const short = fitReply({ ...withoutPayload, payload_left_out: true, read_all_at: `${publicUrl}/q/object/${encodeURIComponent(out.object_key)}` }, objectPrefs.max_bytes);
+      const short = fitReply({ ...withoutPayload, payload_left_out: true, payload_bytes: new TextEncoder().encode(JSON.stringify(out.payload ?? null)).byteLength, detail: "The payload is larger than your max_bytes, so it was left out. Open read_all_at with no max_bytes to get all of it.", read_all_at: `${publicUrl}/q/object/${encodeURIComponent(out.object_key)}` }, objectPrefs.max_bytes);
       return sendJson(short);
     }
     return sendJson(out);
@@ -10328,7 +11854,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       return sendJson({ ok: false, code: "forbidden_tier" }, QUEUE_GATEWAY_GRID.http_forbidden);
     }
     if (out.notFound) {
-      return sendJson({ ok: false, code: "task_not_found", task_id: tId, detail: "No Task has this id.", next: `${publicUrl}/q/tasks?state=ready&limit=10` }, QUEUE_GATEWAY_GRID.http_not_found);
+      return sendJson({ ok: false, code: "task_not_found", task_id: tId, detail: "No Task has this id.", next: { action: "find_other", url: `${publicUrl}/q/next`, list_url: `${publicUrl}/q/tasks?state=ready&limit=10`, retry_same_call: false } }, QUEUE_GATEWAY_GRID.http_not_found);
     }
     const taskPrefs = readClientPrefs(url.searchParams);
     // A Task is reviewed when an evaluation on the record didn't fail it.
@@ -10337,7 +11863,8 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     if (!reviewAllowed(taskState, taskPrefs)) {
       return sendJson({ ok: false, code: "not_in_chosen_review_state", task_id: tId, review_state: taskState, detail: "Drop include_unreviewed=false or widen review_state to read it." }, QUEUE_GATEWAY_GRID.http_not_found);
     }
-    return sendJson(fitReply({ ...out, review_state: taskState, reviewed: taskState === "reviewed" }, taskPrefs.max_bytes));
+    const taskNext = nextForTask(out.task, publicUrl);
+    return sendJson(fitReply({ ...out, ...(taskNext.lease_ended ? { lease_ended: true } : {}), review_state: taskState, reviewed: taskState === "reviewed", next: taskNext }, taskPrefs.max_bytes));
   }
 
   // Public Copy-Paste "Get Started Prompts" Hub (`/prompts`, `/get-started`, `/q/start`, `/q/prompts`, `/q/prompts.js`)
@@ -10357,13 +11884,19 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     if (method !== "GET" && method !== "HEAD") {
       return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
-    const rawPromptId = String(segments[2] || "worker_loop").trim();
-    const promptId =
-      rawPromptId === "codex_unlimited_frontier_loop_v7" || rawPromptId === "codex_unlimited_frontier_loop_v8"
-        ? "codex_unlimited_frontier_loop_v9"
-        : rawPromptId;
     const catalog = buildPromptCatalog(publicUrl);
-    const found = catalog.find((p) => p.id === promptId || p.alias === promptId) || catalog[0];
+    // `<name>` and `<name>.txt` both work. An unknown name gets the worker loop, as before.
+    const found = findPrompt(catalog, segments[2] || "worker_loop") || findPrompt(catalog, "worker_loop");
+    if (found.unchanged) {
+      // The universal worker prompt: exactly the text file, with no filled names and no setup block.
+      return finalizeWithTrace(
+        new Response(method === "HEAD" ? null : found.body, {
+          status: QUEUE_GATEWAY_GRID.http_ok,
+          headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=300" },
+        }),
+        QUEUE_GATEWAY_GRID.http_ok
+      );
+    }
     let bodyTemplate = found.body;
     let extraPromptHeaders = {};
     if (
@@ -10451,13 +11984,11 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     } else if (method !== "GET" && method !== "HEAD") {
       return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
     }
-    const agentId = cleanAgentId(
+    const agentId = autoAssignedAgentId || cleanAgentId(
       segments[2] || params.agent_id || params.agent || params.worker || "volunteer-worker"
     );
     const passedUuid = cleanWorkerUuid(params.worker_uuid || params.uuid || "");
-    const workerToken = String(
-      params.worker_token || request.headers.get("x-herma-worker-token") || url.searchParams.get("worker_token") || ""
-    ).trim();
+    const workerToken = tokenFromRequest(request, url, params);
     const explicitMintNew =
       params.mint_new === true || params.mint_new === "1" || params.mint_new === "true" || params.mint_new === 1;
 
@@ -10529,6 +12060,9 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       help_url: `${publicUrl}/q/help`,
       routing_url: `${publicUrl}/q/routing`,
       traces_url: `${publicUrl}/q/traces`,
+      cell_url: `${publicUrl}/q/cell?agent_id=${encodeURIComponent(profile.agent_id)}`,
+      local_cell: buildLocalCellHint(publicUrl, { agentId: profile.agent_id }),
+      weight_models: buildWeightModelsHint(publicUrl),
       next_claim_url: `${publicUrl}/q/claim/${encodeURIComponent(profile.agent_id)}?worker_uuid=${encodeURIComponent(profile.worker_uuid)}&slot=auto`,
       prompts_hub_url: `${publicUrl}/prompts?agent_id=${encodeURIComponent(profile.agent_id)}&worker_uuid=${encodeURIComponent(profile.worker_uuid)}`,
     };
@@ -10592,7 +12126,10 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     const customEntropy = await selectOrthogonalEntropyPacket(sha256HexGateway, profile.worker_uuid, iterOverride);
     const [priorRuntimes, evalCandidates] = await Promise.all([
       fetchPriorVerbRuntimes(db, infraAllowed, QUEUE_GATEWAY_GRID.prior_runtimes_limit),
-      buildLiveEvaluationCandidates(db, infraAllowed, QUEUE_GATEWAY_GRID.eval_packet_limit),
+      buildLiveEvaluationCandidates(db, infraAllowed, QUEUE_GATEWAY_GRID.eval_packet_limit, {
+        agentId: profile.agent_id,
+        workerUuid: profile.worker_uuid,
+      }),
     ]);
     return sendJson({
       ok: true,
@@ -10814,8 +12351,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
     const relOut = await releaseLeasedTask(db, {
       agentId: params.agent_id || params.agent || params.worker || "volunteer-agent",
       workerUuid: params.worker_uuid || params.uuid || "",
-      workerToken:
-        params.worker_token || request.headers.get("x-herma-worker-token") || url.searchParams.get("worker_token") || "",
+      workerToken: tokenFromRequest(request, url, params),
       taskId: params.task_id || "",
       leaseEpoch:
         params.lease_epoch ?? params.fencing_token ?? params.fence_seq ?? params.claim_revision ?? params.fence ?? null,
@@ -10842,16 +12378,13 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         {
           ok: false,
           code: relOut.code,
-          expected_lease_epoch: relOut.expected_lease_epoch,
-          detail: relOut.detail,
+          ...(infraAllowed ? { expected_lease_epoch: relOut.expected_lease_epoch } : {}),
+          detail: infraAllowed ? relOut.detail : withoutExpectedFence(relOut.detail),
         },
         QUEUE_GATEWAY_GRID.http_conflict
       );
     }
-    return sendJson({
-      ...relOut,
-      next: { action: "find_other", url: `${publicUrl}/q/next?agent_id=${encodeURIComponent(params.agent_id || params.agent || "")}&skip=${encodeURIComponent(params.task_id || "")}`, why: "Nothing is held. Take another Task, or stop this run.", retry_same_call: false },
-    });
+    return sendJson({ ...relOut, next: await nextAfterRelease(db, publicUrl, params.agent_id || params.agent || "", params.task_id || "") });
   }
 
   if (action === "claim") {
@@ -10872,14 +12405,13 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       return sendJson(fitReply({ ...reply, bilateral_guidance: undefined, ...(worker ? { worker_profile: worker } : {}) }, wanted));
     };
     if (method === "GET") {
-      const agentId = cleanAgentId(
+      const agentId = autoAssignedAgentId || cleanAgentId(
         segments[2] || url.searchParams.get("agent_id") || url.searchParams.get("agent") || "volunteer-agent"
       );
       const reqTier = url.searchParams.get("tier");
       const affinityBand = url.searchParams.get("affinity_band");
       const workerUuid = url.searchParams.get("worker_uuid") || "";
-      const workerToken =
-        request.headers.get("x-herma-worker-token") || url.searchParams.get("worker_token") || "";
+      const workerToken = tokenFromRequest(request, url);
       const slot = url.searchParams.get("slot") || null;
       const batchSize = Number(url.searchParams.get("batch_size") || 1);
       const forceNew = url.searchParams.get("force_new") === "1" || url.searchParams.get("force_new") === "true";
@@ -10890,6 +12422,8 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         workerUuid,
         workerToken,
         slot,
+        priorityRegime: url.searchParams.get("priority_regime") || "",
+        preferReviews: url.searchParams.get("prefer_reviews") === "1" || url.searchParams.get("prefer_reviews") === "true",
         modelHint: modelHintHeader,
         harnessTier: url.searchParams.get("harness_tier") || "",
         userAgent,
@@ -10909,6 +12443,10 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         showOnMap: parseShowOnMap(url.searchParams.get("show_on_map")),
         env,
       });
+      if (claimOut.producerConflict) {
+        const { producerConflict: _maker, ...refusal } = claimOut;
+        return sendJson(refusal, QUEUE_GATEWAY_GRID.http_conflict);
+      }
       if (claimOut.forbidden) {
         return sendJson(
           {
@@ -11010,7 +12548,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
       } catch {
         unreadableBody = true;
       }
-      const agentId = cleanAgentId(body.agent_id || body.agent || body.worker || "volunteer-agent");
+      const agentId = autoAssignedAgentId || cleanAgentId(body.agent_id || body.agent || body.worker || "volunteer-agent");
       traceCtx.agent_id = agentId;
       const claimOut = await claimNextAuthorizedTask(
         db,
@@ -11020,9 +12558,15 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         body.affinity_band || null,
         {
           workerUuid: body.worker_uuid || body.uuid || "",
-          workerToken:
-            body.worker_token || request.headers.get("x-herma-worker-token") || url.searchParams.get("worker_token") || "",
+          workerToken: tokenFromRequest(request, url, body),
           slot: body.slot || null,
+          priorityRegime: body.priority_regime || url.searchParams.get("priority_regime") || "",
+          preferReviews:
+            body.prefer_reviews === true ||
+            body.prefer_reviews === 1 ||
+            body.prefer_reviews === "1" ||
+            url.searchParams.get("prefer_reviews") === "1" ||
+            url.searchParams.get("prefer_reviews") === "true",
           modelHint: body.model_hint || modelHintHeader,
           harnessTier: body.harness_tier || "",
           userAgent,
@@ -11043,6 +12587,10 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           env,
         }
       );
+      if (claimOut.producerConflict) {
+        const { producerConflict: _maker, ...refusal } = claimOut;
+        return sendJson(refusal, QUEUE_GATEWAY_GRID.http_conflict);
+      }
       if (claimOut.forbidden) {
         return sendJson(
           {
@@ -11169,8 +12717,9 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           QUEUE_GATEWAY_GRID.http_bad_request
         );
       }
-      const agentId = cleanAgentId(rawSegAgent);
+      const agentId = autoAssignedAgentId || cleanAgentId(rawSegAgent);
       const taskId = rawSegTask || "self_seed";
+      const strictContractGet = ["1", "true"].includes(String(url.searchParams.get("strict_contract") || "").toLowerCase());
       traceCtx.agent_id = agentId;
       traceCtx.task_id = taskId;
       const parsed = parseGatewaySlug(rawSlug);
@@ -11188,8 +12737,7 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         {
           agent_id: agentId,
           worker_uuid: url.searchParams.get("worker_uuid") || parsed.worker_uuid || "",
-          worker_token:
-            request.headers.get("x-herma-worker-token") || url.searchParams.get("worker_token") || "",
+          worker_token: tokenFromRequest(request, url, parsed),
           ...(url.searchParams.get("summary") ? { summary: url.searchParams.get("summary") } : {}),
           ...(url.searchParams.get("result") ? { result: url.searchParams.get("result") } : {}),
           ...(url.searchParams.get("output") ? { output: url.searchParams.get("output") } : {}),
@@ -11206,14 +12754,30 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         {
           action,
           transportMethod: "GET",
+          strictContract: strictContractGet,
           userAgent,
-          workerToken: request.headers.get("x-herma-worker-token") || url.searchParams.get("worker_token") || "",
+          workerToken: tokenFromRequest(request, url, parsed),
           modelHint: modelHintHeader,
           latencyMs: Date.now() - reqStartMs,
         }
       );
       if (out.taskNotFound) {
         return sendJson({ ok: false, code: "task_not_found", task_id: out.task_id, detail: out.detail }, QUEUE_GATEWAY_GRID.http_not_found);
+      }
+      if (out.badRequest) {
+        return sendJson({ ok: false, code: out.code, detail: out.detail, ...(out.give_back_url ? { give_back_url: out.give_back_url } : {}) }, QUEUE_GATEWAY_GRID.http_bad_request);
+      }
+      if (out.unprocessable) {
+        return sendJson(
+          {
+            ok: false,
+            code: out.code,
+            detail: out.detail,
+            contract_issues: out.contract_issues || [],
+            ...(out.give_back_url ? { give_back_url: out.give_back_url } : {}),
+          },
+          QUEUE_GATEWAY_GRID.http_unprocessable
+        );
       }
       if (out.forbidden) {
         return sendJson({ ok: false, code: out.code || "forbidden_tier", detail: out.detail }, QUEUE_GATEWAY_GRID.http_forbidden);
@@ -11242,9 +12806,10 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           {
             ok: false,
             code: out.code || "stale_fencing_token",
-            detail: out.detail,
-            expected_fencing_token: out.expected_fencing_token,
+            detail: infraAllowed ? out.detail : withoutExpectedFence(out.detail),
+            ...(infraAllowed ? { expected_fencing_token: out.expected_fencing_token } : {}),
             task_state: out.task_state,
+            ...(out.next ? { next: out.next } : {}),
           },
           QUEUE_GATEWAY_GRID.http_conflict
         );
@@ -11256,7 +12821,8 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         evaluations: out.applied_evaluations.length,
         verbs: out.enqueued_followup_verbs.length,
       };
-      if (wantsJson) return sendJson(out);
+      const linked = withPersonLinks({ ...out, next: out.next || (action === "enqueue" ? undefined : submitNext(out)) }, publicUrl);
+      if (wantsJson) return sendJson(linked);
       return sendText(
         [
           "=== DURABLE SUBMISSION, EVALUATION & VERB ENQUEUE VERIFIED ===",
@@ -11274,9 +12840,14 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           `ENQUEUED_BRANCH_VERBS:  ${out.enqueued_followup_verbs.length}`,
           `QUEUE_COUNTS_BY_TIER:   ${JSON.stringify(out.queue_counts_by_tier)}`,
           `NEXT_CLAIM_URL:         ${out.next_claim_url}`,
+          ...(linked.task_url ? [`TASK_PAGE:              ${linked.task_url}`] : []),
+          `AGENT_PAGE:             ${linked.agent_page_url}`,
+          `AGENT_OBJECTS:          ${linked.agent_objects_url}`,
           "",
           "Show your person these two lines:",
           out.contributor_printout,
+          "",
+          linked.share,
         ].join("\n")
       );
     }
@@ -11312,22 +12883,56 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         );
       }
       const body = parsedReq.json || {};
-      traceCtx.agent_id = cleanAgentId(body.agent_id || body.agent || body.worker || "");
-      traceCtx.task_id = String(body.task_id || body.completed_task_id || body.verb_id || "self_seed");
-      const out = await processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed, body, {
+      // A submit that names no worker and no Task used to record a self_seed for a default agent. Nothing is saved now.
+      if (
+        action !== "enqueue" &&
+        !(body.agent_id || body.agent || body.worker || body.worker_id || body.worker_uuid || body.uuid) &&
+        !(body.task_id || body.completed_task_id || body.verb_id || body.task)
+      ) {
+        return sendJson(
+          {
+            ok: false,
+            code: "missing_submit_fields",
+            detail: "Nothing was saved. A submit names a worker and a Task. To store something with no Task, send task_id self_seed with your agent_id.",
+            required_fields: ["agent_id", "task_id", "fencing_token", "summary"],
+            schema_url: `${publicUrl}/q/schema`,
+          },
+          QUEUE_GATEWAY_GRID.http_bad_request
+        );
+      }
+      const resolvedBody = autoAssignedAgentId ? { ...body, agent_id: autoAssignedAgentId } : body;
+      const strictContractPost = ["1", "true"].includes(String(url.searchParams.get("strict_contract") || "").toLowerCase());
+      traceCtx.agent_id = cleanAgentId(resolvedBody.agent_id || resolvedBody.agent || resolvedBody.worker || "");
+      traceCtx.task_id = String(resolvedBody.task_id || resolvedBody.completed_task_id || resolvedBody.verb_id || "self_seed");
+      const out = await processSubmissionAndEnqueueVerbs(db, env, publicUrl, infraAllowed, resolvedBody, {
         action,
         transportMethod: "POST",
+        strictContract: strictContractPost,
         wasGzipped: Boolean(parsedReq.wasGzipped),
         userAgent,
         clientIp: request.headers.get("cf-connecting-ip") || "",
-        workerToken:
-          body.worker_token || request.headers.get("x-herma-worker-token") || url.searchParams.get("worker_token") || "",
-        modelHint: body.model_hint || modelHintHeader,
-        harnessTier: body.harness_tier || "",
+        workerToken: tokenFromRequest(request, url, resolvedBody),
+        modelHint: resolvedBody.model_hint || modelHintHeader,
+        harnessTier: resolvedBody.harness_tier || "",
         latencyMs: Date.now() - reqStartMs,
       });
       if (out.taskNotFound) {
         return sendJson({ ok: false, code: "task_not_found", task_id: out.task_id, detail: out.detail }, QUEUE_GATEWAY_GRID.http_not_found);
+      }
+      if (out.badRequest) {
+        return sendJson({ ok: false, code: out.code, detail: out.detail, ...(out.give_back_url ? { give_back_url: out.give_back_url } : {}) }, QUEUE_GATEWAY_GRID.http_bad_request);
+      }
+      if (out.unprocessable) {
+        return sendJson(
+          {
+            ok: false,
+            code: out.code,
+            detail: out.detail,
+            contract_issues: out.contract_issues || [],
+            ...(out.give_back_url ? { give_back_url: out.give_back_url } : {}),
+          },
+          QUEUE_GATEWAY_GRID.http_unprocessable
+        );
       }
       if (out.forbidden) {
         return sendJson({ ok: false, code: out.code || "forbidden_tier", detail: out.detail }, QUEUE_GATEWAY_GRID.http_forbidden);
@@ -11356,9 +12961,10 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
           {
             ok: false,
             code: out.code || "stale_fencing_token",
-            detail: out.detail,
-            expected_fencing_token: out.expected_fencing_token,
+            detail: infraAllowed ? out.detail : withoutExpectedFence(out.detail),
+            ...(infraAllowed ? { expected_fencing_token: out.expected_fencing_token } : {}),
             task_state: out.task_state,
+            ...(out.next ? { next: out.next } : {}),
           },
           QUEUE_GATEWAY_GRID.http_conflict
         );
@@ -11371,10 +12977,9 @@ export async function handlePriorityWorkGateway(request, env, db, publicUrl, { w
         verbs: out.enqueued_followup_verbs.length,
         was_gzipped: Boolean(parsedReq.wasGzipped),
       };
-      return sendJson({
-        ...out,
-        next: action === "enqueue" ? undefined : { action: "report_then_stop", url: `${publicUrl}/q/next?agent_id=${encodeURIComponent(out.agent_id || "")}`, why: "Saved. Show your person the links, then stop this run. A new run starts at this url.", retry_same_call: false },
-      });
+      return sendJson(
+        withPersonLinks({ ...out, next: action === "enqueue" ? undefined : submitNext(out) }, publicUrl)
+      );
     }
     return sendJson({ ok: false, error: "method_not_allowed", detail: `This address does not take ${method}. Instructions: ${publicUrl}/llms.txt` }, QUEUE_GATEWAY_GRID.http_method_not_allowed);
   }

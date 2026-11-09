@@ -1,7 +1,9 @@
+import { stripPii, stripPiiDeep } from "./pii_strip.js";
 // Herma v6.10 Deterministic Taxonomy Auto-Describer, Preferred-Worker / Setup Affinity,
 // Sample-Size-Calibrated Efficiency Confidence (Wilson/Beta LCB x EWMA Resource Efficiency),
 // Ricardian Comparative-Advantage Routing, and Catch-All Proactive Feedback -> Peer-Review Verb Loop.
 
+import { needsIndependentChecker, rowProducerConflict } from "./producer_guard.js";
 import { resolveBilateralBounds } from "./conversation.js";
 
 const DEFAULT_BILATERAL_BOUNDS = resolveBilateralBounds({});
@@ -979,9 +981,13 @@ export function evaluateTaskWorkerAffinity({
       promptLower.includes(`producer_agent ${callerAgent}`) ||
       promptLower.includes(`producer_agent: ${callerAgent}`) ||
       promptLower.includes(`producer_agent=${callerAgent}`));
+  // A Task that needs an independent checker is never the maker's own continuation, even when its owner is the maker
+  // (verb_own_* reviews were leased back to their maker; producer_guard.js, rules G1 to G3).
+  const makerOfReview = needsIndependentChecker(candidateRow) && Boolean(rowProducerConflict(candidateRow, { agentId: callerAgent, workerUuid: callerUuid }));
   const isPinnedOwnContinuation = Boolean(
     allowPinnedOwnContinuation &&
       !isFeedbackReviewTask &&
+      !makerOfReview &&
       callerUuid &&
       candidateRow.owner_worker_uuid === callerUuid
   );
@@ -991,6 +997,7 @@ export function evaluateTaskWorkerAffinity({
   if (
     (callerUuid && excludedUuids.includes(callerUuid)) ||
     (callerAgent && excludedAgents.includes(callerAgent)) ||
+    makerOfReview ||
     (isVerificationTask &&
       !isPinnedOwnContinuation &&
       ((callerUuid && candidateRow.producer_worker_uuid === callerUuid) ||
@@ -1534,6 +1541,67 @@ export function classifyFeedbackSignal(rawText = "", explicitKind = "", httpStat
   return { signal_kind: kind, severity_milli: severityMilli };
 }
 
+// D13 (round 4): /q/feedback keeps the fields it has no own place for (such as `details` or `items`) in `extra_fields`,
+// inside the size limit, and the reply names what it kept and what it left out. Identity and credential fields are never kept.
+const FEEDBACK_OWN_FIELDS = new Set([
+  "observation", "summary", "detail", "reproduction", "proposed_alternative", "better_way", "proposed_change",
+  "endpoint", "path", "http_status", "error_code", "code", "payload_bytes", "severity_milli", "signal_kind", "issue_kind",
+  "kind", "target_component", "subsystem", "visibility", "tier",
+]);
+const FEEDBACK_IDENTITY_FIELDS = new Set([
+  "agent_id", "agent", "agent_name", "worker_uuid", "worker_token", "wt", "x_worker_token", "herma_worker_token", "token",
+  "api_key", "apikey", "key", "authorization", "password", "secret", "access_token", "fencing_token", "lease_epoch",
+]);
+// Review M1 (round 4): fields named for personal data are never kept either, and kept values pass the PII strip.
+const FEEDBACK_PERSONAL_FIELDS = new Set([
+  "email", "e_mail", "mail", "phone", "phone_number", "mobile", "telephone", "address", "home_address", "street",
+  "contact", "contact_email", "contact_phone", "full_name", "person_name", "first_name", "last_name", "birthday",
+  "date_of_birth", "ip", "ip_address", "user_agent", "location", "gps", "lat", "lon", "latitude", "longitude",
+  // Review round 2, N2.
+  "name", "username", "user", "user_name", "nickname", "age", "gender", "zip", "zip_code", "postal_code", "postcode",
+  "city", "address_line_1", "address_line_2", "birthplace",
+]);
+export const FEEDBACK_EXTRA_MAX_FIELDS = 24;
+
+export function splitFeedbackExtraFields(p, { primaryKey = "", maxBytes = 4096, scrub = (s) => String(s || "") } = {}) {
+  const encoder = new TextEncoder();
+  const kept = {};
+  const keptNames = [];
+  const dropped = [];
+  let used = 0;
+  for (const [name, value] of Object.entries(p || {})) {
+    if (value === undefined || value === null || value === "") continue;
+    if (FEEDBACK_OWN_FIELDS.has(name) || name === primaryKey) continue;
+    if (FEEDBACK_IDENTITY_FIELDS.has(name.toLowerCase())) continue;
+    if (FEEDBACK_PERSONAL_FIELDS.has(name.toLowerCase())) {
+      dropped.push({ field: name, reason: "personal data is not kept" });
+      continue;
+    }
+    if (keptNames.length >= FEEDBACK_EXTRA_MAX_FIELDS) {
+      dropped.push({ field: name, reason: `more than ${FEEDBACK_EXTRA_MAX_FIELDS} extra fields` });
+      continue;
+    }
+    const text = scrub(typeof value === "object" ? JSON.stringify(stripPiiDeep(value)) : stripPii(String(value)));
+    const bytes = encoder.encode(text).byteLength + encoder.encode(name).byteLength;
+    if (used + bytes > maxBytes) {
+      dropped.push({ field: name, reason: `the extra fields are over ${maxBytes} bytes; put this text in "detail"` });
+      continue;
+    }
+    let stored = text;
+    if (typeof value === "object") {
+      try {
+        stored = JSON.parse(text);
+      } catch {
+        stored = text;
+      }
+    }
+    kept[name] = stored;
+    keptNames.push(name);
+    used += bytes;
+  }
+  return { extra: kept, keptNames, dropped };
+}
+
 /**
  * Ingests any structured OR freeform catch-all feedback observation (`POST /q/feedback` or `/q/submit`
  * `proactive_observations`), deduplicates by SHA-256 fingerprint, stores/updates a tagged Task Object,
@@ -1628,15 +1696,8 @@ export async function ingestCatchAllFeedbackObservation(
     .toLowerCase()
     .slice(0, 120) || "shared_substrate";
 
-  const rawPrimaryText =
-    p.observation ||
-    p.summary ||
-    p.message ||
-    p.feedback ||
-    p.detail ||
-    p.description ||
-    p.title ||
-    JSON.stringify(p);
+  const primaryKey = ["observation", "summary", "message", "feedback", "detail", "description", "title"].find((k) => p[k]) || "";
+  const rawPrimaryText = primaryKey ? p[primaryKey] : JSON.stringify(p);
   const freeform = scrubTokens(rawPrimaryText).trim();
   const acceptedFieldBytes = encoder.encode(freeform).byteLength;
 
@@ -1725,6 +1786,11 @@ export async function ingestCatchAllFeedbackObservation(
     ],
   });
 
+  const feedbackExtra = splitFeedbackExtraFields(p, {
+    primaryKey: typeof rawPayload === "string" ? "" : primaryKey,
+    maxBytes: bounds.feedback_field_max_bytes,
+    scrub: scrubTokens,
+  });
   const storedPayloadObj = {
     schema: g.feedback_cluster_schema_version,
     fingerprint: fp,
@@ -1736,9 +1802,11 @@ export async function ingestCatchAllFeedbackObservation(
     error_code: scrubTokens(p.error_code || p.code || ""),
     payload_bytes: p.payload_bytes != null && p.payload_bytes !== "" ? Number(p.payload_bytes) : null,
     severity_milli: mergedSeverity,
-    summary: freeform,
+    // A sent summary stays the summary; before round 4 the observation text replaced it.
+    summary: p.summary && primaryKey !== "summary" ? scrubTokens(typeof p.summary === "object" ? JSON.stringify(p.summary) : p.summary).trim() : freeform,
     observation: freeform,
-    detail: scrubTokens(p.detail || ""),
+    detail: scrubTokens(typeof p.detail === "object" ? JSON.stringify(p.detail) : p.detail || ""),
+    ...(feedbackExtra.keptNames.length ? { extra_fields: feedbackExtra.extra } : {}),
     reproduction: scrubTokens(
       typeof p.reproduction === "object" ? JSON.stringify(p.reproduction) : p.reproduction || ""
     ),
@@ -2049,8 +2117,10 @@ export async function ingestCatchAllFeedbackObservation(
 
   return {
     ok: true,
-    truncated: false,
+    truncated: feedbackExtra.dropped.length > 0,
     accepted_bytes: acceptedFieldBytes,
+    kept_extra_fields: feedbackExtra.keptNames,
+    ...(feedbackExtra.dropped.length ? { dropped_fields: feedbackExtra.dropped } : {}),
     max_field_bytes: bounds.feedback_field_max_bytes,
     max_envelope_bytes: bounds.feedback_envelope_max_bytes,
     fingerprint: fp,
@@ -2069,7 +2139,7 @@ export async function ingestCatchAllFeedbackObservation(
       visibility,
       producer_agent: cleanAgent,
       worker_uuid: verifiedWorkerUuid || null,
-      summary: freeform,
+      summary: storedPayloadObj.summary,
       observation: freeform,
       detail: storedPayloadObj.detail,
       reproduction: storedPayloadObj.reproduction,

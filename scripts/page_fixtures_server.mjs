@@ -28,11 +28,17 @@ export const PAGE_ROUTES = [
   "/get-started",
   "/trust",
   "/dashboard",
+  "/discover",
+  "/models",
   "/c/portable_autonomous_worker_agent_kit_v1",
   "/c/verb_evl_d900e706b470",
   "/c/nothing_here",
   "/w/w_agent_muse-worker-01",
   "/w/w_missing",
+  "/c/agent/muse-worker-01",
+  "/c/agent/nobody-here",
+  "/c/task/verb_evl_d900e706b470",
+  "/c/task/nothing_here",
   "/q/demo/demo_dual_side_hybrid_search_v1",
   "/kits",
 ];
@@ -46,6 +52,8 @@ const MIME = { ".css": "text/css", ".js": "text/javascript", ".woff2": "font/wof
 /** Every page and script, rendered from the fixtures: `{ pages: {route: html}, scripts: {route: text}, dashboard }`. */
 export async function renderSite() {
   const dash = await load("deploy/cloudflare/dashboard_and_permalinks.js");
+  const discover = await load("deploy/cloudflare/discover_gallery.js");
+  const modelsHub = await load("deploy/cloudflare/weight_space_model_hub.js");
   const prompts = await load("deploy/cloudflare/prompts_page.js");
   const demo = await load("deploy/cloudflare/demo_page.js");
   const help = await load("deploy/cloudflare/worker_help_and_starter.js");
@@ -71,6 +79,30 @@ export async function renderSite() {
     child_verbs: dashboard.recent_contributions.slice(1, 3),
   };
 
+  const agentPages = await load("deploy/cloudflare/agent_pages.js");
+  const agentData = {
+    found: true, agent_id: "muse-worker-01", page: 1, per_page: 20,
+    counts: { task_objects: 2, tasks_submitted: 1, tasks_claimed: 1, tasks_started: 1, tasks_given_back: 1, evaluations_given: 1, hub_turns: 1, worker_sessions: 1 },
+    task_objects: dashboard.recent_objects.slice(0, 2).map((o) => ({ object_key: o.object_key, version_num: 1, title: o.object_key, type: o.category, summary: o.summary, created_at: o.created_at, review_state: "unreviewed" })),
+    tasks: dashboard.recent_contributions.slice(0, 2).map((t, i) => ({ task_id: t.task_id, title: t.title, kind: "Shared Task", state: t.state, updated_at: t.updated_at, label: i ? "Claimed it" : "Submitted it" })),
+    tasks_given_back: [{ task_id: "verb_ngo_447e62c516e9", title: "A note that needs an archive copy", kind: "Nonprofit Task", state: "ready", reason: "Source blocked", detail: "The Task needs a page outside the allowed hosts.", given_back_at: "2026-11-06T12:00:00.000Z" }],
+    evaluations_given: [{ target_kind: "object", target_id: dashboard.recent_objects[0].object_key, target_title: "A schema", worth_now: 80, worth_later: 90, priority: 70, novelty_milli: 700, rationale: "Clear and reusable.", created_at: "2026-11-06T12:00:00.000Z" }],
+    hub_turns: [{ channel_id: "warm-agent-hub", direction: "Reply", summary: "Measured the hello time three times.", created_at: "2026-11-06T12:00:00.000Z" }],
+    worker_sessions: [{ worker_uuid: "w_agent_muse-worker-01", label: "Worker", runs: 3, updated_at: "2026-11-06T12:00:00.000Z" }],
+    next_page: 2,
+  };
+  const taskData = {
+    found: true,
+    task: { task_id: "verb_evl_d900e706b470", title: dashboard.recent_contributions[0].title, kind: "Review", state: "done", prompt: "Check the schema and say what is missing.", result_summary: dashboard.recent_contributions[0].result_summary, started_by: "muse-worker-02", submitted_by: "muse-worker-01", created_at: "2026-11-01T13:40:00.000Z", updated_at: "2026-11-01T13:49:37.068Z" },
+    follows: { task_id: "verb_own_b4e012efd371", title: "The Task before" },
+    task_objects: dashboard.recent_objects.slice(0, 1).map((o) => ({ object_key: o.object_key, version_num: 1, title: o.object_key, type: o.category, summary: o.summary, created_at: o.created_at, review_state: "reviewed", made_by: "muse-worker-01" })),
+    follow_up_tasks: dashboard.recent_contributions.slice(1, 3).map((t) => ({ task_id: t.task_id, title: t.title, kind: "Shared Task", state: t.state, updated_at: t.updated_at })),
+    attempts: [{ agent_id: "muse-worker-03", outcome_label: "Released blocked", reason: "Source blocked", detail: "Gave it back.", created_at: "2026-11-01T13:30:00.000Z" }],
+    reviews: [{ evaluator_agent_id: "muse-worker-02", worth_now: 80, worth_later: 85, priority: 70, novelty_milli: 600, rationale: "Good.", created_at: "2026-11-01T14:00:00.000Z" }],
+  };
+
+  const discoverState = await discover.queryDiscoverCatalog(null, BASE, {});
+  const modelsCatalog = await modelsHub.queryWeightModelCatalog(null, BASE, {});
   const pages = {
     "/": () => site.renderHomeHtml(read("home_totals.json")),
     "/shim": () => engine.renderOverviewHtml([], [], BASE, [], null),
@@ -80,11 +112,17 @@ export async function renderSite() {
     "/get-started": () => site.renderGetStartedHtml(),
     "/trust": () => site.renderTrustHtml(),
     "/dashboard": () => dash.renderDashboardHtml(BASE, dashboard),
+    "/discover": () => discover.renderDiscoverHtml(BASE, discoverState),
+    "/models": () => modelsHub.renderModelsHubHtml(BASE, modelsCatalog),
     "/c/portable_autonomous_worker_agent_kit_v1": () => dash.renderContributionPermalinkHtml(BASE, kit),
     "/c/verb_evl_d900e706b470": () => dash.renderContributionPermalinkHtml(BASE, taskContribution),
     "/c/nothing_here": () => dash.renderContributionPermalinkHtml(BASE, { lookup_id: "nothing_here", task: null, objects: [] }),
     "/w/w_agent_muse-worker-01": () => dash.renderWorkerProfileHtml(BASE, worker),
     "/w/w_missing": () => dash.renderWorkerProfileHtml(BASE, { worker_uuid: "w_missing", worker: null, tasks: [], objects: [] }),
+    "/c/agent/muse-worker-01": () => agentPages.renderAgentPageHtml(BASE, agentData),
+    "/c/agent/nobody-here": () => agentPages.renderAgentPageHtml(BASE, { found: false, agent_id: "nobody-here" }, "nobody-here"),
+    "/c/task/verb_evl_d900e706b470": () => agentPages.renderTaskPageHtml(BASE, taskData),
+    "/c/task/nothing_here": () => agentPages.renderTaskPageHtml(BASE, { found: false, task_id: "nothing_here" }, "nothing_here"),
     "/q/demo/demo_dual_side_hybrid_search_v1": () => demo.renderInteractiveDemoPageHtml(BASE, read("demo_object.json")),
     "/kits": () => kits.renderKitsCatalogHtml(BASE, kitsDoc),
   };
@@ -92,6 +130,7 @@ export async function renderSite() {
     "/q/dashboard.js": () => dash.renderDashboardJs(),
     "/q/prompts.js": () => prompts.renderPromptsPageJs(),
     "/q/demo-runner.js": () => demo.renderInteractiveDemoRunnerJs(),
+    "/discover.js": () => discover.renderDiscoverJs(),
     "/kits.js": () => kits.renderKitsClientJs(),
     "/preview.js": () => engine.PREVIEW_JS,
     "/favicon.svg": () => shell.FAVICON_SVG,

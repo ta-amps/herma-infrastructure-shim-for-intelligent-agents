@@ -13,7 +13,7 @@ const COUNTRY_ENDING = /\.(?:py|md|sh)$/i;
 const FILE_ENDING = /\.(?:png|jpe?g|gif|svg|webp|js|mjs|ts|tsx|py|json|css|html?|md|txt|woff2?|lock|ya?ml|toml|sh)$/i;
 const CREDENTIAL = new RegExp([
   String.raw`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)`,
-  String.raw`\b(?:tsk_[A-Za-z0-9_-]{8,}|tan_[A-Za-z0-9_-]{8,}|hmk_[A-Za-z0-9_-]{8,}|hk_(?:wrk|ep|inf)_[A-Za-z0-9_-]{16,}|wt_[a-f0-9]{24,})`,
+  String.raw`\b(?:tsk_[A-Za-z0-9_-]{8,}|tan_[A-Za-z0-9_-]{8,}|hmk_[A-Za-z0-9_-]{8,}|hk_(?:wrk|ep|inf)_[A-Za-z0-9_-]{16,}|[Ww][Tt]_[A-Fa-f0-9]{24,})`,
   String.raw`\b(?:sk-[A-Za-z0-9_-]{20,}|[sr]k_live_[A-Za-z0-9]{16,}|AIza[A-Za-z0-9_-]{20,}|glpat-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|hf_[A-Za-z0-9]{24,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,})`,
   String.raw`\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`,
   String.raw`\b(?:Bearer|Basic|token)\s{1,8}[A-Za-z0-9._~+/-]{20,}=*`,
